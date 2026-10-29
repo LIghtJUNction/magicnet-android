@@ -120,7 +120,8 @@ fn missing_executable_during_kernel_exit_waits_for_confirmed_exit() {
             exit = Some(std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(20));
                 if state == "gone" {
-                    fs::remove_dir_all(delayed_dir).unwrap();
+                    // Model /proc disappearance without exposing a half-removed fixture.
+                    fs::rename(&delayed_dir, delayed_dir.with_file_name("exited-42")).unwrap();
                 } else {
                     write_candidate_stat_flags(&delayed_dir, state, 100, 4);
                 }
