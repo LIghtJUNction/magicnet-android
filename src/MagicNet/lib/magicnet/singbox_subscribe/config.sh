@@ -169,8 +169,8 @@ magicnet_singbox_build_outbounds_file() (
     for _node_file in "$_nodes_dir"/node-*.yaml "$_nodes_dir"/node-*.link; do
         [ -f "$_node_file" ] || continue
         case "$_node_file" in
-        *.link) _json=$(magicnet_singbox_emit_share_link_json "$_node_file" 2>/dev/null) ;;
-        *) _json=$(magicnet_singbox_emit_node_json "$_node_file" 2>/dev/null) ;;
+        *.link) _json=$(magicnet_singbox_emit_share_link_json "$_node_file" 2>/dev/null) || _json= ;;
+        *) _json=$(magicnet_singbox_emit_node_json "$_node_file" 2>/dev/null) || _json= ;;
         esac
         if [ -n "$_json" ] && magicnet_singbox_emitted_node_port_valid "$_json"; then
             _tag=$(printf '%s' "$_json" | sed -n 's/.*"tag":"\([^"]*\)".*/\1/p')
@@ -380,8 +380,8 @@ magicnet_singbox_count_native_nodes() (
     for _native_node_file in "$_native_nodes_dir"/node-*.yaml "$_native_nodes_dir"/node-*.link; do
         [ -f "$_native_node_file" ] || continue
         case "$_native_node_file" in
-        *.link) _native_json_node=$(magicnet_singbox_emit_share_link_json "$_native_node_file" 2>/dev/null) ;;
-        *) _native_json_node=$(magicnet_singbox_emit_node_json "$_native_node_file" 2>/dev/null) ;;
+        *.link) _native_json_node=$(magicnet_singbox_emit_share_link_json "$_native_node_file" 2>/dev/null) || _native_json_node= ;;
+        *) _native_json_node=$(magicnet_singbox_emit_node_json "$_native_node_file" 2>/dev/null) || _native_json_node= ;;
         esac
         if [ -n "$_native_json_node" ] && magicnet_singbox_emitted_node_port_valid "$_native_json_node"; then
             [ "$_native_first" -eq 1 ] || printf ',' >>"$_native_json"

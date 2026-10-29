@@ -21,7 +21,7 @@ KSU_SHA256 = '060844b0769f7a50262854af027c4d6076a212d160a51309b53057cfb7122900'
 
 class Utf8ParserTests(unittest.TestCase):
     def test_actual_parsers_preserve_unicode_and_reject_invalid_config(self):
-        shells = [['sh'], ['bash']]
+        shells = [[os.environ.get('MAGICNET_POSIX_SHELL', 'sh')], ['bash']]
         native = os.environ.get('MAGICNET_KSU_BUSYBOX')
         if native:
             binary = Path(native).resolve()
