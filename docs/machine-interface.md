@@ -193,10 +193,15 @@ models. Errors show a sanitized machine error code, never raw inspector output.
 Generic issue reports continue to request redacted `sub.status`.
 
 `sub.inspect` shares the exact lifecycle projection used by `sub.status`; it
-adds `configuration` and `source_usage` only for this explicit request. Provider
-usage is selected by SHA-256 of the configured URL, not list position. Pending
-transactions suppress uncommitted usage; detected generation or URL changes
-reject the snapshot. This is change detection, not an OS-wide atomic snapshot.
+adds `configuration` and `source_usage` only for this explicit request. Each
+`source_usage.id` is SHA-256 of the canonical HTTPS request URL: fragment is
+removed, scheme/host are lowercase, default port 443 is omitted, empty path is
+`/`, and non-ASCII path/query bytes are percent-encoded. Existing ASCII path,
+query bytes, parameter order, duplicate keys and percent escapes are preserved.
+This identity matches the download cache and is used instead of list position.
+Pending transactions suppress uncommitted usage; detected generation or URL
+changes reject the snapshot. This is change detection, not an OS-wide atomic
+snapshot.
 The cache includes separate source/provenance counts; refresh counters summarize
 at most the last 200 lines of the bounded refresh-log tail, not lifetime totals.
 

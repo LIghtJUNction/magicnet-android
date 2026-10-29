@@ -152,6 +152,7 @@ pub(crate) fn apply(config: &mut Value, overlay: &Value) -> Result<Value> {
                     "password",
                     "method",
                     "uuid",
+                    "encryption",
                     "tls",
                     "detour",
                     "version",
@@ -159,6 +160,15 @@ pub(crate) fn apply(config: &mut Value, overlay: &Value) -> Result<Value> {
                     "alter_id",
                 ],
             )?;
+            if let Some(encryption) = item.get("encryption") {
+                if kind != "vless"
+                    || !encryption.as_str().is_some_and(|value| {
+                        value.len() <= 16_384 && !value.chars().any(char::is_control)
+                    })
+                {
+                    return Err("override.routing_invalid");
+                }
+            }
             text(&item["server"])?;
             if !item["server_port"]
                 .as_u64()

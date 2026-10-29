@@ -204,6 +204,7 @@ export default {
   "只保存前 {value} 个唯一 URL": ["Only the first {value} unique URLs will be saved", "Будут сохранены только первые {value} уникальных URL"],
   "将保存 {value} 个订阅 URL。": ["Subscription URLs to save: {value}.", "URL подписок для сохранения: {value}."],
   "含参数，界面已隐藏": ["Parameters hidden in the interface", "Параметры скрыты в интерфейсе"],
+  "片段不参与订阅请求": ["Fragment is removed and not sent", "Фрагмент удаляется и не отправляется"],
   "无 query/hash": ["No query or fragment", "Нет строки запроса или фрагмента"],
   "含路径，界面已隐藏": ["Path hidden in the interface", "Путь скрыт в интерфейсе"],
   "无路径": ["No path", "Нет пути"],

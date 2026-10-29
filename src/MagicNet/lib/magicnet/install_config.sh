@@ -164,10 +164,8 @@ magicnet_refresh_install_config() (
                 | map(select(type == "object" and (.server | type) == "string"))
                 | select(length > 0)
             ' "$_refresh_source" >"$_refresh_work/nodes.json" 2>/dev/null || continue
-            : >"$_refresh_work/tags.txt" || return 1
             magicnet_singbox_build_outbounds_file_with_jq \
-                "$_refresh_work/nodes.json" "$_refresh_work/tags.txt" \
-                "$_refresh_work/outbounds.json" >/dev/null 2>&1 || {
+                "$_refresh_work/nodes.json" "$_refresh_work/outbounds.json" >/dev/null 2>&1 || {
                 magicnet_install_config_failure node-prepare
                 return 1
             }

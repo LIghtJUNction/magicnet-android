@@ -141,6 +141,52 @@ magicnet_singbox_subscription_parse_authority() {
     fi
 }
 
+magicnet_singbox_percent_encode_url_suffix() (
+    _suffix_input="$1"
+    command -v od >/dev/null 2>&1 || return 1
+    printf '%s' "$_suffix_input" | LC_ALL=C od -An -tu1 -v | LC_ALL=C awk '
+      { for (i = 1; i <= NF; i++) {
+          byte = $i + 0
+          if (byte >= 128) printf "%%%02X", byte
+          else printf "%c", byte
+        }
+      }
+    '
+)
+
+magicnet_singbox_normalize_subscription_url() (
+    _normalize_raw="$1"
+    _normalize_url=$(printf '%s' "$_normalize_raw" | sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//')
+    [ -n "$_normalize_url" ] || return 1
+    magicnet_singbox_subscription_parse_authority "$_normalize_url" || return 1
+
+    _normalize_host=$(printf '%s' "$_subscription_host" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+    case "$_normalize_host" in *:*) _normalize_host="[$_normalize_host]" ;; esac
+    _normalize_rest=${_normalize_url#*://}
+    case "$_normalize_rest" in
+    *\?*)
+        _normalize_before_query=${_normalize_rest%%\?*}
+        _normalize_query="?${_normalize_rest#*\?}"
+        case "$_normalize_before_query" in
+        */*) _normalize_path="/${_normalize_before_query#*/}" ;;
+        *) _normalize_path=/ ;;
+        esac
+        _normalize_suffix="${_normalize_path}${_normalize_query}"
+        ;;
+    */*) _normalize_suffix="/${_normalize_rest#*/}" ;;
+    *) _normalize_suffix=/ ;;
+    esac
+    _normalize_suffix=$(magicnet_singbox_percent_encode_url_suffix "$_normalize_suffix") || return 1
+
+    if [ "$_subscription_port" -eq 443 ] 2>/dev/null; then
+        _normalize_port=
+    else
+        _normalize_port=$(awk -v port="$_subscription_port" 'BEGIN { printf "%d", port + 0 }')
+        _normalize_port=":$_normalize_port"
+    fi
+    printf 'https://%s%s%s\n' "$_normalize_host" "$_normalize_port" "$_normalize_suffix"
+)
+
 magicnet_singbox_public_ipv4() {
     _subscription_ipv4="$1"
     case "$_subscription_ipv4" in *[!0-9.]*|*..*|.*|*.) return 1 ;; esac
@@ -650,6 +696,9 @@ magicnet_singbox_fetch_subscription() {
     _cache_dir=$(magicnet_singbox_subscription_cache_dir)
     _cache_map="${_generation_dir}/cache-map.txt"
     _sources_file="$1"
+    _url_lines_file="${_generation_dir}/urls.normalized.$$"
+    _url_unique_file="${_generation_dir}/urls.unique.$$"
+    _url_seen_file="${_generation_dir}/urls.seen.$$"
 
     if [ ! -s "$_url_file" ]; then
         error "Missing subscription URL file: $_url_file"
@@ -659,14 +708,75 @@ magicnet_singbox_fetch_subscription() {
     mkdir -p "$_source_dir" "$_cache_dir" || return 1
     : >"$_sources_file" || return 1
     : >"$_cache_map" || return 1
+    _url_old_umask=$(umask)
+    umask 077
+    if ! tr '\015' '\012' <"$_url_file" >"$_url_lines_file"; then
+        rm -f "$_url_lines_file" "$_url_unique_file" "$_url_seen_file"
+        umask "$_url_old_umask"
+        return 1
+    fi
+    : >"$_url_unique_file" && : >"$_url_seen_file" || {
+        rm -f "$_url_lines_file" "$_url_unique_file" "$_url_seen_file"
+        umask "$_url_old_umask"
+        return 1
+    }
+    chmod 600 "$_url_lines_file" "$_url_unique_file" "$_url_seen_file" || {
+        rm -f "$_url_lines_file" "$_url_unique_file" "$_url_seen_file"
+        umask "$_url_old_umask"
+        return 1
+    }
+    umask "$_url_old_umask"
 
     _index=0
-    _ok=0
+    _line_index=0
+    _input_invalid=0
     while IFS= read -r _url || [ -n "$_url" ]; do
-        _url=$(printf '%s' "$_url" | sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//')
+        _url=$(printf '%s' "$_url" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
         [ -n "$_url" ] || continue
 
+        _line_index=$((_line_index + 1))
+        if ! _url=$(magicnet_singbox_normalize_subscription_url "$_url"); then
+            warn "Subscription #${_line_index} has an invalid URL"
+            _input_invalid=1
+            continue
+        fi
+        _duplicate=0
+        while IFS= read -r _seen_url || [ -n "$_seen_url" ]; do
+            if [ "$_seen_url" = "$_url" ]; then
+                _duplicate=1
+                break
+            fi
+        done <"$_url_seen_file"
+        [ "$_duplicate" -eq 0 ] || continue
         _index=$((_index + 1))
+        if [ "$_index" -gt 5 ]; then
+            _input_invalid=1
+            continue
+        fi
+        if ! printf '%s\n' "$_url" >>"$_url_seen_file" ||
+            ! printf '%s\n' "$_url" >>"$_url_unique_file"; then
+            rm -f "$_url_lines_file" "$_url_unique_file" "$_url_seen_file"
+            return 1
+        fi
+    done <"$_url_lines_file"
+    rm -f "$_url_lines_file" "$_url_seen_file"
+
+    if [ "$_input_invalid" -ne 0 ]; then
+        rm -f "$_url_unique_file"
+        error "Subscription URL list is invalid or exceeds five unique URLs"
+        return 1
+    fi
+    if [ "$_index" -eq 0 ]; then
+        rm -f "$_url_unique_file"
+        error "Subscription URL file is empty: $_url_file"
+        return 1
+    fi
+
+    _ok=0
+    _fetch_index=0
+    while IFS= read -r _url || [ -n "$_url" ]; do
+        [ -n "$_url" ] || continue
+        _fetch_index=$((_fetch_index + 1))
         _fingerprint=
         if _fingerprint=$(magicnet_singbox_subscription_fingerprint "$_url" 2>/dev/null) &&
             printf '%s' "$_fingerprint" | grep -Eq '^[0-9a-fA-F]{64}$'; then
@@ -675,33 +785,31 @@ magicnet_singbox_fetch_subscription() {
             _cache_file="${_cache_dir}/${_fingerprint}.yaml"
             _identity_file="${_cache_file}.identity"
         else
-            warn "Subscription #${_index}: persistent cache disabled because SHA-256 is unavailable"
-            _source_file="${_source_dir}/fresh-${_index}.yaml"
+            warn "Subscription #${_fetch_index}: persistent cache disabled because SHA-256 is unavailable"
+            _source_file="${_source_dir}/fresh-${_fetch_index}.yaml"
             _cache_file=""
             _identity_file=""
         fi
 
-        if magicnet_singbox_fetch_one_subscription "$_url" "$_source_file" "$_cache_file" "$_identity_file" "$_fingerprint" "#${_index}"; then
+        if magicnet_singbox_fetch_one_subscription "$_url" "$_source_file" "$_cache_file" "$_identity_file" "$_fingerprint" "#${_fetch_index}"; then
             if ! printf '%s\n' "$_source_file" >>"$_sources_file"; then
-                error "Failed to record subscription source #${_index}"
+                error "Failed to record subscription source #${_fetch_index}"
+                rm -f "$_url_unique_file"
                 return 1
             fi
             if [ -n "$_fingerprint" ]; then
                 if ! printf '%s|%s|%s|%s\n' "${_source_file##*/}" "$_cache_file" "$_identity_file" "$_fingerprint" >>"$_cache_map"; then
-                    error "Failed to record subscription cache metadata #${_index}"
+                    error "Failed to record subscription cache metadata #${_fetch_index}"
+                    rm -f "$_url_unique_file"
                     return 1
                 fi
             fi
             _ok=$((_ok + 1))
         else
-            warn "Skipping subscription #${_index}"
+            warn "Skipping subscription #${_fetch_index}"
         fi
-    done <"$_url_file"
-
-    if [ "$_index" -eq 0 ]; then
-        error "Subscription URL file is empty: $_url_file"
-        return 1
-    fi
+    done <"$_url_unique_file"
+    rm -f "$_url_unique_file"
     if [ "$_ok" -ne "$_index" ]; then
         error "Incomplete subscription fetch ($_ok/$_index); keeping the previous configuration"
         return 1

@@ -133,16 +133,29 @@ export function buildSubscriptionUsageOverview(
   nowEpoch = Date.now() / 1000,
 ): SubscriptionUsageRow[] {
   if (state.sourceMode === "local" || state.singBoxUrls.length === 0) return [];
-  // Keep provider labels and counters from the same inspected source identity.
-  // Never relabel persisted quotas from a separately edited list position.
-  const sources = state.sourceUsage.length ? state.sourceUsage : state.singBoxUrls.map((value, index) => {
+  // URL order and metadata belong to the same inspected snapshot. Keep a row
+  // for every configured source even when one metadata file is missing.
+  const sourceByIndex = new Map<number, SubscriptionSourceUsage>();
+  const ambiguousIndices = new Set<number>();
+  for (const source of state.sourceUsage) {
+    if (source.index < 1 || source.index > state.singBoxUrls.length || sourceByIndex.has(source.index)) {
+      ambiguousIndices.add(source.index);
+      sourceByIndex.delete(source.index);
+      continue;
+    }
+    if (!ambiguousIndices.has(source.index)) sourceByIndex.set(source.index, source);
+  }
+  const sources = state.singBoxUrls.map((value, offset) => {
+    const index = offset + 1;
+    const inspected = ambiguousIndices.has(index) ? undefined : sourceByIndex.get(index);
+    if (inspected) return inspected;
     let hostname = "";
     try {
       const url = new URL(value);
       if (url.protocol === "https:" && !url.username && !url.password) hostname = safeHostname(url.hostname);
     } catch { /* The editor reports malformed URLs; overview keeps a private fallback. */ }
     return {
-      id: `unknown-${index + 1}`, index: index + 1, hostname, state: "unknown" as const,
+      id: `unknown-${index}`, index, hostname, state: "unknown" as const,
       uploadBytes: null, downloadBytes: null, totalBytes: null, expireEpoch: null, updatedEpoch: null,
     };
   });

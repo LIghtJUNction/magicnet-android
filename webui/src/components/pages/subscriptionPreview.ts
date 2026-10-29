@@ -61,6 +61,8 @@ export type SubscriptionEditorReconcileResult = {
   syncedDraft: boolean;
 };
 
+type ParsedSubscriptionLine = { url: URL; canonical: string };
+
 export function reconcileSubscriptionEditor(
   input: SubscriptionEditorReconcileInput,
 ): SubscriptionEditorReconcileResult {
@@ -111,8 +113,8 @@ export function buildSubscriptionApplyLaunch(basename: string): SubscriptionAppl
 
 export function summarizeSubscriptionInput(text: string, limit = 5): SubscriptionInputSummary {
   const raw = subscriptionLines(text);
-  const validUrls = raw.map(parseSubscriptionLine).filter((item): item is URL => item instanceof URL);
-  const uniqueUrls = uniqueNonEmpty(validUrls.map((url) => url.toString()));
+  const validUrls = raw.map(parseSubscriptionLine).filter((item): item is ParsedSubscriptionLine => item !== null);
+  const uniqueUrls = uniqueNonEmpty(validUrls.map((item) => item.canonical));
   return {
     raw: raw.length,
     valid: validUrls.length,
@@ -130,8 +132,8 @@ export function buildSubscriptionSavePlan(text: string, limit = 5): Subscription
   const raw = subscriptionLines(text);
   if (!raw.length) return plan("idle", t("请至少填写一个 sing-box 订阅 URL。"), [], raw, limit);
   const parsed = raw.map(parseSubscriptionLine);
-  const validUrls = parsed.filter((item): item is URL => item instanceof URL);
-  const uniqueUrls = uniqueNonEmpty(validUrls.map((url) => url.toString()));
+  const validUrls = parsed.filter((item): item is ParsedSubscriptionLine => item !== null);
+  const uniqueUrls = uniqueNonEmpty(validUrls.map((item) => item.canonical));
   const lines = uniqueUrls;
   const invalid = parsed.length - validUrls.length;
   const duplicate = Math.max(0, validUrls.length - uniqueUrls.length);
@@ -186,15 +188,17 @@ export function formatSubscriptionSummary(text: string, previews: SubscriptionPr
 
 function previewSubscriptionLine(line: string, index: number, seen: Set<string>, limit: number): SubscriptionPreview {
   try {
-    const url = parseSubscriptionLine(line);
-    if (!url) throw new Error("invalid URL");
-    const normalized = url.toString();
+    const parsed = parseSubscriptionLine(line);
+    if (!parsed) throw new Error("invalid URL");
+    const { url, canonical: normalized } = parsed;
+    const hasFragment = line.includes("#");
     const duplicate = seen.has(normalized);
     const uniqueCount = duplicate ? seen.size : seen.size + 1;
     seen.add(normalized);
     const protocolOk = url.protocol === "https:";
     const notes = [
-      url.search || url.hash ? t("含参数，界面已隐藏") : t("无 query/hash"),
+      url.search ? t("含参数，界面已隐藏") : t("无 query/hash"),
+      hasFragment ? t("片段不参与订阅请求") : "",
       url.pathname.length > 1 ? t("含路径，界面已隐藏") : t("无路径"),
       url.protocol === "http:" ? t("设备侧仅支持 HTTPS") : ""
     ].filter(Boolean);
@@ -216,19 +220,55 @@ function previewSubscriptionLine(line: string, index: number, seen: Set<string>,
   }
 }
 
-function parseSubscriptionLine(line: string): URL | null {
-  if (!isHttpsUrl(line)) return null;
+function parseSubscriptionLine(line: string): ParsedSubscriptionLine | null {
+  const requestUrl = line.split("#", 1)[0];
+  if (!isHttpsUrl(requestUrl)) return null;
   try {
-    const url = new URL(line);
-    return url.protocol === "https:" && !url.username && !url.password ? url : null;
+    const url = new URL(requestUrl);
+    if (url.protocol !== "https:" || url.username || url.password) return null;
+    const remainder = requestUrl.slice(requestUrl.indexOf("://") + 3);
+    const authorityEnd = remainder.search(/[/?]/);
+    const authority = authorityEnd < 0 ? remainder : remainder.slice(0, authorityEnd);
+    if (!authority || authority.includes("\\") || authority.includes("@")) return null;
+    const suffix = authorityEnd < 0 ? "" : remainder.slice(authorityEnd);
+    const rawPathQuery = suffix === "" ? "/" : suffix.startsWith("?") ? `/${suffix}` : suffix;
+    const pathQuery = percentEncodeNonAscii(rawPathQuery);
+    if (url.hostname.endsWith(".")) return null;
+    let canonicalHost: string;
+    let rawPort = "";
+    if (authority.startsWith("[")) {
+      const closing = authority.indexOf("]");
+      if (closing < 0) return null;
+      canonicalHost = authority.slice(0, closing + 1).toLowerCase();
+      rawPort = authority.slice(closing + 1);
+    } else {
+      const colon = authority.lastIndexOf(":");
+      canonicalHost = url.hostname.toLowerCase();
+      rawPort = colon < 0 ? "" : authority.slice(colon);
+    }
+    let port = "";
+    if (rawPort) {
+      if (!/^:[0-9]+$/.test(rawPort)) return null;
+      const number = Number(rawPort.slice(1));
+      if (!Number.isInteger(number) || number < 1 || number > 65535) return null;
+      if (number !== 443) port = `:${number}`;
+    }
+    return { url, canonical: `https://${canonicalHost}${port}${pathQuery}` };
   } catch {
     return null;
   }
 }
 
+function percentEncodeNonAscii(value: string): string {
+  return Array.from(value, (character) => {
+    if ((character.codePointAt(0) ?? 0) < 0x80) return character;
+    return encodeURIComponent(character).replace(/%[0-9a-f]{2}/gi, (byte) => byte.toUpperCase());
+  }).join("");
+}
+
 function plan(status: SubscriptionSavePlan["status"], message: string, lines: string[], raw: string[], limit: number): SubscriptionSavePlan {
-  const valid = raw.filter((line) => parseSubscriptionLine(line) !== null);
-  const unique = uniqueNonEmpty(valid);
+  const valid = raw.map(parseSubscriptionLine).filter((item): item is ParsedSubscriptionLine => item !== null);
+  const unique = uniqueNonEmpty(valid.map((item) => item.canonical));
   return {
     status,
     message,

@@ -35,16 +35,136 @@ magicnet_singbox_emitted_node_port_valid() {
     [ "$_emitted_port" -le 65535 ] 2>/dev/null
 }
 
+magicnet_singbox_disambiguate_outbound_tags() (
+    _identity_input="$1"
+    _identity_output="$2"
+    _identity_jq=$(command -v jq 2>/dev/null) || return 1
+    _identity_rows="${_identity_output}.rows.$$"
+    _identity_lines="${_identity_output}.lines.$$"
+    _identity_node_file="${_identity_output}.node.$$"
+    umask 077
+    trap 'rm -f "$_identity_rows" "$_identity_lines" "$_identity_node_file"' 0 1 2 3 15
+
+    # shellcheck disable=SC2016 # jq filters are intentionally single-quoted to avoid shell interpolation.
+    _identity_status=$("$_identity_jq" -r '
+      def normalize_tag:
+        if type == "string"
+        then gsub("[\\r\\n\\t]"; " ") | gsub("[[:cntrl:]]"; "")
+        else ""
+        end;
+      def proxy_candidate:
+        (.type == "shadowsocks" or .type == "vmess" or .type == "vless" or .type == "trojan"
+          or .type == "hysteria2" or .type == "anytls" or .type == "tuic" or .type == "socks")
+          and (.tag | type == "string" and length > 0)
+          and (.server | type == "string" and length > 0)
+          and (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535);
+      def referenced_tags:
+        [ .[]
+          | [(.detour? | select(type == "string")),
+             (.default? | select(type == "string")),
+             (if (.outbounds | type) == "array" then .outbounds[] | select(type == "string") else empty end)]
+          | .[] | normalize_tag
+        ] | unique;
+      ([ .[] | select(proxy_candidate) | .tag |= normalize_tag ]) as $nodes
+      | (referenced_tags) as $references
+      | ($nodes | group_by(.tag) | any(.[]; ([.[] | del(.tag)] | unique | length) > 1)) as $tag_conflict
+      | if $tag_conflict and any($nodes[]; .tag as $tag | any($references[]; . == $tag)) then
+          "unsafe"
+        else
+          $tag_conflict
+        end
+    ' "$_identity_input") || return 1
+    case "$_identity_status" in
+    unsafe) return 1 ;;
+    true) ;;
+    false)
+        cat "$_identity_input" >"$_identity_output" || return 1
+        chmod 600 "$_identity_output"
+        return $?
+        ;;
+    *) return 1 ;;
+    esac
+
+    "$_identity_jq" -c '.[]' "$_identity_input" >"$_identity_lines" || return 1
+    : >"$_identity_rows" || return 1
+    while IFS= read -r _identity_line || [ -n "$_identity_line" ]; do
+        _identity_node=$(printf '%s' "$_identity_line" | "$_identity_jq" -cS '
+          def normalize_tag:
+            if type == "string"
+            then gsub("[\\r\\n\\t]"; " ") | gsub("[[:cntrl:]]"; "")
+            else ""
+            end;
+          if type == "object" and (.tag | type == "string") then .tag |= normalize_tag else . end
+        ') || return 1
+        _identity_mergeable=$(printf '%s' "$_identity_node" | "$_identity_jq" -r '
+          (.type == "shadowsocks" or .type == "vmess" or .type == "vless" or .type == "trojan"
+            or .type == "hysteria2" or .type == "anytls" or .type == "tuic" or .type == "socks")
+            and (.tag | type == "string" and length > 0)
+            and (.server | type == "string" and length > 0)
+            and (.server_port | type == "number" and . == floor and . >= 1 and . <= 65535)
+        ') || return 1
+        if [ "$_identity_mergeable" = true ]; then
+            _identity_tag=$(printf '%s' "$_identity_node" | "$_identity_jq" -r '.tag') || return 1
+            _identity_semantics=$(printf '%s' "$_identity_node" | "$_identity_jq" -cS 'del(.tag)') || return 1
+            _identity_hash=$(magicnet_singbox_subscription_fingerprint "$_identity_semantics") || return 1
+            printf '%s\n' "$_identity_node" >"$_identity_node_file" || return 1
+            # shellcheck disable=SC2016 # jq filters are intentionally single-quoted to avoid shell interpolation.
+            "$_identity_jq" -n --slurpfile node "$_identity_node_file" --arg base "$_identity_tag" \
+                --arg fingerprint "$_identity_hash" --argjson semantics "$_identity_semantics" \
+                '{node:$node[0],base:$base,identity:{base:$base,semantics:$semantics},semantics:$semantics,fingerprint:$fingerprint,mergeable:true}' \
+                >>"$_identity_rows" || return 1
+        else
+            printf '%s\n' "$_identity_node" >"$_identity_node_file" || return 1
+            # shellcheck disable=SC2016 # jq filters are intentionally single-quoted to avoid shell interpolation.
+            "$_identity_jq" -n --slurpfile node "$_identity_node_file" \
+                '{node:$node[0],mergeable:false}' >>"$_identity_rows" || return 1
+        fi
+    done <"$_identity_lines"
+
+    # shellcheck disable=SC2016 # jq filters are intentionally single-quoted to avoid shell interpolation.
+    "$_identity_jq" -n -e --slurpfile rows "$_identity_rows" '
+      reduce $rows[] as $row (
+        {items: [], identities: []};
+        if $row.mergeable and any(.identities[]; .identity == $row.identity)
+        then .
+        else
+          .items += [$row]
+          | if $row.mergeable then .identities += [{identity:$row.identity}] else . end
+        end
+      ) as $collected
+      | [
+          $collected.items[]
+          | . as $row
+          | if $row.mergeable then
+              ([$collected.items[] | select(.mergeable and .base == $row.base) | .semantics] | unique | length) as $variants
+              | (if $variants > 1 then ($row.base[0:32] + "--mn-" + $row.fingerprint) else $row.base end) as $tag
+              | {node:($row.node | .tag = $tag), tag:$tag, mergeable:true}
+            else {node:$row.node, mergeable:false}
+            end
+      ] as $mapped
+      | [$mapped[] | .node] as $raw_nodes
+      | reduce $raw_nodes[] as $node (
+          [];
+          if any(.[]; .tag == $node.tag and (del(.tag) == ($node | del(.tag)))) then . else . + [$node] end
+        ) as $nodes
+      | [$nodes[] | .tag | select(type == "string")] as $tags
+      | if ($tags | length) == ($tags | unique | length)
+        then $nodes
+        else error("subscription outbound tag collision")
+        end
+    ' >"$_identity_output" || return 1
+    chmod 600 "$_identity_output"
+)
+
 magicnet_singbox_build_outbounds_file() (
     _nodes_dir="$1"
     _out_file="$2"
-    _tags_file="$3"
+    umask 077
     trap 'rm -f "${_out_file}.nodes"' 0 1 2 3 15
     _first=1
     _imported=0
     _skipped=0
 
-    : >"$_tags_file"
     printf '[' >"${_out_file}.nodes"
     for _node_file in "$_nodes_dir"/node-*.yaml "$_nodes_dir"/node-*.link; do
         [ -f "$_node_file" ] || continue
@@ -55,7 +175,6 @@ magicnet_singbox_build_outbounds_file() (
         if [ -n "$_json" ] && magicnet_singbox_emitted_node_port_valid "$_json"; then
             _tag=$(printf '%s' "$_json" | sed -n 's/.*"tag":"\([^"]*\)".*/\1/p')
             if [ -z "$_tag" ] || magicnet_singbox_tag_is_reserved "$_tag" ||
-                grep -F -x "$_tag" "$_tags_file" >/dev/null 2>&1 ||
                 magicnet_singbox_is_info_tag "$_tag" ||
                 magicnet_singbox_tag_matches_filter "$_tag"; then
                 _skipped=$((_skipped + 1))
@@ -63,7 +182,6 @@ magicnet_singbox_build_outbounds_file() (
             fi
             [ "$_first" -eq 1 ] || printf ',' >>"${_out_file}.nodes"
             printf '%s' "$_json" >>"${_out_file}.nodes"
-            printf '%s\n' "$_tag" >>"$_tags_file"
             _first=0
             _imported=$((_imported + 1))
         else
@@ -72,24 +190,28 @@ magicnet_singbox_build_outbounds_file() (
     done
     printf ']' >>"${_out_file}.nodes"
 
-    magicnet_singbox_build_outbounds_file_with_jq \
-        "${_out_file}.nodes" "$_tags_file" "$_out_file" || return 1
+    magicnet_singbox_build_outbounds_file_with_jq "${_out_file}.nodes" "$_out_file" || return 1
+    _final_imported=$(magicnet_singbox_count_valid_outbounds_nodes "$_out_file") || return 1
+    if [ "$_final_imported" -lt "$_imported" ]; then
+        _skipped=$((_skipped + _imported - _final_imported))
+    fi
+    _imported=$_final_imported
     printf '%s %s\n' "$_imported" "$_skipped"
 )
 
 magicnet_singbox_build_outbounds_file_with_jq() (
     _nodes_json="$1"
-    _tags_file="$2"
-    _out_file="$3"
+    _out_file="$2"
     command -v jq >/dev/null 2>&1 || return 1
-    _tags_json="${_out_file}.tags.json"
+    umask 077
+    _semantic_nodes="${_out_file}.semantic.nodes.$$"
     _out_tmp="${_out_file}.new.$$"
-    trap 'rm -f "$_tags_json" "$_out_tmp"' 0 1 2 3 15
+    trap 'rm -f "$_semantic_nodes" "$_out_tmp"' 0 1 2 3 15
     _filter_file=$(magicnet_singbox_subscription_filter_file)
     [ -f "$_filter_file" ] || _filter_file=/dev/null
-    jq -R -s 'split("\n") | map(select(length > 0))' "$_tags_file" >"$_tags_json" || return 1
+    magicnet_singbox_disambiguate_outbound_tags "$_nodes_json" "$_semantic_nodes" || return 1
     _ai_lib="$(magicnet_jq_ai_tags_lib)"
-    jq -L "$_ai_lib" -n --slurpfile nodes "$_nodes_json" --slurpfile tags "$_tags_json" \
+    jq -L "$_ai_lib" -n --slurpfile nodes "$_semantic_nodes" \
         --rawfile configured_filters "$_filter_file" -e 'include "ai-node-tags";
       def normalize_tag:
         if type == "string"
@@ -200,7 +322,7 @@ magicnet_singbox_build_outbounds_file_with_jq() (
               | ($filters | any(. as $filter | $tag | contains($filter))) | not)
           ))
         | reduce .[] as $node
-            ([]; if (map(.tag) | index($node.tag)) != null then . else . + [$node] end)
+            ([]; if any(.[]; .tag == $node.tag and (del(.tag) == ($node | del(.tag)))) then . else . + [$node] end)
       ) as $nodes
       | ([ $nodes[] | .tag ]) as $tags
       | ($tags | prioritize_ai_tags) as $ai_tags
@@ -245,6 +367,30 @@ magicnet_singbox_build_outbounds_file_with_jq() (
         ]
     ' >"$_out_tmp" || return 1
     chmod 600 "$_out_tmp" && mv -f "$_out_tmp" "$_out_file"
+)
+
+magicnet_singbox_count_native_nodes() (
+    _native_nodes_dir="$1"
+    _native_include_info_tags="${2:-true}"
+    _native_json="${_native_nodes_dir}/.magicnet-native-count.$$"
+    umask 077
+    trap 'rm -f "$_native_json"' 0 1 2 3 15
+    printf '[' >"$_native_json" || return 1
+    _native_first=1
+    for _native_node_file in "$_native_nodes_dir"/node-*.yaml "$_native_nodes_dir"/node-*.link; do
+        [ -f "$_native_node_file" ] || continue
+        case "$_native_node_file" in
+        *.link) _native_json_node=$(magicnet_singbox_emit_share_link_json "$_native_node_file" 2>/dev/null) ;;
+        *) _native_json_node=$(magicnet_singbox_emit_node_json "$_native_node_file" 2>/dev/null) ;;
+        esac
+        if [ -n "$_native_json_node" ] && magicnet_singbox_emitted_node_port_valid "$_native_json_node"; then
+            [ "$_native_first" -eq 1 ] || printf ',' >>"$_native_json"
+            printf '%s' "$_native_json_node" >>"$_native_json" || return 1
+            _native_first=0
+        fi
+    done
+    printf ']\n' >>"$_native_json" || return 1
+    magicnet_singbox_count_valid_outbounds_nodes "$_native_json" "$_native_include_info_tags"
 )
 
 magicnet_singbox_count_valid_outbounds_nodes() {
@@ -293,16 +439,18 @@ magicnet_singbox_count_valid_outbounds_nodes() {
                     and (.password | type == "string" and length > 0)))
             else false
             end);
-      ($nodes[0] // []
+      ($nodes[0] // []) as $all
+      | ($all
         | map(.tag = ((.tag // "") | normalize_tag))
         | map(select(
             valid_proxy_node
             and ($include_info_tags or (((.tag // "") | test("剩余流量|到期|过期|套餐|官网|订阅|Traffic|traffic|Expire|expire|Expired|expired|Subscription|subscription|官方网站|更新订阅")) | not))
-          ))
-        | reduce .[] as $node
-            ([]; if (map(.tag) | index($node.tag)) != null then . else . + [$node] end)
-        | length
-      ) // 0
+          ))) as $valid
+      | reduce $valid[] as $node (
+          [];
+          if any(.[]; .tag == $node.tag and (del(.tag) == ($node | del(.tag)))) then . else . + [$node] end
+        )
+      | length
     '
 }
 

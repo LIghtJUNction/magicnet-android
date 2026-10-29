@@ -106,7 +106,9 @@ fn source_usage(app: &App, urls: &[String], result: &str) -> Vec<Value> {
     let pending = app.moddir.join(SUBSCRIPTION_TRANSACTION).exists();
     let force_cached = matches!(result, "failed" | "interrupted");
     urls.iter().enumerate().map(|(index, url)| {
-        let id = format!("{:x}", Sha256::digest(url.as_bytes()));
+        let identity = crate::subscriptions::canonical_subscription_url(url)
+            .unwrap_or_else(|_| url.clone());
+        let id = format!("{:x}", Sha256::digest(identity.as_bytes()));
         let source = app.moddir.join(".state/sing-box/subscription-work/sources")
             .join(format!("{id}.yaml"));
         let valid_source = fs::symlink_metadata(&source)

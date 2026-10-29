@@ -608,10 +608,14 @@ fn normalized_subscription_payload(payload: &str) -> Result<String, String> {
 fn normalized_subscription_text(text: &str) -> Result<String, String> {
     let mut seen = HashSet::new();
     let mut lines = Vec::new();
-    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        validate_subscription_url(line)?;
-        if seen.insert(line.to_string()) {
-            lines.push(line.to_string());
+    for line in text
+        .split(['\r', '\n'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let canonical = canonical_subscription_url(line)?;
+        if seen.insert(canonical.clone()) {
+            lines.push(canonical);
             if lines.len() > MAX_SINGBOX_SUBSCRIPTION_URLS {
                 return Err(format!(
                     "sing-box subscription URL list supports at most {MAX_SINGBOX_SUBSCRIPTION_URLS} entries"
@@ -893,6 +897,47 @@ pub(crate) fn validate_subscription_url(url: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Canonical cache and duplicate identity shared with the shell fetch path.
+/// Normalize the HTTPS origin while preserving ASCII path/query bytes and
+/// percent-encoding raw UTF-8 bytes in the suffix.
+pub(crate) fn canonical_subscription_url(url: &str) -> Result<String, String> {
+    let request_url = url.split_once('#').map_or(url, |(prefix, _)| prefix);
+    validate_subscription_url(request_url)?;
+    let authority = parse_subscription_authority(request_url)?;
+    let host = authority.host.to_ascii_lowercase();
+    let host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host
+    };
+    let port = if authority.port == 443 {
+        String::new()
+    } else {
+        format!(":{}", authority.port)
+    };
+    let (_, remainder) = request_url
+        .split_once("://")
+        .ok_or_else(|| "Subscription URL must use HTTPS".to_string())?;
+    let authority_end = remainder.find(['/', '?']).unwrap_or(remainder.len());
+    let suffix = &remainder[authority_end..];
+    let path_query = if suffix.is_empty() {
+        "/".to_string()
+    } else if suffix.starts_with('?') {
+        format!("/{suffix}")
+    } else {
+        suffix.to_string()
+    };
+    let path_query = path_query.bytes().fold(String::new(), |mut encoded, byte| {
+        if byte.is_ascii() {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+        encoded
+    });
+    Ok(format!("https://{host}{port}{path_query}"))
 }
 
 struct SubscriptionAuthority<'a> {

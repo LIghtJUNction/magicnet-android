@@ -979,7 +979,6 @@ magicnet_singbox_update_subscription_unlocked() {
     _work_dir="${_sub_state_dir}/subscription-work"
     _nodes_dir="${_sub_stage_dir}/nodes"
     _outbounds_file="${_sub_stage_dir}/outbounds.json"
-    _tags_file="${_sub_stage_dir}/tags.txt"
     _sources_file="${_sub_stage_dir}/sources.txt"
     _counts_file="${_sub_stage_dir}/counts.txt"
     _sub_active_url="${MODDIR}/.config/sing-box/subscription.url"
@@ -1099,6 +1098,11 @@ magicnet_singbox_update_subscription_unlocked() {
     done <"$_sources_file"
     MAGICNET_SUB_NATIVE_PARSER="$_native_parser"
     MAGICNET_SUB_NATIVE_NODE_COUNT="$_node_total"
+    _semantic_expected_count=$(magicnet_singbox_count_native_nodes "$_nodes_dir" true) || {
+        magicnet_singbox_update_status convert failed native_count_failed || true
+        magicnet_singbox_update_cleanup_stage
+        return 1
+    }
 
     info "Subscription update stage: convert"
     magicnet_singbox_update_status convert running none || true
@@ -1106,7 +1110,7 @@ magicnet_singbox_update_subscription_unlocked() {
         [ "$MAGICNET_SUB_CONVERTER_AVAILABLE" = 1 ]; then
         MAGICNET_SUB_CONVERTER_ATTEMPTED=1
         MAGICNET_SUB_CONVERTER_RESULT=failed
-        if magicnet_singbox_build_outbounds_with_proxylink "$_sources_file" "$_outbounds_file" "$_node_total" >"${_sub_stage_dir}/proxylink-counts.txt" 2>/dev/null; then
+        if magicnet_singbox_build_outbounds_with_proxylink "$_sources_file" "$_outbounds_file" "$_semantic_expected_count" >"${_sub_stage_dir}/proxylink-counts.txt" 2>/dev/null; then
             # shellcheck disable=SC2046
             set -- $(cat "${_sub_stage_dir}/proxylink-counts.txt")
             _imported="$1"
@@ -1134,7 +1138,7 @@ magicnet_singbox_update_subscription_unlocked() {
     fi
     if [ "${MAGICNET_SUB_CONVERTER_RESULT:-not_attempted}" != success ] &&
         [ "${_node_total:-0}" -gt 0 ]; then
-        magicnet_singbox_build_outbounds_file "$_nodes_dir" "$_outbounds_file" "$_tags_file" >"$_counts_file" ||
+        magicnet_singbox_build_outbounds_file "$_nodes_dir" "$_outbounds_file" >"$_counts_file" ||
             {
                 magicnet_singbox_update_status convert failed conversion_failed || true
                 magicnet_singbox_update_cleanup_stage

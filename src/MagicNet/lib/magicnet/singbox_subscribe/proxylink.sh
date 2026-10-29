@@ -99,6 +99,7 @@ magicnet_singbox_build_outbounds_with_proxylink() {
     _tmp_config="${_out_file}.proxylink-config.json"
     _tmp_outbounds="${_out_file}.proxylink-outbounds.json"
     _filtered_outbounds="${_out_file}.proxylink-filtered.json"
+    # shellcheck disable=SC2034 # consumed by update.sh status metadata
     MAGICNET_SUB_CONVERTER_FORMAT=none
     _proxylink_jq=$(magicnet_singbox_proxylink_jq) || return 1
     printf '[]\n' >"$_tmp_outbounds" || return 1
@@ -150,8 +151,5 @@ magicnet_singbox_build_outbounds_with_proxylink() {
 magicnet_singbox_write_outbounds_from_json() {
     _nodes_json="$1"
     _out_file="$2"
-    _tags_file="${_out_file}.proxylink-tags"
-    _proxylink_jq=$(magicnet_singbox_proxylink_jq) || return 1
-    "$_proxylink_jq" -r '.[].tag // empty' "$_nodes_json" >"$_tags_file" || return 1
-    magicnet_singbox_build_outbounds_file_with_jq "$_nodes_json" "$_tags_file" "$_out_file" || return 1
+    magicnet_singbox_build_outbounds_file_with_jq "$_nodes_json" "$_out_file" || return 1
 }

@@ -141,7 +141,7 @@ magicnet_singbox_native_share_complete() (
     # requested semantics. Everything else requires the full converter.
     case "$_scheme" in
     ss | socks | socks5 | vmess) _allowed='|' ;;
-    vless) _allowed='|flow|security|sni|servername|fp|pbk|sid|type|network|path|host|serviceName|service_name|' ;;
+    vless) _allowed='|flow|security|sni|servername|fp|pbk|sid|type|network|path|host|serviceName|service_name|encryption|' ;;
     trojan) _allowed='|sni|servername|peer|insecure|allowInsecure|skip-cert-verify|alpn|type|network|path|host|serviceName|service_name|' ;;
     hysteria2 | hy2) _allowed='|sni|servername|alpn|' ;;
     anytls) _allowed='|sni|servername|peer|fp|fingerprint|insecure|allowInsecure|alpn|' ;;
@@ -169,6 +169,7 @@ magicnet_singbox_native_share_complete() (
             [ -z "$_value" ] || return 1
         done
         if [ "$_scheme" = vless ]; then
+            _value=$(magicnet_uri_query_value encryption "$_query") || return 1
             _value=$(magicnet_uri_query_value security "$_query") || return 1
             _security=$(printf '%s' "$_value" | tr '[:upper:]' '[:lower:]')
             case "$_security" in
@@ -282,6 +283,7 @@ magicnet_singbox_emit_node_json() {
     vless)
         _uuid=$(magicnet_json_escape "$(magicnet_yaml_value uuid)")
         _flow=$(magicnet_json_escape "$(magicnet_yaml_value flow)")
+        _encryption=$(magicnet_yaml_value encryption)
         _network=$(magicnet_yaml_value network)
         _tls=$(magicnet_yaml_value tls)
         [ -n "$_uuid" ] || return 1
@@ -290,6 +292,7 @@ magicnet_singbox_emit_node_json() {
             "$_name" "$_server" "$_port" "$_uuid"
         [ "$_network" != "tcp" ] && printf ',"transport":{"type":"%s"}' "$_network"
         [ -n "$_flow" ] && printf ',"flow":"%s"' "$_flow"
+        [ -n "$_encryption" ] && printf ',"encryption":"%s"' "$(magicnet_json_escape "$_encryption")"
         if magicnet_truthy "$_tls"; then
             _sni=$(magicnet_yaml_value servername)
             [ -n "$_sni" ] || _sni=$(magicnet_yaml_value sni)
@@ -547,6 +550,7 @@ EOF
         _userinfo=$(magicnet_percent_decode "$_userinfo") || return 1
         [ -n "$_userinfo" ] || return 1
         _flow=$(magicnet_uri_query_value flow "$_query")
+        _encryption=$(magicnet_uri_query_value encryption "$_query") || return 1
         _security=$(magicnet_uri_query_value security "$_query")
         _security=$(printf '%s' "$_security" | tr '[:upper:]' '[:lower:]')
         _sni=$(magicnet_uri_query_value sni "$_query")
@@ -558,6 +562,7 @@ EOF
         printf '{"type":"vless","tag":"%s","server":"%s","server_port":%s,"uuid":"%s"' \
             "$_tag" "$_server" "$_port" "$(magicnet_json_escape "$_userinfo")"
         [ -n "$_flow" ] && printf ',"flow":"%s"' "$(magicnet_json_escape "$_flow")"
+        [ -n "$_encryption" ] && printf ',"encryption":"%s"' "$(magicnet_json_escape "$_encryption")"
         if [ "$_security" = "reality" ]; then
             [ -n "$_sni" ] || return 1
             [ -n "$_pbk" ] || return 1

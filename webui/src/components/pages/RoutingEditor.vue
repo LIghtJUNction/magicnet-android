@@ -24,7 +24,7 @@ const pending = ref(false);
 const reloadRequested = ref(false);
 const previous = ref<RoutingOverlay | null>(null);
 const rule = reactive<{ kind: "domain" | "app"; value: string; outbound: string }>({ kind: "domain", value: "", outbound: "proxy" });
-const endpoint = reactive({ type: "selector", tag: "", members: "proxy, direct", server: "", port: "1080", username: "", password: "", uuid: "", method: "aes-128-gcm", tls: true, sni: "" });
+const endpoint = reactive({ type: "selector", tag: "", members: "proxy, direct", server: "", port: "1080", username: "", password: "", uuid: "", encryption: "", method: "aes-128-gcm", tls: true, sni: "" });
 const serialized = computed(() => JSON.stringify(overlay.value));
 const dirty = computed(() => saved.value !== serialized.value);
 const baseTargets = computed(() => { const owned = new Set(parseOverlay(basePatch.value[ROUTING_KEY])?.outbounds.map((item) => item.tag)); return targets.value.filter((item) => !owned.has(item.tag)); });
@@ -98,11 +98,14 @@ function addOutbound() {
     const port = Number(endpoint.port);
     if (!endpoint.server.trim() || !Number.isInteger(port) || port < 1 || port > 65535) { message.value = t("请填写服务器与有效端口。"); failed.value = true; return; }
     item.server = endpoint.server.trim(); item.server_port = port;
-    for (const key of ["username", "password", "uuid", "method"]) delete item[key];
+    for (const key of ["username", "password", "uuid", "encryption", "method"]) delete item[key];
     if (endpoint.username) item.username = endpoint.username;
     if (endpoint.password) item.password = endpoint.password;
     if (endpoint.type === "shadowsocks") item.method = endpoint.method;
-    if (endpoint.type === "vless") item.uuid = endpoint.uuid;
+    if (endpoint.type === "vless") {
+      item.uuid = endpoint.uuid;
+      if (endpoint.encryption) item.encryption = endpoint.encryption;
+    }
     if (endpoint.tls && ["http", "trojan", "vless"].includes(endpoint.type)) {
       const tls = object(item.tls) ? { ...item.tls } : {}; delete tls.server_name;
       item.tls = { ...tls, enabled: true, ...(endpoint.sni ? { server_name: endpoint.sni } : {}) };
@@ -110,14 +113,14 @@ function addOutbound() {
   }
   const index = overlay.value.outbounds.findIndex((own) => own.tag === tag);
   if (index >= 0) overlay.value.outbounds[index] = item; else overlay.value.outbounds.push(item);
-  endpoint.tag = ""; endpoint.password = ""; endpoint.uuid = ""; message.value = ""; failed.value = false;
+  endpoint.tag = ""; endpoint.password = ""; endpoint.uuid = ""; endpoint.encryption = ""; message.value = ""; failed.value = false;
 }
 function editOutbound(item: RoutingOutbound) {
   const text = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
   const tls = object(item.tls) ? item.tls : {};
   Object.assign(endpoint, { type: item.type, tag: item.tag,
     members: Array.isArray(item.outbounds) ? item.outbounds.filter((v): v is string => typeof v === "string").join(", ") : "proxy, direct",
-    server: text(item.server), port: String(item.server_port || 1080), username: text(item.username), password: text(item.password), uuid: text(item.uuid), method: text(item.method, "aes-128-gcm"), tls: tls.enabled === true, sni: text(tls.server_name) });
+    server: text(item.server), port: String(item.server_port || 1080), username: text(item.username), password: text(item.password), uuid: text(item.uuid), encryption: text(item.encryption), method: text(item.method, "aes-128-gcm"), tls: tls.enabled === true, sni: text(tls.server_name) });
 }
 function patch() { return { ...basePatch.value, [ROUTING_KEY]: { schema: 1, rules: overlay.value.rules.map((item) => ({ ...item })), outbounds: overlay.value.outbounds.map((item) => ({ ...item })) } }; }
 async function preview() { await action("preview", async () => { const data = await request("preview-file", { patch: patch() }); if (data.valid !== true) fail("override.invalid_response"); validated.value = serialized.value; message.value = t("分流预览通过。确认列表后保存并应用。"); }); }
@@ -158,7 +161,7 @@ onMounted(load);
           <label>{{ t("出口类型") }}<select :aria-label="t('出口类型')" v-model="endpoint.type" class="mn-field"><option value="selector">{{ t("手动策略组") }}</option><option value="urltest">{{ t("自动测速组") }}</option><option value="socks">SOCKS5</option><option value="http">HTTP</option><option value="trojan">Trojan</option><option value="shadowsocks">Shadowsocks</option><option value="vless">VLESS</option></select></label>
           <label>{{ t("名称") }}<Input v-model="endpoint.tag" autocomplete="off" /></label>
           <label v-if="['selector','urltest'].includes(endpoint.type)" class="routing-wide">{{ t("组成员（原始名称，逗号分隔）") }}<Input v-model="endpoint.members" /></label>
-          <template v-else><label>{{ t("服务器") }}<Input v-model="endpoint.server" autocomplete="off" /></label><label>{{ t("端口") }}<Input v-model="endpoint.port" type="number" min="1" max="65535" /></label><label v-if="['socks','http'].includes(endpoint.type)">{{ t("用户名") }}<Input v-model="endpoint.username" autocomplete="off" /></label><label v-if="endpoint.type !== 'vless'">{{ t("密码") }}<Input v-model="endpoint.password" type="password" autocomplete="new-password" /></label><label v-if="endpoint.type === 'vless'">UUID<Input v-model="endpoint.uuid" type="password" autocomplete="off" /></label><label v-if="endpoint.type === 'shadowsocks'">{{ t("加密方式") }}<Input v-model="endpoint.method" /></label><template v-if="['http','trojan','vless'].includes(endpoint.type)"><label class="routing-check"><input v-model="endpoint.tls" type="checkbox" />TLS</label><label>SNI<Input v-model="endpoint.sni" /></label></template></template>
+          <template v-else><label>{{ t("服务器") }}<Input v-model="endpoint.server" autocomplete="off" /></label><label>{{ t("端口") }}<Input v-model="endpoint.port" type="number" min="1" max="65535" /></label><label v-if="['socks','http'].includes(endpoint.type)">{{ t("用户名") }}<Input v-model="endpoint.username" autocomplete="off" /></label><label v-if="endpoint.type !== 'vless'">{{ t("密码") }}<Input v-model="endpoint.password" type="password" autocomplete="new-password" /></label><label v-if="endpoint.type === 'vless'">UUID<Input v-model="endpoint.uuid" type="password" autocomplete="off" /></label><label v-if="endpoint.type === 'vless'">{{ t("VLESS 加密") }}<Input v-model="endpoint.encryption" type="password" autocomplete="off" maxlength="16384" /></label><label v-if="endpoint.type === 'shadowsocks'">{{ t("加密方式") }}<Input v-model="endpoint.method" /></label><template v-if="['http','trojan','vless'].includes(endpoint.type)"><label class="routing-check"><input v-model="endpoint.tls" type="checkbox" />TLS</label><label>SNI<Input v-model="endpoint.sni" /></label></template></template>
           <Button type="submit"><Plus :size="16" />{{ t("加入或更新出口") }}</Button>
         </form>
       </details>

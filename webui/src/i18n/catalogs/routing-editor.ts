@@ -128,6 +128,10 @@ export default {
     "Cipher",
     "Шифр"
   ],
+  "VLESS 加密": [
+    "VLESS Encryption",
+    "Шифрование VLESS"
+  ],
   "未连接": [
     "Disconnected",
     "Нет соединения"

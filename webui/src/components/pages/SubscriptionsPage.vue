@@ -112,7 +112,7 @@ const applyLabel = computed(() => configured.value && !canonicalDraft.value
   ? t("移除所有来源") : configured.value ? t("保存并应用") : t("添加并启用"));
 const usageRows = computed(() => buildSubscriptionUsageOverview(state.subscriptions));
 const lifecycleRunning = computed(() => subscriptionLifecycleRunning(state.backgroundTask, state.subscriptions.updateRunning));
-const sourceCount = computed(() => state.subscriptions.sourceMode === "local" ? 1 : usageRows.value.length);
+const sourceCount = computed(() => state.subscriptions.sourceMode === "local" ? 1 : state.subscriptions.configuredCount);
 const lifecycleMessage = computed(() => {
   if (lifecycleRunning.value) return t("正在更新订阅，完成后用量与节点会自动刷新。");
   if (state.backgroundTask.status === "timeout" && isSubscriptionBackgroundArgs(state.backgroundTask.args)) {
