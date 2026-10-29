@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "scope": "Builder verification of repaired candidate; independent coordinator acceptance is separate",
+  "product": {
+    "version": "v1.8.1",
+    "version_code": 10609,
+    "recipe_version": "0.3.1",
+    "channel": "candidate"
+  },
+  "functional_commit": "280f044a0dc63f49965a910efd9509abd13a316b",
+  "functional_inventory_sha256": "df7c5c3e0369c3bb4a2a6470fb5fa12cba147054669158b7a6e2f20b76b415e0",
+  "records": [
+    {
+      "check": "Go race",
+      "result": "PASS",
+      "case_count": 56,
+      "evidence": "test-results/repair-go-verification.json",
+      "evidence_sha256": "2157d87ae61060219232b3717ad4a21edee30cb33aa55330c28958c6edf7c28b",
+      "scope": "56 top-level tests / 72 including nested cases; final functional source; report also includes vet"
+    },
+    {
+      "check": "compiled update and network access recovery",
+      "result": "PASS",
+      "case_count": 28,
+      "evidence": "test-results/repair-acceptance.json",
+      "evidence_sha256": "6d6358b2a1097bb59c46c71977273ef9404041265eff065fe22bc4b246624bcd",
+      "scope": "now-disclosed developer regressions; synthetic provider; no root-manager worker launched"
+    },
+    {
+      "check": "compiled stage promotion",
+      "result": "PASS",
+      "case_count": 12,
+      "evidence": "module/test-artifacts/promotion-verification.json",
+      "evidence_sha256": "77e82a34494f205cf32197dd6f6dcdd7652a94ffb9775f8db43af3163a45c65d",
+      "scope": "actual host directory rename, fixed core check, full path-journal recovery; no actual Android manager"
+    },
+    {
+      "check": "real HTTP draft visibility",
+      "result": "PASS",
+      "case_count": 2,
+      "evidence": "webui/test-artifacts/source-draft-http-report.json",
+      "evidence_sha256": "cf066843ecd57852525949cee640cb7114c79687bd9387932d2c52d5c3298b13",
+      "scope": "Chromium 141 authenticated loopback, authentic response delayed, fresh profiles at 390/1280 px"
+    },
+    {
+      "check": "WebUI contracts",
+      "result": "PASS",
+      "case_count": 14,
+      "evidence": "webui/test-artifacts/repair-contracts.json",
+      "evidence_sha256": "7d6e8c3c91d7f59a68b3f70c327f6db1b04dd90d7b5ad3fe12fbbbc4d93fba2f",
+      "scope": "Node model/bridge contracts"
+    },
+    {
+      "check": "host control integration",
+      "result": "PASS",
+      "case_count": 11,
+      "evidence": "test-results/host-control.json",
+      "evidence_sha256": "9d3cadfbc8c0301c8053c191a74c280b4798f6574e2243a9bb66ab116e92ae31",
+      "scope": "final compiled CLI; stopped local import, scheduler owner, MCP and private backup"
+    },
+    {
+      "check": "installer/package verification",
+      "result": "PASS",
+      "case_count": 12,
+      "evidence": "module/test-artifacts/package-verification.json",
+      "evidence_sha256": "a66db7785c69b7a846d5f95663150cada0bddb0eecb9e51cc3777ccd0f77ecef",
+      "scope": "real Linux installer operating Android package bytes in isolated host directories"
+    },
+    {
+      "check": "packaging reproducibility",
+      "result": "PASS",
+      "case_count": 14,
+      "evidence": "module/test-artifacts/reproducibility.json",
+      "evidence_sha256": "0e69cd0cc70977e54546776aa76b059893dd78c4962feda0e30cba893f507669",
+      "scope": "two packaging runs, equal output bytes; no compiler reproducibility claim"
+    },
+    {
+      "check": "no-Git source build",
+      "result": "PASS",
+      "case_count": 9,
+      "evidence": "module/test-artifacts/archive-build-verification.json",
+      "evidence_sha256": "79dc6efa783e83fb55f1410aec8c2a9b3bdc6653e260ef6a40f6036e1ae10df8",
+      "scope": "actual Linux CLI compilation from synthetic source archive fixture; explicitly synthetic revision canary"
+    }
+  ],
+  "not_run": [
+    "Android ELF/DEX execution and real root-manager install/promotion/reboot",
+    "SELinux, native WebUI bridge, binder policy, TUN/eBPF, hotspot clients and actual applications",
+    "Tailnet/WARP/provider accounts, enabled VLESS Encryption external server, public-network soak, device performance",
+    "Official Release publication or installation; M40 is outside frozen input"
+  ],
+  "not_implemented": [
+    "External converter subprocess execution/timeout/fallback; native parser is provided under SUB-005"
+  ],
+  "first_candidate_status": "Frozen separately; its broad browser/network/performance reports are historical unless explicitly rerun above"
+}

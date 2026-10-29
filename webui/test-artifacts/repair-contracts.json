@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "cases": 14,
+  "elapsed_seconds": 0.108,
+  "functional_commit": "280f044a0dc63f49965a910efd9509abd13a316b",
+  "model_sha256": "f80f6275ce69cdd483bbeb37a9db7c2cab781fab45ecd38af8043337dac09675",
+  "method": "Node test module executed directly, 14 assertions groups; no browser or device"
+}

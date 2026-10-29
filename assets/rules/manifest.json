@@ -1,0 +1,453 @@
+{
+  "schema": 1,
+  "revision": "f3335f9420d07b8c50b26488df2a9492da6bbb44",
+  "release_tag": "rules-20260918-1ade898a44cc7727",
+  "repository": "https://github.com/LIghtJUNction/MagicNetRules",
+  "files": [
+    {
+      "tag": "lyc-geosite-ads",
+      "path": "lyc-geosite-ads.srs",
+      "sha256": "1d6750e7cd2c180fd56d37dc53fd4e3046f0e2d2cbe78ec79642e94f7580a5e3",
+      "format": "binary",
+      "size": 1649748,
+      "upstream_path": "geosite-category-ads-all.srs"
+    },
+    {
+      "tag": "lyc-geosite-cn",
+      "path": "lyc-geosite-cn.srs",
+      "sha256": "4c4181072a894703c345a52b77d5119c9d437503a423aa20ac5a9fcf90216d41",
+      "format": "binary",
+      "size": 444827,
+      "upstream_path": "geosite-cn.srs"
+    },
+    {
+      "tag": "lyc-geoip-cn",
+      "path": "lyc-geoip-cn.srs",
+      "sha256": "489d8a38c061c1ae34ae8a955ed3fbea5cc3dcfb0935f61d7b7d678a9de7c730",
+      "format": "binary",
+      "size": 37110,
+      "upstream_path": "geoip-cn.srs"
+    },
+    {
+      "tag": "lyc-geoip-telegram",
+      "path": "lyc-geoip-telegram.srs",
+      "sha256": "c5ae208004b0752baee307348ef820b9fe9e8aa3a14556f54af68791b6d4030b",
+      "format": "binary",
+      "size": 127,
+      "upstream_path": "geoip-telegram.srs"
+    },
+    {
+      "tag": "metacubex-geosite-cn",
+      "path": "metacubex-geosite-cn.srs",
+      "sha256": "265b60680d291447ef98f80513c7ed350efe7047ae6cde77a7a9578b623cbd1b",
+      "format": "binary",
+      "size": 444977,
+      "upstream_path": "metacubex-geosite-cn.srs"
+    },
+    {
+      "tag": "metacubex-geoip-cn",
+      "path": "metacubex-geoip-cn.srs",
+      "sha256": "412585ab8d9f05701a11cf6b040e85719510696d0879389d5a8ef8d8764b04dd",
+      "format": "binary",
+      "size": 36934,
+      "upstream_path": "metacubex-geoip-cn.srs"
+    },
+    {
+      "tag": "metacubex-geosite-geolocation-not-cn",
+      "path": "metacubex-geosite-geolocation-not-cn.srs",
+      "sha256": "c1fdd4b0f277e4c21801aafdd163c867661a53dc3ca5930fe0337c907ac58081",
+      "format": "binary",
+      "size": 160753,
+      "upstream_path": "metacubex-geosite-geolocation-not-cn.srs"
+    },
+    {
+      "tag": "hagezi-light",
+      "path": "hagezi-light.srs",
+      "sha256": "43951dad00ef63004fa8b1628f7b45739e98e39bbcb76e29a3649e4328d92aaa",
+      "format": "binary",
+      "size": 306083,
+      "upstream_path": "hagezi-light.srs"
+    },
+    {
+      "tag": "karing-acl4ssr-wechat",
+      "path": "karing-acl4ssr-wechat.srs",
+      "sha256": "106d897c3720759591f321228cb5f4e6ef04da3e812a15db8141552f9fcc7f59",
+      "format": "binary",
+      "size": 208,
+      "upstream_path": "karing-acl4ssr-wechat.srs"
+    },
+    {
+      "tag": "service-wechat-dns",
+      "path": "service-wechat-dns.srs",
+      "sha256": "497df098e359e4d705395bd0ea79751ea070e65bbb54e5762dc3797440db5fb3",
+      "format": "binary",
+      "size": 335,
+      "upstream_path": "service-wechat-dns.srs"
+    },
+    {
+      "tag": "karing-acl4ssr-china-domain",
+      "path": "karing-acl4ssr-china-domain.srs",
+      "sha256": "2cce86f9a063af98d32d6a391a343e4348a32e478b06cb94ed6a93beec19800c",
+      "format": "binary",
+      "size": 3638,
+      "upstream_path": "karing-acl4ssr-china-domain.srs"
+    },
+    {
+      "tag": "karing-acl4ssr-china-ip",
+      "path": "karing-acl4ssr-china-ip.srs",
+      "sha256": "89a131c3f3cff938070fd3a643259e3bce0ccdb3d9d45fb13be353c5d13a9ae7",
+      "format": "binary",
+      "size": 24852,
+      "upstream_path": "karing-acl4ssr-china-ip.srs"
+    },
+    {
+      "tag": "sukka-chatgpt-voice",
+      "path": "sukka-chatgpt-voice.json",
+      "sha256": "54352c2b5493fa6d49df34fc2a86763d189ec24563742f2e68602d505bbe5999",
+      "format": "source",
+      "size": 847,
+      "upstream_path": "sukka-chatgpt-voice.json"
+    },
+    {
+      "tag": "meta-tencent",
+      "path": "meta-tencent.srs",
+      "sha256": "355479aaf179d3c872aed6793a0fc1c478061c444477ada4464d2d66992c4a08",
+      "format": "binary",
+      "size": 3722,
+      "upstream_path": "metacubex-service-tencent.srs"
+    },
+    {
+      "tag": "meta-category-doh",
+      "path": "meta-category-doh.srs",
+      "sha256": "caa28943a82287c48bd1f260af6970ac85d8a9fcaac15d8961f041585f805ad9",
+      "format": "binary",
+      "size": 1188,
+      "upstream_path": "metacubex-service-category-doh.srs"
+    },
+    {
+      "tag": "meta-category-ip-geo-detect",
+      "path": "meta-category-ip-geo-detect.srs",
+      "sha256": "ab3dd60db29f684026be694a327b4a5b72c4deed2f184ea7cefc895ca474691b",
+      "format": "binary",
+      "size": 1862,
+      "upstream_path": "metacubex-service-category-ip-geo-detect.srs"
+    },
+    {
+      "tag": "meta-connectivity-check",
+      "path": "meta-connectivity-check.srs",
+      "sha256": "a7d5220bda1e263170f62cfe5080535dbd99c9a52e6217ebb216b69e98a3dad1",
+      "format": "binary",
+      "size": 458,
+      "upstream_path": "metacubex-service-connectivity-check.srs"
+    },
+    {
+      "tag": "meta-speedtest",
+      "path": "meta-speedtest.srs",
+      "sha256": "f55bbb72eb6e8e660eb02524add4430c36643b3c0d55948fc469342acf8a2781",
+      "format": "binary",
+      "size": 286,
+      "upstream_path": "metacubex-service-speedtest.srs"
+    },
+    {
+      "tag": "meta-openai",
+      "path": "meta-openai.srs",
+      "sha256": "d2c8fffc93d82084c4a01955891195cb7df84e1a804200de9e41868ac99e723b",
+      "format": "binary",
+      "size": 435,
+      "upstream_path": "metacubex-service-openai.srs"
+    },
+    {
+      "tag": "meta-google-gemini",
+      "path": "meta-google-gemini.srs",
+      "sha256": "9f90dbb61fd2d210a956c07fe754878571bee477c892911571e849af68f41e4a",
+      "format": "binary",
+      "size": 481,
+      "upstream_path": "metacubex-service-google-gemini.srs"
+    },
+    {
+      "tag": "meta-xai",
+      "path": "meta-xai.srs",
+      "sha256": "88b662b6ecf53728a581f18e296ed67c4cc5a85230d44a0c1a8ca436c1e7374d",
+      "format": "binary",
+      "size": 77,
+      "upstream_path": "metacubex-service-xai.srs"
+    },
+    {
+      "tag": "meta-anthropic",
+      "path": "meta-anthropic.srs",
+      "sha256": "d9de32bb3884bd2127b5ff96da5d26f1d7b69eeaca2dd05d90982bdb55f49f14",
+      "format": "binary",
+      "size": 160,
+      "upstream_path": "metacubex-service-anthropic.srs"
+    },
+    {
+      "tag": "meta-bing@cn",
+      "path": "meta-bing@cn.srs",
+      "sha256": "3941def52f3c3030cab6dc52db5e7251913555cacd3413d71f8c6d9e42c8a695",
+      "format": "binary",
+      "size": 112,
+      "upstream_path": "metacubex-service-bing@cn.srs"
+    },
+    {
+      "tag": "meta-bing",
+      "path": "meta-bing.srs",
+      "sha256": "2450c4da4cb22d97c0ac7ee3f2c0db91f183f50c5e2749e30c6c2d18664394e1",
+      "format": "binary",
+      "size": 470,
+      "upstream_path": "metacubex-service-bing.srs"
+    },
+    {
+      "tag": "meta-category-game-platforms-download",
+      "path": "meta-category-game-platforms-download.srs",
+      "sha256": "585de57fa33833134f277e65aff2fe737b28361f6f0215886d5bc52cf5ea2adf",
+      "format": "binary",
+      "size": 1825,
+      "upstream_path": "metacubex-service-category-game-platforms-download.srs"
+    },
+    {
+      "tag": "meta-win-update",
+      "path": "meta-win-update.srs",
+      "sha256": "347521beae83ed80156862be5971abe05086d5adbecefbc9257654a8f55d0293",
+      "format": "binary",
+      "size": 1553,
+      "upstream_path": "metacubex-service-win-update.srs"
+    },
+    {
+      "tag": "meta-apple-update",
+      "path": "meta-apple-update.srs",
+      "sha256": "3776acf4ab5e11d3324b20f870e969357aff7d0fdf620b2053f77221f8932c62",
+      "format": "binary",
+      "size": 227,
+      "upstream_path": "metacubex-service-apple-update.srs"
+    },
+    {
+      "tag": "meta-icloud",
+      "path": "meta-icloud.srs",
+      "sha256": "ebc8deafa0cfcb75c2c47119cc0d808b821e52b20f6744b6f552ca3dd804e92b",
+      "format": "binary",
+      "size": 487,
+      "upstream_path": "metacubex-service-icloud.srs"
+    },
+    {
+      "tag": "meta-apple",
+      "path": "meta-apple.srs",
+      "sha256": "bdc028903330da7aa9a43db610caac7b1877f8861bf347e2b13f5a6a759958f8",
+      "format": "binary",
+      "size": 14449,
+      "upstream_path": "metacubex-service-apple.srs"
+    },
+    {
+      "tag": "meta-microsoft",
+      "path": "meta-microsoft.srs",
+      "sha256": "a86d4cbcfddbd3c20bba8e1a569b831d758b052f0318af014158b1ef2e3145ad",
+      "format": "binary",
+      "size": 6032,
+      "upstream_path": "metacubex-service-microsoft.srs"
+    },
+    {
+      "tag": "meta-category-scholar-!cn",
+      "path": "meta-category-scholar-!cn.srs",
+      "sha256": "5336c9bdb9c731a0793940f090f851b9672d09917323d428e9b7e3c7ceebedd2",
+      "format": "binary",
+      "size": 4353,
+      "upstream_path": "metacubex-service-category-scholar-!cn.srs"
+    },
+    {
+      "tag": "meta-category-ai-!cn",
+      "path": "meta-category-ai-!cn.srs",
+      "sha256": "e4d64e54584c14ae72a30967fbb8a2e625249e8ae5751239f5462daa989ca168",
+      "format": "binary",
+      "size": 1818,
+      "upstream_path": "metacubex-service-category-ai-!cn.srs"
+    },
+    {
+      "tag": "meta-category-dev",
+      "path": "meta-category-dev.srs",
+      "sha256": "7868a338fad9d20209d9f840a9d60d79e9029185f11ccb489032522ba66f017c",
+      "format": "binary",
+      "size": 5548,
+      "upstream_path": "metacubex-service-category-dev.srs"
+    },
+    {
+      "tag": "meta-category-media",
+      "path": "meta-category-media.srs",
+      "sha256": "34405bd7eb11cae426e3b70c895d2cb66a0624d605dfc965689478157636000a",
+      "format": "binary",
+      "size": 12553,
+      "upstream_path": "metacubex-service-category-media.srs"
+    },
+    {
+      "tag": "meta-category-games-!cn",
+      "path": "meta-category-games-!cn.srs",
+      "sha256": "b13888e1ce43ff82f732972dba03402c8cb3c2568d9ae96dc2aa8e5757601362",
+      "format": "binary",
+      "size": 7622,
+      "upstream_path": "metacubex-service-category-games-!cn.srs"
+    },
+    {
+      "tag": "meta-category-social-media-!cn",
+      "path": "meta-category-social-media-!cn.srs",
+      "sha256": "dbef60a4d3bb7ef446b20051a4235b1f1f6f3490a7a27edc09953f9d5249e364",
+      "format": "binary",
+      "size": 4851,
+      "upstream_path": "metacubex-service-category-social-media-!cn.srs"
+    },
+    {
+      "tag": "meta-telegram",
+      "path": "meta-telegram.srs",
+      "sha256": "30cd392b1d79b0569af077874b36c6892bf13a94dce0d8e4410c3b1976d62ea2",
+      "format": "binary",
+      "size": 248,
+      "upstream_path": "metacubex-service-telegram.srs"
+    },
+    {
+      "tag": "meta-twitter",
+      "path": "meta-twitter.srs",
+      "sha256": "a2da69babdc2441e8ac487ddf91a5259e4628de74f44bb9bcd6a2113841bac0f",
+      "format": "binary",
+      "size": 284,
+      "upstream_path": "metacubex-service-twitter.srs"
+    },
+    {
+      "tag": "meta-whatsapp",
+      "path": "meta-whatsapp.srs",
+      "sha256": "69c3a413c97070f9db7ea836c48998217e2fbfb2535b887e312424da843554a3",
+      "format": "binary",
+      "size": 180,
+      "upstream_path": "metacubex-service-whatsapp.srs"
+    },
+    {
+      "tag": "meta-google",
+      "path": "meta-google.srs",
+      "sha256": "a1e1d91c6a12e06fa3abeb828cb7ad14b1c3b085a8d149de277b80ed888e0b12",
+      "format": "binary",
+      "size": 6240,
+      "upstream_path": "metacubex-service-google.srs"
+    },
+    {
+      "tag": "meta-google-play",
+      "path": "meta-google-play.srs",
+      "sha256": "646adc5da39b1a1373c7feb0a5c480dc9807d3a63392e7ace7c93364fdf531e1",
+      "format": "binary",
+      "size": 220,
+      "upstream_path": "metacubex-service-google-play.srs"
+    },
+    {
+      "tag": "meta-category-entertainment",
+      "path": "meta-category-entertainment.srs",
+      "sha256": "d907af66f6709619cf070aa30f55bb32037bbe0d4979b2a35b06805d1c133912",
+      "format": "binary",
+      "size": 16978,
+      "upstream_path": "metacubex-service-category-entertainment.srs"
+    },
+    {
+      "tag": "meta-category-communication",
+      "path": "meta-category-communication.srs",
+      "sha256": "1392f62e02d03cb6dc2ddb887a56222383f7562205fe4858bb5fdb5421506c74",
+      "format": "binary",
+      "size": 1375,
+      "upstream_path": "metacubex-service-category-communication.srs"
+    },
+    {
+      "tag": "meta-github",
+      "path": "meta-github.srs",
+      "sha256": "66f7429acc1054306eda75a3e674085754df5ed221685f866d2fd05e33617d7c",
+      "format": "binary",
+      "size": 692,
+      "upstream_path": "metacubex-service-github.srs"
+    },
+    {
+      "tag": "meta-huggingface",
+      "path": "meta-huggingface.srs",
+      "sha256": "5b281328abcc078fa081cd9799a556da569bcf8d1f68436ffdacc90a02589b6e",
+      "format": "binary",
+      "size": 69,
+      "upstream_path": "metacubex-service-huggingface.srs"
+    },
+    {
+      "tag": "meta-gitlab",
+      "path": "meta-gitlab.srs",
+      "sha256": "2f99efe3f68d03671c168101c8a33aeabfb3e58f761a92e7e8aa804badcd8909",
+      "format": "binary",
+      "size": 126,
+      "upstream_path": "metacubex-service-gitlab.srs"
+    },
+    {
+      "tag": "meta-docker",
+      "path": "meta-docker.srs",
+      "sha256": "ed47d702ba34fd9a75fd981fa6c8e87fafa7cdc616d4eafde7b215bb1b34fdc1",
+      "format": "binary",
+      "size": 200,
+      "upstream_path": "metacubex-service-docker.srs"
+    },
+    {
+      "tag": "meta-npmjs",
+      "path": "meta-npmjs.srs",
+      "sha256": "1d4f9228d3a0af89a5ddcfedad52cc059efc61cffa4fccb70d78df88e1553c3c",
+      "format": "binary",
+      "size": 76,
+      "upstream_path": "metacubex-service-npmjs.srs"
+    },
+    {
+      "tag": "meta-notion",
+      "path": "meta-notion.srs",
+      "sha256": "5888ab752aa9b2b52ef0e77bbd6888013f2c80903feb411a69ff3a09dd837b6a",
+      "format": "binary",
+      "size": 126,
+      "upstream_path": "metacubex-service-notion.srs"
+    },
+    {
+      "tag": "meta-discord",
+      "path": "meta-discord.srs",
+      "sha256": "289c98b6887f4de780670618deed0613c2cd489818b2c8abd1ee9d12bb972734",
+      "format": "binary",
+      "size": 408,
+      "upstream_path": "metacubex-service-discord.srs"
+    },
+    {
+      "tag": "meta-slack",
+      "path": "meta-slack.srs",
+      "sha256": "e46249bbc512ca3c5c1f49a83c2fb477e4dafeeffcc3b675710298c33d219782",
+      "format": "binary",
+      "size": 163,
+      "upstream_path": "metacubex-service-slack.srs"
+    },
+    {
+      "tag": "meta-reddit",
+      "path": "meta-reddit.srs",
+      "sha256": "4677ea3324d082ca9a47c2bae79f27f04fdf008e1a5946ec6a4485887559b521",
+      "format": "binary",
+      "size": 181,
+      "upstream_path": "metacubex-service-reddit.srs"
+    },
+    {
+      "tag": "meta-spotify",
+      "path": "meta-spotify.srs",
+      "sha256": "0e187c6c538b48975f07f9668388bf25e1bae43cf8cce2e82396cbb0a7ac94ea",
+      "format": "binary",
+      "size": 362,
+      "upstream_path": "metacubex-service-spotify.srs"
+    },
+    {
+      "tag": "meta-netflix",
+      "path": "meta-netflix.srs",
+      "sha256": "40c5f50c80ceaba2a5e0b5c5760c9c5fce0b08498501397d8264dcae2aeeda53",
+      "format": "binary",
+      "size": 344,
+      "upstream_path": "metacubex-service-netflix.srs"
+    },
+    {
+      "tag": "meta-youtube",
+      "path": "meta-youtube.srs",
+      "sha256": "c0536fe1195a661bce0c603686291e36b5465d0f8b046ee562180beeb2eaa20b",
+      "format": "binary",
+      "size": 1147,
+      "upstream_path": "metacubex-service-youtube.srs"
+    }
+  ],
+  "archives": {
+    "magicnet-rules.tar.gz": "1ade898a44cc7727b1d98404e206f796a4a0432b1aa2be98289cc7823b0ae0bf",
+    "magicnet-rules-sources.tar.gz": "b88342e8f1151d0d1d9a6d73543a8eb8ba789a8a43398591d7652c3ac111ba5f",
+    "upstream-manifest.json": "2f91f78d6e3b6a93e845d6345afb039f01a9d577717d23a0423a4bac4f801592"
+  }
+}

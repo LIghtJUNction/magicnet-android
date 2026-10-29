@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "case": "go-test-race",
+      "result": "FAIL",
+      "exit_code": 1,
+      "elapsed_seconds": 81.567,
+      "source_revision": "cc1920418acb7b323d04b8978832a89851325cf7",
+      "scope": "host synthetic fixtures and pinned core validation; no Android device"
+    }
+  ],
+  "observed_failure": "License notice source filename .go was discovered as an incomplete Go package by ./...",
+  "tests_itself": "53 top-level tests / 63 including subtests passed; aggregate build failed",
+  "remediation": "Collector preserves original bytes and source path but stores source-suffix notices as text; complete ./... rerun required"
+}

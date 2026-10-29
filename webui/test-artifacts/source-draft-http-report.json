@@ -1,0 +1,66 @@
+{
+  "passed": true,
+  "controller": {
+    "channel": "candidate",
+    "commit": "280f044a0dc63f49965a910efd9509abd13a316b",
+    "input_sha256": "502e160a363ffdc6e60477261ac15b74884b07f37de78af69558b0806f8e717a",
+    "recipe": "magicnet@0.3.1",
+    "recipe_version": "0.3.1",
+    "version": "1.8.1",
+    "version_code": 10609
+  },
+  "binary_sha256": "cb5ed46ad892e2478751a2f2c215091289dd37dc5e0c77d94caed1c0faec7255",
+  "ui_sha256": {
+    "app.js": "1c87520ff5095503fb90823a59a20e9042ab83356f58fc1ea19c9de17c9cabe8",
+    "model.js": "f80f6275ce69cdd483bbeb37a9db7c2cab781fab45ecd38af8043337dac09675"
+  },
+  "environment": "Chromium 141 / Playwright 1.56.1; actual compiled Linux controller, authenticated loopback HTTP and pinned core check; fresh synthetic module roots",
+  "host_cjk_font": "Host-only font configuration supplied; product still uses system fonts",
+  "response_timing": "The real successful apply response is withheld until C is entered; no state or receipt projection is used.",
+  "network_used": "loopback only; synthetic local subscription, no provider request",
+  "device_used": false,
+  "core_started": false,
+  "cases": [
+    {
+      "width": 390,
+      "height": 844,
+      "passed": true,
+      "checks": [
+        "fresh zero-source editor visible without an explicit-open flag",
+        "authentic compiled import response delayed, without modifying its bytes",
+        "new draft edited while old invocation owns the writer",
+        "committed local source count becomes one",
+        "new draft text and dirty state preserved and visible",
+        "draft remains visible after page navigation",
+        "explicit cancel restores baseline and collapses the clean editor",
+        "complete local payload preserved and consumed",
+        "shared output and browser storage contain no draft canary",
+        "core remains stopped",
+        "no horizontal overflow"
+      ],
+      "request_count": 19
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "passed": true,
+      "checks": [
+        "fresh zero-source editor visible without an explicit-open flag",
+        "authentic compiled import response delayed, without modifying its bytes",
+        "new draft edited while old invocation owns the writer",
+        "committed local source count becomes one",
+        "new draft text and dirty state preserved and visible",
+        "draft remains visible after page navigation",
+        "explicit cancel restores baseline and collapses the clean editor",
+        "complete local payload preserved and consumed",
+        "shared output and browser storage contain no draft canary",
+        "core remains stopped",
+        "no horizontal overflow"
+      ],
+      "request_count": 19
+    }
+  ],
+  "failures": [],
+  "pageErrors": [],
+  "cleanup": "fixture HTTP processes and temporary module roots removed"
+}

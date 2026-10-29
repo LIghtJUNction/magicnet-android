@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "artifact_count": 14,
+  "method": "Two independent package.py runs on the same frozen inputs and host toolchain; all 14 output files compared byte-for-byte via SHA-256; compiler reproducibility not claimed",
+  "implementation_commit": "280f044a0dc63f49965a910efd9509abd13a316b",
+  "elapsed_seconds": 14.173,
+  "sha256": {
+    "MagicNet-component-android-bridge-89f53cc7ee203ad2c1f026020489c881ff01894281083f7f22bc815cb19dacf9.zip": "63ecd4b4d20f79e5433e559c067dfd56d39142147313e67f5b74c4f696b13540",
+    "MagicNet-component-control-ad40c77e84f6db06edfa96cd235b166e4b1c1dba3027b511a9a221cd42fdeb16.zip": "0c4271fc96f415ad31cb4c1b1bee47e63b93f6aa5cc850ce2be003a6d32750a7",
+    "MagicNet-component-ecapture-2faac71037b4d8426143546c52fbc4d514a9cf4545819fa299bbe115efc93c60.zip": "b9adc25e0c2dd733f36198406a4820e4cb211884b7d790e1c295199020cb820a",
+    "MagicNet-component-engine-17e2bb576823cab1728d302690a710eb77eea8328828c2ab7b75bd5f24d0b68c.zip": "f1fcd596e4894935b3b3ab891bb6c3b8a2dde4242ae6e5c6f2426803cffb4311",
+    "MagicNet-component-panel-fc97eb622afc395118741254f5070cde20b29bb9b6e1bae06f7622f8b9ab5d14.zip": "c67f72d4fee80b313b7b1210b5eede019170d8de221462b13ab4efa65f8338d3",
+    "MagicNet-component-rules-28c0cc3dcac1b75ce8b58f6245d9f01de13b8b8999f2e87bf555c14a0d8f277a.zip": "ae1d5b9614b4c1c6e923fed777b5dd2849a5a5ecf24a9fc1f875566f93d53872",
+    "MagicNet-component-webui-b1fba4e7c230908b2093f6367f9af382dd0281cbc58d6330f0659954991fc777.zip": "602549e821041bbae27059f0b30b701d03a0477f88a78e5ca720aa8e1ca50ed3",
+    "MagicNet-core.zip": "6abc06adda67aa41670bc116c3293ac3b2040aeaea5fd25f9f8e5f86bffd3f6e",
+    "MagicNet-full.zip": "f8db57170e5e1274ca84737142b27be1e5b451eb8e20b2f6b56957e18d0741aa",
+    "MagicNet.zip": "6abc06adda67aa41670bc116c3293ac3b2040aeaea5fd25f9f8e5f86bffd3f6e",
+    "SHA256SUMS": "538cb2d24c47854c0c49f7ebe8f56c8be4a0bbc38c19e46ec36695965c40c643",
+    "components.json": "89e4efcbe75a2bc5ff2bfc1f5a9151cfa999ae8ca9dd126ce35519207965cd9f",
+    "magicnet_installer.zip": "6abc06adda67aa41670bc116c3293ac3b2040aeaea5fd25f9f8e5f86bffd3f6e",
+    "package-sizes.json": "aa0b180be658ce32efabaf993b44bb3a3f5c80ab82eaa049998230f57c4c3d82"
+  }
+}

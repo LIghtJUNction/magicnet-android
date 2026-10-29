@@ -1,0 +1,60 @@
+{
+  "passed": true,
+  "environment": "v24.22.1 / Linux; explicit simulated native callback transport, no Android device",
+  "cases": [
+    {
+      "name": "URL canonical identity preserves signed query bytes and source ordering",
+      "elapsed_ms": 1.832474
+    },
+    {
+      "name": "six or partially invalid sources never become a truncated valid batch",
+      "elapsed_ms": 1.090955
+    },
+    {
+      "name": "draft C survives acceptance of submitted B",
+      "elapsed_ms": 0.191779
+    },
+    {
+      "name": "usage is keyed by full URL identity and missing records do not remove sources",
+      "elapsed_ms": 8.351254
+    },
+    {
+      "name": "machine envelopes reject nonzero, extra JSON and mismatched command",
+      "elapsed_ms": 1.073339
+    },
+    {
+      "name": "collector counts empty events and combines both output streams",
+      "elapsed_ms": 1.821016
+    },
+    {
+      "name": "unknown subscription owner cannot masquerade as running success",
+      "elapsed_ms": 0.559935
+    },
+    {
+      "name": "terminal arguments never evaluate shell expansion",
+      "elapsed_ms": 0.496359
+    },
+    {
+      "name": "filter ASCII dedup and UTF-8 limits are explicit",
+      "elapsed_ms": 0.506985
+    },
+    {
+      "name": "native timeout keeps execution slot until the real callback exits",
+      "elapsed_ms": 6.102623
+    },
+    {
+      "name": "payload bytes preserve all sources and failed append cannot apply",
+      "elapsed_ms": 0.760406
+    },
+    {
+      "name": "stream overflow cannot release a native writer before its exit",
+      "elapsed_ms": 3.110721
+    },
+    {
+      "name": "a definite HTTP request rejection creates no lingering executor owner",
+      "elapsed_ms": 27.203003
+    }
+  ],
+  "case_count": 13,
+  "exit_code": 0
+}

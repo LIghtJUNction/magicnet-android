@@ -1,0 +1,61 @@
+{
+  "scope": "Host integration, synthetic stopped core configuration; no Android/network readiness claim",
+  "results": [
+    {
+      "case": "default_config_real_core_check",
+      "result": "PASS",
+      "elapsed_seconds": 0.388
+    },
+    {
+      "case": "capabilities_and_read_only_status",
+      "result": "PASS",
+      "elapsed_seconds": 0.009
+    },
+    {
+      "case": "machine_write_rejection_zero_mutation",
+      "result": "PASS",
+      "elapsed_seconds": 0.003
+    },
+    {
+      "case": "private_local_source_core_check_transaction_receipt",
+      "result": "PASS",
+      "elapsed_seconds": 0.818
+    },
+    {
+      "case": "consumed_invalid_payload_preserves_effective_config",
+      "result": "PASS",
+      "elapsed_seconds": 0.009
+    },
+    {
+      "case": "compiled_scheduler_waiting_repeat_repair_disable",
+      "result": "FAIL",
+      "error": "(('--json', 'sub', 'schedule', 'status'), 1, '{\"schema\":1,\"ok\":false,\"command\":\"sub.schedule\",\"error\":{\"code\":\"machine.command_unsupported\",\"message\":\"This command has no machine interface.\"}}\\n', '')",
+      "elapsed_seconds": 0.158
+    },
+    {
+      "case": "mcp_explicit_enable_real_daemon",
+      "result": "PASS",
+      "elapsed_seconds": 0.019
+    },
+    {
+      "case": "mcp_auth_initialize_catalog",
+      "result": "PASS",
+      "elapsed_seconds": 0.002
+    },
+    {
+      "case": "mcp_private_boundary_unknown_fields_notification_noop",
+      "result": "PASS",
+      "elapsed_seconds": 0.002
+    },
+    {
+      "case": "mcp_owned_stop",
+      "result": "PASS",
+      "elapsed_seconds": 0.117
+    },
+    {
+      "case": "private_encrypted_backup_restore_real_core_check",
+      "result": "PASS",
+      "elapsed_seconds": 0.697
+    }
+  ]
+}

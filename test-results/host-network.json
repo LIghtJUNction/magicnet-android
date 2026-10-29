@@ -1,0 +1,77 @@
+{
+  "scope": "Synthetic loopback sockets, not Android or public providers",
+  "results": [
+    {
+      "case": "socks",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.141
+    },
+    {
+      "case": "vless-none",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.136
+    },
+    {
+      "case": "vless-tls",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.13
+    },
+    {
+      "case": "vmess",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.138
+    },
+    {
+      "case": "shadowsocks",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.145
+    },
+    {
+      "case": "trojan-tls",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.146
+    },
+    {
+      "case": "anytls",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.134
+    },
+    {
+      "case": "hysteria2",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.139
+    },
+    {
+      "case": "tuic",
+      "layer": "host_loopback_real_core",
+      "result": "PASS",
+      "stage": "response_verified",
+      "bytes": 178,
+      "elapsed_seconds": 0.152
+    }
+  ]
+}

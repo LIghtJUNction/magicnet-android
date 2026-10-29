@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "environment": "new Go CLI + pinned real Linux sing-box check + authenticated HTTP + Chromium, isolated synthetic fixture; no Android or live proxy traffic",
+  "cases": [
+    "explicit authenticated handshake",
+    "operation ID replay returns original receipt; changed argv rejected with HTTP 409",
+    "six-source whole-candidate rejection",
+    "actual complete private payload transfer",
+    "local import same-operation generation receipt",
+    "VLESS encryption persistence",
+    "source count vs node count",
+    "private canary absent from shared output",
+    "config draft survives page navigation"
+  ],
+  "source": {
+    "configured_count": 1,
+    "mode": "local_file"
+  },
+  "batch": {
+    "generation_id": "acc5504fa690b140a21535bb079cd6cc",
+    "outcome": "committed",
+    "unique_count": 1,
+    "imported_count": 2
+  },
+  "operationIdentity": {
+    "first": 200,
+    "replay": 200,
+    "conflict": 409,
+    "sameReceipt": true
+  },
+  "request_count": 24,
+  "errors": []
+}

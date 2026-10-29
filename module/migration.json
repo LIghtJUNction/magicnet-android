@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "paths": [
+    {"path": ".config", "action": "restore"},
+    {"path": ".state/private", "action": "restore"},
+    {"path": ".state/module-update", "action": "restore"},
+    {"path": ".state/tailscale", "action": "restore"},
+    {"path": ".state/lifecycle/last-known-good.json", "action": "restore"},
+    {"path": ".state/platform-owned.json", "action": "restore"}
+  ],
+  "exclusions": [
+    {"path": ".config/sing-box/config.json", "action": "backup_only"},
+    {"path": ".config/sing-box/rules", "action": "replace"},
+    {"path": ".state/private/payload", "action": "replace"},
+    {"path": ".state/private/downloads", "action": "replace"}
+  ]
+}

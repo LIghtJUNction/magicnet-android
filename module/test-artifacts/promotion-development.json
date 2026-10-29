@@ -1,0 +1,2149 @@
+{
+  "actual_manager_used": false,
+  "cases": [
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_before_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "fresh module-relative defaults and owned Tailscale survive real promotion",
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.379,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.023,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.017,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"1bcc0670b4a9f291c1dcc031253a4e18\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.151,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.18,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.145,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config-editor",
+            "validate",
+            "sing-box"
+          ],
+          "elapsed_seconds": 0.186,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"core_checked\": true,\n  \"network_verified\": false,\n  \"valid\": true\n}"
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.736,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"0b1785fb15c3c43e155fb07190d83a6c\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.209,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.664,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"dcdd0074cbba07bf936b23dfcff8207d\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_before_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "persisted absolute owned paths and checkpoint/LKG recover after promotion",
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.367,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.022,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.111,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"fb10d86f66a7a5545059be5a4c5d621d\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.13,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.04,
+          "exit_code": 1,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[31mFATAL\u001b[0m[0000] initialize router: parse rule-set[0]: open /workspace/scratch/16b295519d04/magicnet-rebuild-0.3.1/source-repair/module/test-artifacts/promotion-3jp5uadf/modules_update/MagicNet/.config/sing-box/rules/lyc-geosite-ads.srs: no such file or directory",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.844,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.129,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config-editor",
+            "validate",
+            "sing-box"
+          ],
+          "elapsed_seconds": 0.162,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"core_checked\": true,\n  \"network_verified\": false,\n  \"valid\": true\n}"
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.686,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"a17e7319cb34475e29fe1eba6b5f66d0\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.181,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.718,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"5dee3a8ed66150e9ff2ee406f408d05b\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": true,
+        "idempotent_persisted_bytes": true,
+        "identity_before_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "custom external rules/cache/Tailscale paths and bytes survive promotion",
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.379,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.034,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.067,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"70c6a036120fe65bbcce04a138b4ece9\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.149,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.181,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.135,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config-editor",
+            "validate",
+            "sing-box"
+          ],
+          "elapsed_seconds": 0.165,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"core_checked\": true,\n  \"network_verified\": false,\n  \"valid\": true\n}"
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.771,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"f3992f8acf97d8f27d8d75a949f7c981\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.207,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.794,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"f7d944c8eeaf7535af2d521d1a5bca56\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "prepared relocation journal after 0/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "prepared",
+        "process_killed": false,
+        "published_files": 0
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.374,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.027,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.006,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.091,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"6827d875a8f428fd7830ce6b046c8e04\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.135,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.663,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.149,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.752,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"ae45fecf4b27e3478326b54df7481f91\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.006,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.236,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "prepared relocation journal after 1/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "prepared",
+        "process_killed": false,
+        "published_files": 1
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.402,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.023,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.065,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"d18458b484f2ed18cce03a7c5b96b42d\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.151,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.712,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.145,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.71,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"e735aa169df1c4f1fec96461bf2f5464\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.184,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "prepared relocation journal after 2/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "prepared",
+        "process_killed": false,
+        "published_files": 2
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.41,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.033,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.128,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"a59bb0d6b34ba04c4dca5000a940c3cf\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.158,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.848,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.145,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.713,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"809c3603905ea939185657c0d30c7d6b\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.182,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "prepared relocation journal after 3/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "prepared",
+        "process_killed": false,
+        "published_files": 3
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.369,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.023,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.016,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"0665513d4668521d83c89b38118729ad\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.151,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.69,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.149,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.744,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"9d47dca674ecd9748a8873ad69152724\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.208,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "prepared relocation journal after 4/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "prepared",
+        "process_killed": false,
+        "published_files": 4
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.376,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.028,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.126,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"20f917c76bb864ce92b6be37becdc67f\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.007,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.163,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.729,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.206,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.822,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"ac40556a2a2a8c04adfcf9ffb60d3bca\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.209,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "prepared relocation journal after 5/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "prepared",
+        "process_killed": false,
+        "published_files": 5
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.38,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.024,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.104,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"e4bcb9fcc4eb6ca595980e4841a537e6\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.148,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.688,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.156,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.732,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"d2d2de2afce83e500b1cced4bd0a2adc\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.185,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "committed relocation journal after 5/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "committed",
+        "process_killed": false,
+        "published_files": 5
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.379,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.024,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 0.993,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"279770b38b47cb51717f254edb95aa2f\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.14,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.731,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.147,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.696,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"0fad7d62b8b090f82dabb95572197c47\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.187,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "scope": "Compiled install recovers rollback evidence and then replans valid relative paths; proving the isolated rollback direction requires the controller's separate Go test.",
+        "staging_references": 0
+      },
+      "case": "rollback relocation journal after 2/5 publications",
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "rollback",
+        "process_killed": false,
+        "published_files": 2
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.397,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.026,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.112,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"66a55001d3d2de57f23a4fb4fb5945f9\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.143,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 1.15,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.16,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.785,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"8e8e13fb487e92d5eccda6955760323b\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.192,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "assertions": {
+        "actual_directory_rename": true,
+        "checkpoint_matches_active": true,
+        "configured_enabled": false,
+        "core_running": false,
+        "custom_paths_preserved": false,
+        "idempotent_persisted_bytes": true,
+        "identity_sha256": "63badc972f746b1b4b62f9306268b4f324dfc390c89ba7791b3b0da7abe29d73",
+        "recovery_journal_removed": true,
+        "rule_count": 55,
+        "staging_references": 0
+      },
+      "case": "prepared relocation journal after 2/5 publications: external change refuses all writes, evidence retained, then explicit resolution",
+      "conflict": {
+        "explicit_fixture_resolution": true,
+        "recovery_evidence_retained": true,
+        "rejected_without_publication": true
+      },
+      "interruption_fixture": {
+        "file_count": 5,
+        "method": "durable production-schema journal plus before/after file publication prefix",
+        "phase": "prepared",
+        "process_killed": false,
+        "published_files": 2
+      },
+      "legacy_fixture": {
+        "checkpoint_matches_active": true,
+        "method": "consistent synthetic absolute managed fields",
+        "rule_count": 55
+      },
+      "status": "PASS",
+      "steps": [
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.469,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "service",
+            "stop"
+          ],
+          "elapsed_seconds": 0.031,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"api\": {\n    \"ready\": false\n  },\n  \"configured\": {\n    \"enabled\": false,\n    \"transparent\": \"tun\"\n  },\n  \"effective\": {\n    \"running\": false\n  },\n  \"lifecycle\": \"stopped\",\n  \"process\": {\n    \"ownership\": \"none\",\n    \"running\": false,\n    \"state\": \"stopped\"\n  },\n  \"readiness\": {\n    \"dataplane\": {\n      \"evidence\": \"not_running\",\n      \"local_ready\": false,\n      \"mode\": \"tun\",\n      \"ready\": false,\n      \"shared_ready\": false,\n      \"shared_tc\": \"not_applicable\"\n    },\n    \"overall\": false\n  },\n  \"schema\": 1,\n  \"state\": \"stopped\"\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "config-editor",
+            "save-file",
+            "sing-box",
+            "$MODULE_ROOT/.state/private/payload/tmp/promotion-config.json"
+          ],
+          "elapsed_seconds": 1.124,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"generation_id\": \"9cb6f33a4c425cb4496399c0d71348e9\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.004,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.171,
+          "exit_code": 0,
+          "location": "staging",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.024,
+          "exit_code": 1,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "runtime.paths_conflict: An owned relocation file changed externally; recovery evidence was retained.",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.713,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "check",
+            "-c",
+            "$MODULE_ROOT/.config/sing-box/config.json"
+          ],
+          "elapsed_seconds": 0.158,
+          "exit_code": 0,
+          "location": "live",
+          "program": "pinned-core",
+          "stderr": "\u001b[33mWARN\u001b[0m[0000] `stack` option in TUN is deprecated in sing-box 1.15.0 and will be removed in sing-box 1.17.0, checkout documentation for migration: https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "config",
+            "apply"
+          ],
+          "elapsed_seconds": 0.875,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\n  \"applied\": true,\n  \"changed\": false,\n  \"generation_id\": \"7b02624db449ea285d2242cb85750b3a\",\n  \"network_verified\": false,\n  \"saved\": true\n}"
+        },
+        {
+          "args": [
+            "--json",
+            "service",
+            "status"
+          ],
+          "elapsed_seconds": 0.005,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": "{\"schema\":1,\"ok\":true,\"command\":\"service.status\",\"data\":{\"api\":{\"ready\":false},\"configured\":{\"enabled\":false,\"transparent\":\"tun\"},\"effective\":{\"running\":false},\"lifecycle\":\"stopped\",\"process\":{\"ownership\":\"none\",\"running\":false,\"state\":\"stopped\"},\"readiness\":{\"dataplane\":{\"evidence\":\"not_running\",\"local_ready\":false,\"mode\":\"tun\",\"ready\":false,\"shared_ready\":false,\"shared_tc\":\"not_applicable\"},\"overall\":false},\"schema\":1,\"state\":\"stopped\"}}"
+        },
+        {
+          "args": [
+            "__install"
+          ],
+          "elapsed_seconds": 0.222,
+          "exit_code": 0,
+          "location": "live",
+          "program": "compiled-cli",
+          "stderr": "",
+          "stdout": ""
+        }
+      ]
+    }
+  ],
+  "cli_sha256": "7db29218f585cd61b9b63473fcfde3e94ed6b64618e004346dbff8478dac1cc1",
+  "compiled_cli_version": {
+    "channel": "candidate",
+    "commit": "uncommitted",
+    "input_sha256": "502e160a363ffdc6e60477261ac15b74884b07f37de78af69558b0806f8e717a",
+    "recipe": "magicnet@0.3.1",
+    "recipe_version": "0.3.1",
+    "version": "1.8.1",
+    "version_code": 10609
+  },
+  "core_sha256": "4a3b5a35871a723cf9111727c5f5bd3c5523d5779b4d03ad6af9727a53fae451",
+  "core_started": false,
+  "device_used": false,
+  "elapsed_seconds": 44.755,
+  "external_network_used": false,
+  "failed": 0,
+  "fixture": "synthetic isolated host directories, actual rename",
+  "input_sha256": "502e160a363ffdc6e60477261ac15b74884b07f37de78af69558b0806f8e717a",
+  "not_run": [
+    "actual Android root-manager promotion/reboot",
+    "Tailscale authentication/data-plane traffic"
+  ],
+  "passed": 12,
+  "schema": 1,
+  "status": "PASS",
+  "test": "compiled stage-to-live promotion"
+}

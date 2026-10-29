@@ -1,49 +1,25 @@
-dist
-target/
-
-# Generated successful-check records restored by the CI cache action.
-/.cache/ci-test-results/
-.env
-.tokensave/
-.playwright-mcp/
-.pi/
-.kam/
-Kam
-logs/
-webui/dist/
-webui/node_modules/
-webui/node_modules/.vite/
-webui/test-results/
-webui/playwright-report/
-src/MagicNet/webroot/assets/
-src/MagicNet/webroot/index.html
-src/MagicNet/.local/
-src/MagicNet/bin/
-src/MagicNet/mihomo.version
-src/MagicNet/singbox.version
-src/MagicNet/ecapture.version
-
-# Kam managed bases are versioned; runtime state under .kam stays ignored.
-!.kam/
-.kam/*
-!.kam/bases.toml
-!.kam/bases/
-!.kam/bases/**
-
-# Local Python test/coverage output and editor/OS metadata.
+.tools/
+/third_party
+assets/bin/
+assets/vendor/
+assets/rules-download/
+dist/
 __pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-.coverage.*
-htmlcov/
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
+*.pyc
+module/test-artifacts/*
+!module/test-artifacts/package-verification.json
+!module/test-artifacts/reproducibility.json
+!module/test-artifacts/promotion-baseline.json
+!module/test-artifacts/promotion-development.json
+!module/test-artifacts/promotion-verification.json
+!module/test-artifacts/archive-build-verification.json
+webui/test-artifacts/*.log
+test-results/*.log
+test-results/*.jsonl
+.state/
+.log/
+.env
+demo-host/
 
-# Generated Android framework policy bridge.
-/src/MagicNet/libexec/network-policy-bridge.jar
+# Browser screenshots remain local verification evidence, not source delivery.
+webui/test-artifacts/*.png

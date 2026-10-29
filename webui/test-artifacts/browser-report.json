@@ -1,0 +1,86 @@
+{
+  "environment": {
+    "browser": "Chromium 141 / Playwright 1.56.1",
+    "native": false,
+    "server": "http://127.0.0.1:18731",
+    "networkThrottle": false,
+    "cpuThrottle": false,
+    "reducedMotion": true,
+    "hostCJKFont": "Noto Sans CJK SC 2.004 installed only in the test process; product uses system fonts"
+  },
+  "checked": 540,
+  "failures": [],
+  "samples": [
+    {
+      "width": 390,
+      "height": 844,
+      "ms": 70.5
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "ms": 64.39999999850988
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "ms": 64.60000000149012
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "ms": 66.59999999403954
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "ms": 71.69999999552965
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "ms": 69.29999999701977
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "ms": 65.5
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "ms": 74.09999999403954
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "ms": 74.69999999552965
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "ms": 78.70000000298023
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "ms": 74.29999999701977
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "ms": 77.90000000596046
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "ms": 74.29999999701977
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "ms": 81.69999999552965
+    }
+  ],
+  "claim": "Host preview and browser interactions only; no Android bridge or real service traffic."
+}

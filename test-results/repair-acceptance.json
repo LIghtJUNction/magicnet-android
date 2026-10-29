@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "scope": "Developer regression of now-disclosed P1-B/P1-C; compiled CLI, synthetic provider and temporary files only; no network request, root manager or Android device",
+  "cli_sha256": "cb5ed46ad892e2478751a2f2c215091289dd37dc5e0c77d94caed1c0faec7255",
+  "results": [
+    {
+      "case": "update healthy replay, conflict and expired receipt",
+      "result": "PASS",
+      "elapsed_seconds": 0.013
+    },
+    {
+      "case": "update old and new request blocked: disable",
+      "result": "PASS",
+      "elapsed_seconds": 0.009
+    },
+    {
+      "case": "update old and new request blocked: update",
+      "result": "PASS",
+      "elapsed_seconds": 0.007
+    },
+    {
+      "case": "update old and new request blocked: remove",
+      "result": "PASS",
+      "elapsed_seconds": 0.008
+    },
+    {
+      "case": "update old and new request blocked: pending_manager",
+      "result": "PASS",
+      "elapsed_seconds": 0.009
+    },
+    {
+      "case": "update old and new request blocked: unreadable_journal",
+      "result": "PASS",
+      "elapsed_seconds": 0.007
+    },
+    {
+      "case": "update old and new request blocked: invalid_journal_candidate",
+      "result": "PASS",
+      "elapsed_seconds": 0.009
+    },
+    {
+      "case": "update old and new request blocked: recovery_required",
+      "result": "PASS",
+      "elapsed_seconds": 0.007
+    },
+    {
+      "case": "update old and new request blocked: interrupted_install",
+      "result": "PASS",
+      "elapsed_seconds": 0.007
+    },
+    {
+      "case": "update old and new request blocked: unknown_owner",
+      "result": "PASS",
+      "elapsed_seconds": 0.007
+    },
+    {
+      "case": "update bounded used-ID history",
+      "result": "PASS",
+      "elapsed_seconds": 0.016
+    },
+    {
+      "case": "update publication recovery after 0 private files",
+      "result": "PASS",
+      "elapsed_seconds": 0.028
+    },
+    {
+      "case": "update publication recovery after 1 private files",
+      "result": "PASS",
+      "elapsed_seconds": 0.023
+    },
+    {
+      "case": "update publication recovery after 2 private files",
+      "result": "PASS",
+      "elapsed_seconds": 0.034
+    },
+    {
+      "case": "policy partial 10002 before",
+      "result": "PASS",
+      "elapsed_seconds": 1.837
+    },
+    {
+      "case": "policy partial 10001 after",
+      "result": "PASS",
+      "elapsed_seconds": 2.123
+    },
+    {
+      "case": "policy partial 10002 after",
+      "result": "PASS",
+      "elapsed_seconds": 1.828
+    },
+    {
+      "case": "policy partial 10001 readback",
+      "result": "PASS",
+      "elapsed_seconds": 1.795
+    },
+    {
+      "case": "policy partial 10001 ignored",
+      "result": "PASS",
+      "elapsed_seconds": 2.102
+    },
+    {
+      "case": "policy external additional bit preserves evidence",
+      "result": "PASS",
+      "elapsed_seconds": 1.412
+    },
+    {
+      "case": "policy changed shared-package identity preserves evidence",
+      "result": "PASS",
+      "elapsed_seconds": 1.19
+    },
+    {
+      "case": "policy interrupted rollback before",
+      "result": "PASS",
+      "elapsed_seconds": 1.831
+    },
+    {
+      "case": "policy interrupted rollback after",
+      "result": "PASS",
+      "elapsed_seconds": 1.785
+    },
+    {
+      "case": "policy interrupted rollback readback",
+      "result": "PASS",
+      "elapsed_seconds": 1.563
+    },
+    {
+      "case": "policy additional identity cannot replace baseline",
+      "result": "PASS",
+      "elapsed_seconds": 1.108
+    },
+    {
+      "case": "policy explicit reapply retains full original baseline",
+      "result": "PASS",
+      "elapsed_seconds": 2.1
+    },
+    {
+      "case": "policy legacy complete journal preserves original identities",
+      "result": "PASS",
+      "elapsed_seconds": 1.634
+    },
+    {
+      "case": "policy completed rollback does not own later changes",
+      "result": "PASS",
+      "elapsed_seconds": 1.264
+    }
+  ],
+  "passed": true
+}

@@ -1,0 +1,12 @@
+#!/sbin/sh
+umask 022
+OUTFD="$2"
+ZIPFILE="$3"
+export OUTFD ZIPFILE
+if [ -f /data/adb/magisk/util_functions.sh ]; then
+  . /data/adb/magisk/util_functions.sh
+  install_module
+  exit "$?"
+fi
+printf '%s\n' 'Install this module through Magisk, KernelSU or APatch manager.' >&2
+exit 1

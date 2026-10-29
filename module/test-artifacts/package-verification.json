@@ -1,0 +1,91 @@
+{
+  "passed": true,
+  "environment": "Linux amd64 real independent installer; Android arm64 package bytes; synthetic module roots; no Android root manager execution",
+  "network": "Executed in the network-restricted host executor; full, offline-cache and complete-reuse cases reported no download stage",
+  "elapsed_seconds": 17.883,
+  "core_alias_sha256": "6abc06adda67aa41670bc116c3293ac3b2040aeaea5fd25f9f8e5f86bffd3f6e",
+  "product": {
+    "version": "v1.8.1",
+    "version_code": 10609,
+    "recipe_version": "0.3.1",
+    "channel": "candidate"
+  },
+  "implementation_commit": "280f044a0dc63f49965a910efd9509abd13a316b",
+  "component_count": 7,
+  "checks": [
+    {
+      "case": "product version, version code, recipe, candidate channel and CLI build revision agree",
+      "passed": true,
+      "product": {
+        "version": "v1.8.1",
+        "version_code": 10609,
+        "recipe_version": "0.3.1",
+        "channel": "candidate"
+      },
+      "implementation_commit": "280f044a0dc63f49965a910efd9509abd13a316b"
+    },
+    {
+      "case": "MagicNet-core.zip:verify",
+      "exit_code": 0,
+      "stdout": "MagicNet: verified",
+      "stderr": ""
+    },
+    {
+      "case": "MagicNet-full.zip:verify",
+      "exit_code": 0,
+      "stdout": "MagicNet: verified",
+      "stderr": ""
+    },
+    {
+      "case": "fresh full offline",
+      "exit_code": 0,
+      "stdout": "MagicNet: verified",
+      "stderr": ""
+    },
+    {
+      "case": "fresh core plus read-only offline component cache",
+      "exit_code": 0,
+      "stdout": "MagicNet: verified",
+      "stderr": ""
+    },
+    {
+      "case": "core with complete installed-component reuse",
+      "exit_code": 0,
+      "stdout": "MagicNet: verified",
+      "stderr": ""
+    },
+    {
+      "case": "three installation paths converge on identical bytes and modes",
+      "passed": true,
+      "inventory_sha256": "e879036aba35804a57948538a035c8394b454a1f420fd6d45d19eab0e81a593a"
+    },
+    {
+      "case": "single-manifest private-state migration",
+      "exit_code": 0,
+      "stdout": "MagicNet: verified",
+      "stderr": ""
+    },
+    {
+      "case": "known limitation: in-place upgrade rejected before mutation; manager staging required",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "MagicNet: install.in_place_upgrade_requires_staging"
+    },
+    {
+      "case": "unsafe migration leaves destination unchanged and removes staging",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "MagicNet: migration.link_rejected"
+    },
+    {
+      "case": "bad component digest fails before publication",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "MagicNet: component.archive_hash_mismatch"
+    },
+    {
+      "case": "private fixture canaries absent from every component",
+      "passed": true
+    }
+  ]
+}

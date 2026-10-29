@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "scope": "Warm filesystem, stopped host module; process launch plus command; no Android dataplane, public network, or soak",
+  "observer": "Python perf_counter around a tiny C fork/exec/wait4 helper and CLI; output capture; per-child peak RSS excludes Python parent image; observer overhead not subtracted",
+  "host": {
+    "system": "Linux",
+    "machine": "x86_64",
+    "kernel": "6.18.55",
+    "memory.max": "8589934592",
+    "cpu.max": "800000 100000"
+  },
+  "cli_sha256": "e8c39d918366bed0e21e08132077abfac14fae536adb0eb5e3af7cc4691c83ab",
+  "core_sha256": "4a3b5a35871a723cf9111727c5f5bd3c5523d5779b4d03ad6af9727a53fae451",
+  "budget": "unknown; no accepted target was supplied",
+  "samples": [
+    {
+      "command": [
+        "--json",
+        "capabilities"
+      ],
+      "n": 30,
+      "result": "PASS",
+      "failures": 0,
+      "median_ms": 3.132,
+      "min_ms": 2.736,
+      "max_ms": 4.882,
+      "median_max_rss_kib": 8320.0,
+      "max_rss_kib": 8576
+    },
+    {
+      "command": [
+        "--json",
+        "service",
+        "status"
+      ],
+      "n": 30,
+      "result": "PASS",
+      "failures": 0,
+      "median_ms": 3.104,
+      "min_ms": 2.739,
+      "max_ms": 4.316,
+      "median_max_rss_kib": 8448.0,
+      "max_rss_kib": 8704
+    },
+    {
+      "command": [
+        "--json",
+        "sub",
+        "status"
+      ],
+      "n": 30,
+      "result": "PASS",
+      "failures": 0,
+      "median_ms": 3.492,
+      "min_ms": 2.989,
+      "max_ms": 4.442,
+      "median_max_rss_kib": 8576.0,
+      "max_rss_kib": 8832
+    }
+  ],
+  "configuration_sha256": "ce1f633ba4f7e2d0ae95d504f8f7279d4c281cacab036bb08944ca2e84aa97f8"
+}

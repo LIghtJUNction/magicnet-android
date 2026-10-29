@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "case": "go-test-race",
+      "result": "PASS",
+      "exit_code": 0,
+      "elapsed_seconds": 80.556,
+      "functional_source_revision": "cc1920418acb7b323d04b8978832a89851325cf7",
+      "extra_change": "license notice collector text suffix fix; product source unchanged",
+      "scope": "host synthetic fixtures and pinned core validation; no Android device"
+    },
+    {
+      "case": "go-vet",
+      "result": "PASS",
+      "exit_code": 0,
+      "elapsed_seconds": 1.499,
+      "functional_source_revision": "cc1920418acb7b323d04b8978832a89851325cf7",
+      "extra_change": "license notice collector text suffix fix; product source unchanged",
+      "scope": "host synthetic fixtures and pinned core validation; no Android device"
+    }
+  ]
+}

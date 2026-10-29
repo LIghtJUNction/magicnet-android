@@ -1,0 +1,434 @@
+[
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCorePlatformTransactionsStayStopped",
+    "result": "PASS",
+    "elapsed_seconds": 9.91
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreBackupRecoveryAndConflict/prepared",
+    "result": "PASS",
+    "elapsed_seconds": 0.78
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreBackupRecoveryAndConflict/partial",
+    "result": "PASS",
+    "elapsed_seconds": 0.85
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreBackupRecoveryAndConflict/written",
+    "result": "PASS",
+    "elapsed_seconds": 0.72
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreBackupRecoveryAndConflict/committed",
+    "result": "PASS",
+    "elapsed_seconds": 0.69
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreBackupRecoveryAndConflict/external",
+    "result": "PASS",
+    "elapsed_seconds": 0.77
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreBackupRecoveryAndConflict",
+    "result": "PASS",
+    "elapsed_seconds": 3.82
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestHotspotIdentityDoesNotAdoptForeignRules",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestInheritedWorkerLockRetainsOwnership",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreFiveOwnedProcessStopCycles",
+    "result": "PASS",
+    "elapsed_seconds": 0.93
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestUpdateReplayAndDurableRecord",
+    "result": "PASS",
+    "elapsed_seconds": 0.03
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestCaptureHelperFailureIsNotSuccess",
+    "result": "PASS",
+    "elapsed_seconds": 0.02
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestMCPBackupPayloadPrivacyAndCanonicalShape",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSysrouteDeletionUsesExactOwnedIdentity",
+    "result": "PASS",
+    "elapsed_seconds": 0.12
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestChangedCommandOwnerIsNeverKilled",
+    "result": "PASS",
+    "elapsed_seconds": 0.01
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestMachineDispatchRejectsMutation",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestPrivateFilesAreBoundedAndNoLinks",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestJSONDuplicateAndTrailing",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestGenericMCPPrivacy",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestMCPCatalogSchema",
+    "result": "PASS",
+    "elapsed_seconds": 0.01
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestBackupAuthentication",
+    "result": "PASS",
+    "elapsed_seconds": 4.32
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestZipPathAndDuplicate",
+    "result": "PASS",
+    "elapsed_seconds": 0.02
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRunnerLimitsAndTimeout",
+    "result": "PASS",
+    "elapsed_seconds": 0.16
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestModeFileStrict",
+    "result": "PASS",
+    "elapsed_seconds": 0.01
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestPublicProjectionDoesNotReadPrivateValues",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRoutingOverlayOwnershipAndLimits",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreOverlayApplyResetAndRepeat",
+    "result": "PASS",
+    "elapsed_seconds": 4.93
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestNetworkCIDRAndWireGuardValidation",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreOwnedPathRelocationRecovery/prepared",
+    "result": "PASS",
+    "elapsed_seconds": 1.63
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreOwnedPathRelocationRecovery/committed",
+    "result": "PASS",
+    "elapsed_seconds": 1.8
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreOwnedPathRelocationRecovery/rollback",
+    "result": "PASS",
+    "elapsed_seconds": 2.57
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreOwnedPathRelocationRecovery/external_conflict",
+    "result": "PASS",
+    "elapsed_seconds": 0.94
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreOwnedPathRelocationRecovery",
+    "result": "PASS",
+    "elapsed_seconds": 6.95
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestUpdatePublicationRetainsConflictAndCanonicalRecovery/external",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestUpdatePublicationRetainsConflictAndCanonicalRecovery/canonical_failure",
+    "result": "PASS",
+    "elapsed_seconds": 0.04
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestUpdatePublicationRetainsConflictAndCanonicalRecovery",
+    "result": "PASS",
+    "elapsed_seconds": 0.05
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreVLESSEncryptionMatrix",
+    "result": "PASS",
+    "elapsed_seconds": 0.23
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreMigrationRegeneratesPolicyAndRetainsNodes",
+    "result": "PASS",
+    "elapsed_seconds": 2.63
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreChainUndoDNSAndTemplate",
+    "result": "PASS",
+    "elapsed_seconds": 9.12
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestOverridePreviewDoesNotInitializeConfiguration",
+    "result": "PASS",
+    "elapsed_seconds": 0.5
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSubscriptionScheduleOwnerAndBoundedCancellation",
+    "result": "PASS",
+    "elapsed_seconds": 0.17
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRuntimeStatusReadsDoNotCreateState",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreWireGuardImportAndTailscaleUserspace",
+    "result": "PASS",
+    "elapsed_seconds": 7.1
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSubscriptionPublicTokensRejectPrivateCanary",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreInterruptedInitializationRecoversForward",
+    "result": "PASS",
+    "elapsed_seconds": 0.9
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreSubscriptionRecoveryAtTransactionBoundaries/prepared",
+    "result": "PASS",
+    "elapsed_seconds": 3.88
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreSubscriptionRecoveryAtTransactionBoundaries/activated",
+    "result": "PASS",
+    "elapsed_seconds": 4.62
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreSubscriptionRecoveryAtTransactionBoundaries/source_partial",
+    "result": "PASS",
+    "elapsed_seconds": 4.02
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreSubscriptionRecoveryAtTransactionBoundaries/committed",
+    "result": "PASS",
+    "elapsed_seconds": 3.65
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreSubscriptionRecoveryAtTransactionBoundaries/external_conflict",
+    "result": "PASS",
+    "elapsed_seconds": 3.9
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreSubscriptionRecoveryAtTransactionBoundaries",
+    "result": "PASS",
+    "elapsed_seconds": 20.08
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreRejectsInvalidIndependentRecoveryBaseline",
+    "result": "PASS",
+    "elapsed_seconds": 1.94
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSubscriptionURLIdentity",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSubscriptionAddressPolicy",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestVLESSEncryptionAcrossNativeInputs",
+    "result": "PASS",
+    "elapsed_seconds": 0.05
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestYAMLAnchorsAndVMessFields",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestStableSemanticIdentityAndReferences",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSubscriptionUsageAndBounds",
+    "result": "PASS",
+    "elapsed_seconds": 0.14
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreDefaultAndLocalImport",
+    "result": "PASS",
+    "elapsed_seconds": 3.64
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestRealCoreMultiSourceAtomicityAndCache",
+    "result": "PASS",
+    "elapsed_seconds": 7.96
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSafeFetchRedirectAndTLS",
+    "result": "PASS",
+    "elapsed_seconds": 0.05
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSafeFetchGzipHeaderRetryAndCancellation",
+    "result": "PASS",
+    "elapsed_seconds": 3.98
+  },
+  {
+    "package": "magicnet.local/rebuild/internal/magicnet",
+    "test": "TestSafeFetchSharesConnectBudgetAcrossAddresses",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestIdentityIgnoresZipOrderAndTimestamp",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestZipTraversalDuplicateAndLocalHeaderAmbiguity",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestInterruptedReplacementRestoresOnlyOwnedBytes",
+    "result": "PASS",
+    "elapsed_seconds": 0.01
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestMigrationOneManifestAndLinksFailClosed",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestPublicDestinationPolicy",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestIdentityJSONRejectsAmbiguousKeys",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestProductVersionRecipeAndChannelStaySeparate",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestObsoleteRemovalNeedsUnchangedSuccessfulOwnership",
+    "result": "PASS",
+    "elapsed_seconds": 0.01
+  },
+  {
+    "package": "magicnet.local/rebuild/module/installer",
+    "test": "TestInPlaceUpgradeIsRejectedBeforeAnyPublication",
+    "result": "PASS",
+    "elapsed_seconds": 0
+  }
+]
