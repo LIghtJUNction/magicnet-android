@@ -123,7 +123,7 @@ magicnet_singbox_disambiguate_outbound_tags() (
 
     # shellcheck disable=SC2016 # jq filters are intentionally single-quoted to avoid shell interpolation.
     "$_identity_jq" -n -e --slurpfile rows "$_identity_rows" '
-      reduce $rows[] as $row (
+      (reduce $rows[] as $row (
         {items: [], identities: []};
         if $row.mergeable and any(.identities[]; .identity == $row.identity)
         then .
@@ -131,7 +131,7 @@ magicnet_singbox_disambiguate_outbound_tags() (
           .items += [$row]
           | if $row.mergeable then .identities += [{identity:$row.identity}] else . end
         end
-      ) as $collected
+      )) as $collected
       | [
           $collected.items[]
           | . as $row
@@ -143,10 +143,10 @@ magicnet_singbox_disambiguate_outbound_tags() (
             end
       ] as $mapped
       | [$mapped[] | .node] as $raw_nodes
-      | reduce $raw_nodes[] as $node (
+      | (reduce $raw_nodes[] as $node (
           [];
           if any(.[]; .tag == $node.tag and (del(.tag) == ($node | del(.tag)))) then . else . + [$node] end
-        ) as $nodes
+        )) as $nodes
       | [$nodes[] | .tag | select(type == "string")] as $tags
       | if ($tags | length) == ($tags | unique | length)
         then $nodes
