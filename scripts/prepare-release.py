@@ -40,6 +40,11 @@ def release_commit():
     return os.environ.get("RELEASE_COMMIT_SHA") or os.environ["GITHUB_SHA"]
 
 
+def require_release_repository():
+    if os.environ.get("GITHUB_REPOSITORY") != "LIghtJUNction/MagicNet":
+        raise ValueError("Publish from the MagicNet recipe repository's release.yml workflow")
+
+
 def require_main_checkout():
     if os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise ValueError("Releases must use main")
@@ -63,6 +68,8 @@ def bump(kind):
     if git("status", "--porcelain"):
         raise ValueError("Version bump requires a clean checkout")
     release = os.environ.get("RELEASE_INPUT") == "true"
+    if release:
+        require_release_repository()
     prerelease = os.environ.get("PRERELEASE_INPUT") == "true"
     if prerelease and not release:
         raise ValueError("prerelease requires release=true")
@@ -145,6 +152,7 @@ def prepare():
     if not requested:
         print(f"Validated {version}; build only")
         return
+    require_release_repository()
     require_main_checkout()
     require_new_tag(version)
     with open(os.environ["GITHUB_ENV"], "a") as output:

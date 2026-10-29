@@ -101,7 +101,7 @@ def prepare_archive(source: Path, destination: Path, replacements: dict[str, Pat
             require(elf_x86_64(stream.read(64)), f'invalid x86_64 ELF payload: {name}')
     manifest = {'schema': 1, 'scope': 'disposable-x86_64-avd-only',
                 'production_zip_sha256': digest(source),
-                'source_sha': os.environ.get('GITHUB_SHA', 'local'),
+                'source_sha': os.environ.get('MAGICNET_SOURCE_SHA') or os.environ.get('GITHUB_SHA', 'local'),
                 'payload_sha256': {name: digest(path) for name, path in replacements.items()},
                 'excluded_build_cache_sha256': {},
                 'compatibility_aliases': {}}

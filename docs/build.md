@@ -1,5 +1,7 @@
 # 构建与发布包说明
 
+正式发布入口在 [MagicNet 主仓库的 Build and release MagicNet 工作流](https://github.com/LIghtJUNction/MagicNet/actions/workflows/release.yml)。主仓库以固定 gitlink 选择本仓库提交；默认 build 只上传构建制品，publish 才会在同提交质量与 Android 验收通过后发布。源码仓库的旧构建入口不得发布软件。两个仓库的 update.json 与软件版本须先同步，已有标签不会覆盖。
+
 MagicNet 发布包维护显式 sing-box `tun|ebpf` 主线，默认仍为 `tun`/`magicnet0`。普通用户应安装 Releases 中的 ZIP；本页用于开发者生成并验收同结构产物。
 
 ## 构建
@@ -7,8 +9,8 @@ MagicNet 发布包维护显式 sing-box `tun|ebpf` 主线，默认仍为 `tun`/`
 克隆时需要初始化项目的直接子模块；`sing-box` 自带的 Android、Apple 和桌面客户端子模块不参与 MagicNet 构建，无需递归拉取：
 
 ```bash
-git clone https://github.com/LIghtJUNction/MagicNet.git
-cd MagicNet
+git clone https://github.com/LIghtJUNction/magicnet-android.git
+cd magicnet-android
 git submodule update --init
 kam build
 ```

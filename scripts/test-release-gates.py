@@ -54,7 +54,13 @@ class ReleaseGateTests(unittest.TestCase):
             self.assertIn(guard, call['if'])
         for job in ('harness', 'android-kernelsu'):
             checkout = android['jobs'][job]['steps'][0]
-            self.assertEqual(checkout['with']['ref'], '${{ github.sha }}')
+            self.assertEqual(checkout['with']['repository'],
+                             "${{ inputs.source_sha && 'LIghtJUNction/magicnet-android' || github.repository }}")
+            self.assertEqual(checkout['with']['ref'], '${{ inputs.source_sha || github.sha }}')
+            verification = android['jobs'][job]['steps'][1]
+            self.assertEqual(verification['env']['SOURCE_SHA'], '${{ inputs.source_sha || github.sha }}')
+            self.assertIn('^[0-9a-f]{40}$', verification['run'])
+            self.assertIn('git rev-parse HEAD', verification['run'])
         gate = android['jobs']['simulation-gate']
         self.assertEqual(set(gate['needs']), {'harness', 'android-kernelsu'})
         command = gate['steps'][0]['run']

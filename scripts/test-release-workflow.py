@@ -70,6 +70,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.output.unlink(missing_ok=True)
         self.step_output.unlink(missing_ok=True)
         env = dict(os.environ, GITHUB_EVENT_NAME="push", GITHUB_REF="refs/heads/main",
+                   GITHUB_REPOSITORY="LIghtJUNction/MagicNet",
                    GITHUB_SHA=self.git("rev-parse", "HEAD"), PUSH_BEFORE=self.before,
                    RELEASE_COMMIT_SHA="", RELEASE_INPUT="false", PRERELEASE_INPUT="false",
                    GITHUB_ENV=str(self.output), GITHUB_OUTPUT=str(self.step_output),
@@ -180,6 +181,15 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.git("status", "--porcelain"), "")
         self.assertFalse(self.step_output.exists())
+
+    def test_implementation_repository_cannot_publish_or_request_a_release(self):
+        self.assert_rejected(self.run_workflow(
+            GITHUB_EVENT_NAME="workflow_dispatch", RELEASE_INPUT="true",
+            GITHUB_REPOSITORY="LIghtJUNction/magicnet-android"), "recipe repository")
+        before = self.snapshot()
+        self.assert_rejected(self.run_bump(
+            RELEASE_INPUT="true", GITHUB_REPOSITORY="LIghtJUNction/magicnet-android"), "recipe repository")
+        self.assertEqual(self.snapshot(), before)
 
     def test_bump_preserves_non_version_fields(self):
         original = self.metadata()

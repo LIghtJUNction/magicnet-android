@@ -97,6 +97,11 @@ class ArchiveTests(unittest.TestCase):
             SIM.prepare_archive(self.source, self.source, self.replacements)
         self.assertEqual(self.source.read_bytes(), before)
 
+    def test_cross_repository_fixture_records_implementation_commit(self):
+        self.archive()
+        with patch.dict(os.environ, MAGICNET_SOURCE_SHA='a' * 40, GITHUB_SHA='b' * 40):
+            self.assertEqual(self.build()['source_sha'], 'a' * 40)
+
     def test_missing_or_extra_payload_is_rejected(self):
         self.archive()
         for changes in ({k: v for k, v in self.replacements.items() if k != SIM.PAYLOADS[0]},
