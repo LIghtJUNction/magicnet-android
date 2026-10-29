@@ -21,8 +21,8 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
 PY
 cat >"$MODPATH/lib/magicnet_singbox_subscribe.sh" <<'FIXTURE'
 magicnet_singbox_build_outbounds_file_with_jq() {
-    [ -f "$2" ] || return 1
-    jq '[.[] | select(.type == "trojan" and .tag != "HK filtered")] + [{"type":"selector","tag":"proxy","default":"new-policy"}]' "$1" >"$3"
+    [ -f "$1" ] || return 1
+    jq '[.[] | select(.type == "trojan" and .tag != "HK filtered")] + [{"type":"selector","tag":"proxy","default":"new-policy"}]' "$1" >"$2"
 }
 magicnet_singbox_update_config_with_nodes() (
     trap 'rm -f "${MAGICNET_SUB_CONFIG_FILE}.new"' 0

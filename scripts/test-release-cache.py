@@ -79,6 +79,7 @@ class ReleaseCacheTest(unittest.TestCase):
         self.env_file.unlink(missing_ok=True)
         sha = self.git("rev-parse", "HEAD")
         env = dict(self.env, GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main",
+                   GITHUB_REPOSITORY="LIghtJUNction/MagicNet",
                    GITHUB_SHA=sha, RELEASE_COMMIT_SHA=sha, RELEASE_INPUT="true",
                    PRERELEASE_INPUT="false", BUMP_KIND="patch",
                    GITHUB_OUTPUT=str(self.output), GITHUB_ENV=str(self.env_file),

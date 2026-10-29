@@ -730,6 +730,7 @@ magicnet_singbox_fetch_subscription() {
     _index=0
     _line_index=0
     _input_invalid=0
+    _url_write_failed=0
     while IFS= read -r _url || [ -n "$_url" ]; do
         _url=$(printf '%s' "$_url" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
         [ -n "$_url" ] || continue
@@ -755,12 +756,16 @@ magicnet_singbox_fetch_subscription() {
         fi
         if ! printf '%s\n' "$_url" >>"$_url_seen_file" ||
             ! printf '%s\n' "$_url" >>"$_url_unique_file"; then
-            rm -f "$_url_lines_file" "$_url_unique_file" "$_url_seen_file"
-            return 1
+            _url_write_failed=1
+            break
         fi
     done <"$_url_lines_file"
     rm -f "$_url_lines_file" "$_url_seen_file"
 
+    if [ "$_url_write_failed" -ne 0 ]; then
+        rm -f "$_url_unique_file"
+        return 1
+    fi
     if [ "$_input_invalid" -ne 0 ]; then
         rm -f "$_url_unique_file"
         error "Subscription URL list is invalid or exceeds five unique URLs"
@@ -774,6 +779,7 @@ magicnet_singbox_fetch_subscription() {
 
     _ok=0
     _fetch_index=0
+    _fetch_record_failed=0
     while IFS= read -r _url || [ -n "$_url" ]; do
         [ -n "$_url" ] || continue
         _fetch_index=$((_fetch_index + 1))
@@ -794,14 +800,14 @@ magicnet_singbox_fetch_subscription() {
         if magicnet_singbox_fetch_one_subscription "$_url" "$_source_file" "$_cache_file" "$_identity_file" "$_fingerprint" "#${_fetch_index}"; then
             if ! printf '%s\n' "$_source_file" >>"$_sources_file"; then
                 error "Failed to record subscription source #${_fetch_index}"
-                rm -f "$_url_unique_file"
-                return 1
+                _fetch_record_failed=1
+                break
             fi
             if [ -n "$_fingerprint" ]; then
                 if ! printf '%s|%s|%s|%s\n' "${_source_file##*/}" "$_cache_file" "$_identity_file" "$_fingerprint" >>"$_cache_map"; then
                     error "Failed to record subscription cache metadata #${_fetch_index}"
-                    rm -f "$_url_unique_file"
-                    return 1
+                    _fetch_record_failed=1
+                    break
                 fi
             fi
             _ok=$((_ok + 1))
@@ -810,6 +816,7 @@ magicnet_singbox_fetch_subscription() {
         fi
     done <"$_url_unique_file"
     rm -f "$_url_unique_file"
+    [ "$_fetch_record_failed" -eq 0 ] || return 1
     if [ "$_ok" -ne "$_index" ]; then
         error "Incomplete subscription fetch ($_ok/$_index); keeping the previous configuration"
         return 1

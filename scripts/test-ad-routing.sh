@@ -38,10 +38,8 @@ assert_subscription_ad_allow() {
 
 mkdir -p "$WORK/subscription-jq"
 printf '[]' >"$WORK/subscription-jq/nodes.json"
-: >"$WORK/subscription-jq/tags"
 magicnet_singbox_build_outbounds_file_with_jq \
   "$WORK/subscription-jq/nodes.json" \
-  "$WORK/subscription-jq/tags" \
   "$WORK/subscription-jq/outbounds"
 assert_subscription_ad_allow \
   "$WORK/subscription-jq/outbounds" \

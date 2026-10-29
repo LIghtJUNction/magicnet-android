@@ -520,11 +520,13 @@ magicnet_singbox_fetch_one_subscription() {
 }
 first_urls="$fixture/first.urls"
 second_urls="$fixture/second.urls"
-printf 'candidate-a\ncandidate-b\n' >"$first_urls"
-printf 'candidate-b\ncandidate-a\n' >"$second_urls"
+candidate_a_url='https://candidate-a.example.invalid/subscription'
+candidate_b_url='https://candidate-b.example.invalid/subscription'
+printf '%s\n' "$candidate_a_url" "$candidate_b_url" >"$first_urls"
+printf '%s\n' "$candidate_b_url" "$candidate_a_url" >"$second_urls"
 MAGICNET_SUB_URL_FILE="$first_urls" magicnet_singbox_fetch_subscription "$fixture/first/sources.txt"
 MAGICNET_SUB_URL_FILE="$second_urls" magicnet_singbox_fetch_subscription "$fixture/second/sources.txt"
-candidate_a_cache="$(magicnet_singbox_subscription_fingerprint candidate-a).yaml"
+candidate_a_cache="$(magicnet_singbox_subscription_fingerprint "$candidate_a_url").yaml"
 first_a="$(awk -F'|' -v name="$candidate_a_cache" '$1 == name { print $2 }' "$fixture/first/cache-map.txt")"
 second_a="$(awk -F'|' -v name="$candidate_a_cache" '$1 == name { print $2 }' "$fixture/second/cache-map.txt")"
 test -n "$first_a"

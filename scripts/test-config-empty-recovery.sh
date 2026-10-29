@@ -73,7 +73,7 @@ cat >"$MODDIR/bin/sing-box" <<'CORE'
 jq -e '(.inbounds | length > 0) and (.outbounds | length > 0)' "$3" >/dev/null
 CORE
 chmod +x "$MODDIR/bin/sing-box"
-magicnet_singbox_build_outbounds_file_with_jq "$fixture/nodes" /dev/null "$fixture/outbounds"
+magicnet_singbox_build_outbounds_file_with_jq "$fixture/nodes" "$fixture/outbounds"
 magicnet_singbox_update_config_with_nodes "$fixture/outbounds"
 # Config-editor saves compact UTF-8 JSON. Long lines must remain valid for both
 # standalone startup and cached node detection, without using a regex reader.

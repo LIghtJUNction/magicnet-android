@@ -10,8 +10,7 @@ ln -s "$ROOT/src/MagicNet/lib" "$MODDIR/lib"
 . "$MODDIR/lib/magicnet_singbox_subscribe.sh"
 magicnet_singbox_subscription_filter_file() { printf '%s\n' "$fixture/filters"; }
 printf '%s\n' '[{"type":"socks","tag":"US-test","server":"127.0.0.1","server_port":1080,"version":"5"},{"type":"socks","tag":"google-proxy","server":"127.0.0.1","server_port":1081,"version":"5"}]' > "$fixture/nodes"
-printf '%s\n' US-test google-proxy > "$fixture/tags"
-magicnet_singbox_build_outbounds_file_with_jq "$fixture/nodes" "$fixture/tags" "$fixture/outbounds"
+magicnet_singbox_build_outbounds_file_with_jq "$fixture/nodes" "$fixture/outbounds"
 # A colliding subscription node must not replace the maintained selector.
 jq -e '[.[] | select(.tag == "google-proxy")] | length == 1 and .[0].type == "selector"' "$fixture/outbounds" >/dev/null
 for service in google youtube github discord netflix spotify twitter whatsapp telegram; do
@@ -120,8 +119,7 @@ jq -e '.outbounds[] | select(.tag=="google-proxy") | .default=="proxy"' "$fixtur
 printf 'Service sanitizer migration, explicit selection, refresh and idempotence passed\n'
 # Empty subscriptions remain fail-closed and never create empty auto groups.
 printf '%s\n' '[]' >"$fixture/empty-nodes"
-: >"$fixture/empty-tags"
-magicnet_singbox_build_outbounds_file_with_jq "$fixture/empty-nodes" "$fixture/empty-tags" "$fixture/empty-outbounds"
+magicnet_singbox_build_outbounds_file_with_jq "$fixture/empty-nodes" "$fixture/empty-outbounds"
 jq -n --slurpfile out "$fixture/empty-outbounds" \
   '{outbounds:$out[0],route:{rules:[]}}' >"$fixture/empty.json"
 magicnet_singbox_sanitize_generated_config "$fixture/empty.json"

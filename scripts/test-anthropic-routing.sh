@@ -144,7 +144,7 @@ cat >"$tmp_dir/adversarial-nodes.json" <<'JSON'
  {"type":"vless","tag":"\u0001","server":"empty.invalid","server_port":443,"uuid":"10000000-0000-4000-8000-000000000007"}
 ]
 JSON
-[[ "$(magicnet_singbox_count_valid_outbounds_nodes "$tmp_dir/adversarial-nodes.json")" == 2 ]] ||
+[[ "$(magicnet_singbox_count_valid_outbounds_nodes "$tmp_dir/adversarial-nodes.json")" == 4 ]] ||
   fail "jq adversarial valid-node count mismatch"
 magicnet_singbox_write_outbounds_from_json \
   "$tmp_dir/adversarial-nodes.json" "$tmp_dir/adversarial-jq.fragment"
@@ -155,7 +155,9 @@ jq -e '
         or .type == "hysteria2" or .type == "anytls" or .type == "tuic")
     | .tag] as $node_tags
   | (.outbounds | INDEX(.tag)) as $by_tag
-  | $node_tags == ["node-x", "node space"]
+  | ($node_tags | length) == 4
+    and ([.outbounds[] | select(.type == "vless") | .server] | sort)
+      == ["duplicate.invalid", "node-x.invalid", "space.invalid", "tab.invalid"]
     and $by_tag["proxy-auto"].outbounds == $node_tags
     and ($by_tag["proxy-auto"].outbounds | index("proxy-auto")) == null
     and $by_tag.proxy.outbounds == ($node_tags + ["proxy-auto", "direct", "block"])
@@ -327,9 +329,11 @@ jq -e '
   [.outbounds[]
     | select(.type == "shadowsocks" or .type == "vmess" or .type == "vless" or .type == "trojan"
         or .type == "hysteria2" or .type == "anytls" or .type == "tuic")
-    | .tag] == [
-      "schema-ss", "schema-vmess", "schema-vless", "schema-trojan",
-      "schema-hysteria2", "schema-anytls", "schema-tuic", "valid-endpoint"
+    | [.type, .server]] == [
+      ["shadowsocks", "ss.invalid"], ["vmess", "vmess.invalid"],
+      ["vless", "vless.invalid"], ["trojan", "trojan.invalid"],
+      ["hysteria2", "hysteria2.invalid"], ["anytls", "anytls.invalid"],
+      ["tuic", "tuic.invalid"], ["vless", "valid.invalid"]
     ]
 ' "$tmp_dir/adversarial-all.json" >/dev/null ||
   fail "jq generator count and emitted valid-node set diverged"
