@@ -485,7 +485,14 @@ mod tests {
     }
 
     fn assert_trickling_request_times_out(prefix: &[u8]) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
         let (mut client, server_stream) = tcp_pair();
+        // Keep the last server descriptor open while the producer is writing.
+        // Otherwise unread request bytes can cause a TCP reset on close and
+        // truncate an already-written 408 response before the assertion.
+        let response_stream = server_stream.try_clone().unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();
@@ -502,26 +509,33 @@ mod tests {
             started.elapsed()
         });
         let mut sender = client.try_clone().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let producer_stop = Arc::clone(&stop);
         let producer = thread::spawn(move || {
             for _ in 0..200 {
-                if sender.write_all(b"x").is_err() {
+                if producer_stop.load(Ordering::Relaxed) || sender.write_all(b"x").is_err() {
                     break;
                 }
                 thread::sleep(Duration::from_millis(10));
             }
         });
-        let mut response = String::new();
-        match client.read_to_string(&mut response) {
-            Ok(_) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
-                ) => {}
-            Err(error) => panic!("failed to read timeout response: {error}"),
+        let handler_deadline = Instant::now() + Duration::from_secs(3);
+        while !handler.is_finished() {
+            assert!(
+                Instant::now() < handler_deadline,
+                "request handler did not finish within the test deadline"
+            );
+            thread::sleep(Duration::from_millis(10));
         }
         let elapsed = handler.join().unwrap();
+        stop.store(true, Ordering::Relaxed);
         producer.join().unwrap();
+        // Half-close only after writes stop; retain the read side until the
+        // client consumes the complete response and its ordered FIN.
+        response_stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        drop(response_stream);
         assert!(
             response.starts_with("HTTP/1.1 408 Request Timeout\r\n"),
             "{response}"

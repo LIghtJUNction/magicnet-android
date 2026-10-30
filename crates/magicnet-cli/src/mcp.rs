@@ -642,9 +642,7 @@ fn print_log_tail(app: &App, file_name: &str, lines: usize) -> Result<(), String
     let text = read_bounded_log_tail(&file, MAX_MCP_LOG_BYTES)
         .map_err(|err| format!("log not found {}: {err}", file.display()))?;
     let lines = lines.clamp(1, 1000);
-    let all = text.lines().collect::<Vec<_>>();
-    let start = all.len().saturating_sub(lines);
-    for line in &all[start..] {
+    for line in crate::logs::tail_lines(&text, lines) {
         println!("{line}");
     }
     Ok(())
@@ -659,24 +657,7 @@ fn read_bounded_log_tail(path: &Path, max_bytes: u64) -> std::io::Result<String>
             "MCP log is not a regular file",
         ));
     }
-    read_log_snapshot(source, metadata.len(), max_bytes)
-}
-
-fn read_log_snapshot(
-    mut source: impl Read + Seek,
-    length: u64,
-    max_bytes: u64,
-) -> std::io::Result<String> {
-    let start = length.saturating_sub(max_bytes);
-    source.seek(SeekFrom::Start(start))?;
-    let mut tail = Vec::with_capacity((length - start) as usize);
-    source.take(length - start).read_to_end(&mut tail)?;
-    if start > 0 {
-        if let Some(index) = tail.iter().position(|byte| *byte == b'\n') {
-            tail.drain(..=index);
-        }
-    }
-    Ok(String::from_utf8_lossy(&tail).into_owned())
+    crate::logs::read_log_snapshot(source, metadata.len(), max_bytes)
 }
 
 #[cfg(test)]
@@ -817,7 +798,7 @@ mod tests {
 
 #[cfg(test)]
 mod log_snapshot_tests {
-    use super::read_log_snapshot;
+    use crate::logs::read_log_snapshot;
     use std::io::Cursor;
 
     #[test]

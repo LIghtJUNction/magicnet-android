@@ -2,6 +2,23 @@
 #
 # Kamfw-free helpers shared by common.sh and isolated subscribe loads.
 
+# Validate a canonical positive pid_t without overflowing Android mksh's
+# signed 32-bit arithmetic. For ten digits, compare the first nine and the
+# final digit separately; even an invalid input never reaches an overflowing
+# numeric comparison. This path uses only shell builtins.
+magicnet_pid_valid() {
+    case "${1:-}" in '' | *[!0-9]* | 0*) return 1 ;; esac
+    case "${#1}" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9) return 0 ;;
+    10)
+        [ "${1%?}" -lt 214748364 ] || {
+            [ "${1%?}" -eq 214748364 ] && [ "${1#?????????}" -le 7 ]
+        }
+        ;;
+    *) return 1 ;;
+    esac
+}
+
 # Keep dynamic materializer files beside their target for atomic replacement,
 # under one private directory that the configuration watcher can exclude.
 magicnet_config_staging_file() (
@@ -133,9 +150,9 @@ magicnet_fswatch_busybox_bin() (
     return 1
 )
 
-# Serialize only ownership metadata, never the protected operation or its
-# live-owner wait. This persistent inode must not be unlinked: mkdir/pid
-# publication, reclamation and release all have to use the same guard.
+# Serialize ownership metadata without holding the guard during live-owner
+# waits. Core startup also retains it through handoff or failed-start cleanup.
+# Never unlink this inode: publication, reclamation and release share it.
 magicnet_metadata_guard() (
     _guard_file="$1"
     _guard_wait="$2"
@@ -166,12 +183,25 @@ magicnet_metadata_guard() (
         sleep 0.1 || return 2
     done
     # Keep ownership checks and mutations in this guard-owning shell. The
-    # bounded proc probes must explicitly close fd 8; no long operation runs
-    # until this subshell exits and releases the guard.
+    # bounded proc probes must explicitly close fd 8. Core startup is the
+    # explicit long-lived critical section: its cleanup worker retains this
+    # same descriptor until handoff or verified exit, never the running core.
     "$@"
     _guard_rc=$?
     return "$_guard_rc"
 )
+
+# Keep the metadata flock before fork and through a failed startup's cleanup.
+# The Rust launcher passes this exact open-file description only to its short
+# startup worker; a ready core receives neither the pipe nor the lock.
+magicnet_core_launch() {
+    magicnet_metadata_guard "${MODDIR}/.state/config.lock.guard" 30 \
+        magicnet_core_launch_guarded "$@"
+}
+
+magicnet_core_launch_guarded() {
+    { "$@" >&2 && printf R; } | "${MODDIR}/cli" __singbox-launch 8>&8
+}
 
 magicnet_lib_dir() {
     _requested="${MAGICNET_LIB_DIR:-}"

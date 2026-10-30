@@ -55,6 +55,18 @@ SH
 cat >"$MODDIR/cli" <<'SH'
 #!/bin/sh
 printf 'resolver %s\n' "$*" >>"$MAGICNET_FETCH_TEST_LOG"
+if [ "${1:-}" = __singbox-launch ]; then
+  # This suite verifies ownership/restart ordering. The Rust service_launch
+  # integration suite runs the real session, pipe and parent-death protocol.
+  "$MODDIR/bin/sing-box" run -c "$MODDIR/.config/sing-box/config.json" -D "$MODDIR/.config/sing-box" &
+  child=$!
+  printf '%s\n' "$child" >"$MODDIR/.state/test-launch.pid"
+  acknowledgement=$(cat)
+  [ "$acknowledgement" != R ] || exit 0
+  kill "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null || true
+  exit 1
+fi
 if [ "${1:-}" = api ] && [ "${2:-}" = endpoint ]; then
   printf '%s\n' 'http://127.0.0.1:19090'
   exit 0
@@ -385,11 +397,18 @@ magicnet_singbox_pid_owned "$duplicate_work" "$tmp/config.json" && exit 1 || tru
 kill "$duplicate_work"
 wait "$duplicate_work" 2>/dev/null || true
 : >"$order_log"
+# Activation uses the canonical runtime path; the ownership probes above
+# intentionally retain arbitrary paths to cover foreign/wrong config cases.
+kill "$old_core" 2>/dev/null || true
+wait "$old_core" 2>/dev/null || true
+mkdir -p "$MODDIR/.config/sing-box"
+printf '{}\n' >"$MODDIR/.config/sing-box/config.json"
+magicnet_singbox_subscription_config_file() { printf '%s\n' "$MODDIR/.config/sing-box/config.json"; }
+"$MODDIR/bin/sing-box" run -c "$MODDIR/.config/sing-box/config.json" -D "$MODDIR/.config/sing-box" &
+old_core=$!
 PATH="$tmp/bin:$PATH" magicnet_singbox_restart_if_running
 wait "$old_core" 2>/dev/null || true
-# Set by magicnet_singbox_restart_if_running.
-# shellcheck disable=SC2154
-kill "$_new_pid" 2>/dev/null || true
+kill "$(cat "$MODDIR/.state/test-launch.pid")" 2>/dev/null || true
 test "$(tr '\n' ' ' <"$order_log")" = 'stop start '
 (
   "$tmp/foreign/sing-box" run -c "$tmp/foreign.json" -D "$tmp/foreign" &

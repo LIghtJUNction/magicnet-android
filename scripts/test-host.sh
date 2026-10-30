@@ -130,6 +130,7 @@ check bash scripts/test-subscription-baseline-safety.sh
 check python3 scripts/test-subscription-core-path.py
 check bash scripts/test-config-lock-safety.sh
 check bash scripts/test-config-lock-budget.sh
+check bash scripts/test-pid-validation.sh
 check sh scripts/test-runtime-fingerprint-safety.sh
 check sh scripts/test-runtime-temp-dirs.sh
 if [ "$with_routing_assets" -eq 1 ]; then

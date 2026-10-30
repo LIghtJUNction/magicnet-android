@@ -357,13 +357,7 @@ magicnet_config_lock_owner_matches() {
     fi
     [ "${#_owner_check}" -le 128 ] || { unset _owner_check; return 2; }
     _owner_check_pid=${_owner_check%%:*}
-    case "$_owner_check_pid" in
-    '' | *[!0-9]* | 0*)
-        unset _owner_check _owner_check_pid
-        return 2
-        ;;
-    esac
-    [ "${#_owner_check_pid}" -le 10 ] && [ "$_owner_check_pid" -le 4294967295 ] || {
+    magicnet_pid_valid "$_owner_check_pid" || {
         unset _owner_check _owner_check_pid
         return 2
     }

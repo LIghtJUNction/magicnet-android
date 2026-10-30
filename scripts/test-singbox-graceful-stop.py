@@ -18,6 +18,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 KAMFW = ROOT / "src/MagicNet/lib/kamfw"
 COMPAT = ROOT / "src/MagicNet/lib/magicnet/singbox_lifecycle.sh"
+PRIMITIVES = ROOT / "src/MagicNet/lib/magicnet/primitives.sh"
 USE_COMPAT = os.environ.get("MAGICNET_TEST_SINGBOX_COMPAT", "1") != "0"
 # Execute the pinned loader verbatim without .kamfwrc's Android initialization.
 # Stubs below cover only rich/self and translations, never __singbox__ import.
@@ -28,6 +29,8 @@ ENTRY = ROOT / "src/MagicNet/lib/magicnet.sh"
 SHELLS = [["sh"], ["bash"]]
 if shutil.which("busybox"):
     SHELLS.append(["busybox", "sh"])
+if shutil.which("mksh"):
+    SHELLS.append(["mksh"])
 
 
 class GracefulStop(unittest.TestCase):
@@ -44,6 +47,10 @@ class GracefulStop(unittest.TestCase):
                         (fw / f"{name}.sh").write_text(":\n")
                     (mod / ".config/sing-box").mkdir(parents=True)
                     (mod / ".config/sing-box/config.json").write_text("{}\n")
+                    # Startup effects are inert here; the Rust integration
+                    # suite exercises the real readiness pipe and sessions.
+                    (mod / "cli").write_text("#!/bin/sh\ncat >/dev/null\nexit 1\n")
+                    (mod / "cli").chmod(0o700)
                     script = r'''
 set -eu
 MODDIR=__MODDIR__
@@ -56,6 +63,7 @@ import() { _kamfw_load "$@"; }
 set_i18n() { :; }
 i18n() { printf '%s\n' "$1"; }
 print() { :; }
+. __PRIMITIVES__
 __LOAD_HELPER__
 # Production lifecycle/status callers import this again. It must not silently
 # restore the pinned one-second implementation after loading the overlay.
@@ -169,6 +177,7 @@ __ASSERTIONS__
                     script = script.replace("__MODDIR__", shlex.quote(work))
                     script = script.replace("__SCENARIO__", shlex.quote(scenario))
                     script = script.replace("__LOADER__", LOADER)
+                    script = script.replace("__PRIMITIVES__", shlex.quote(str(PRIMITIVES)))
                     load_helper = (". " + shlex.quote(str(COMPAT))) if USE_COMPAT else "import __singbox__"
                     script = script.replace("__LOAD_HELPER__", load_helper)
                     script = script.replace("__COMMAND__", "singbox_start" if start else "singbox_stop")

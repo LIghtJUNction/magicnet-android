@@ -138,6 +138,20 @@ fn main() {
     }
 
     let app = App::from_env();
+    let core_launch = match args.as_slice() {
+        [command] if command == "__singbox-launch" => Some(process::launch_singbox(&app)),
+        [command] if command == "__singbox-launch-worker" => {
+            Some(process::launch_singbox_worker(&app))
+        }
+        _ => None,
+    };
+    if let Some(result) = core_launch {
+        if let Err(err) = result {
+            eprintln!("[error] {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if args
         .first()
         .is_some_and(|arg| arg == "__module-update-worker")

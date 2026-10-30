@@ -1180,9 +1180,10 @@ magicnet_singbox_supervisor_restore() {
 
 magicnet_singbox_ensure_start_owned() {
     _owned_config="$1"
-    _owned_work="${_owned_config%/*}"
+    # Runtime activation always uses the published canonical configuration;
+    # candidate paths are validated/materialized before reaching this point.
+    [ "$_owned_config" = "${MODDIR}/.config/sing-box/config.json" ] || return 2
     _owned_binary="${MODDIR}/bin/sing-box"
-    _owned_log="${MODDIR}/.log/sing-box.log"
     _owned_start_pids=$(magicnet_proc_query_temp_create) || return 2
     if magicnet_singbox_owned_pids_to_file "$_owned_config" "$_owned_start_pids"; then
         _owned_start_lookup_rc=0
@@ -1195,40 +1196,38 @@ magicnet_singbox_ensure_start_owned() {
     0) return 1 ;;
     *) return 2 ;;
     esac
-    _api_expected=0
-    if magicnet_singbox_config_has_clash_api "$_owned_config"; then
-        _api_expected=1
-    fi
     [ -x "$_owned_binary" ] || return 1
     magicnet_singbox_api_listener_exists && return 1
-    mkdir -p "${MODDIR}/.log"
-    nohup "$_owned_binary" run -c "$_owned_config" -D "$_owned_work" >"$_owned_log" 2>&1 </dev/null &
-    _new_pid=$!
-    _ready_deadline=$(($(date +%s) + ${MAGICNET_SUB_READY_TIMEOUT:-15}))
-    while [ "$(date +%s)" -lt "$_ready_deadline" ]; do
-        if kill -0 "$_new_pid" 2>/dev/null &&
-            magicnet_singbox_pid_owned "$_new_pid" "$_owned_config" && {
-            [ "$_api_expected" -eq 0 ] ||
-                {
-                    magicnet_singbox_listener_owned "$_new_pid" &&
-                        magicnet_singbox_runtime_curl -fsS --max-time 1 "$(magicnet_singbox_api_endpoint)/version" 2>/dev/null |
-                        grep -q '"version"'
-                }
-        }; then
-            unset _api_expected
-            return 0
-        fi
-        sleep 1
-    done
+    if magicnet_core_launch magicnet_singbox_wait_owned_ready "$_owned_config"; then
+        return 0
+    fi
     # Readiness failure still needs graceful teardown. Never leave a rejected
     # TERM or an unresolved generation behind for the journal's next restart.
     if ! magicnet_singbox_stop_owned_config "$_owned_config"; then
-        unset _api_expected
         return 2
     fi
-    unset _api_expected
     return 1
 }
+
+magicnet_singbox_wait_owned_ready() (
+    _wait_owned_config="$1"
+    _wait_owned_seconds="${MAGICNET_SUB_READY_TIMEOUT:-15}"
+    case "$_wait_owned_seconds" in '' | *[!0-9]* | 0*) _wait_owned_seconds=15 ;; esac
+    if [ "${#_wait_owned_seconds}" -gt 3 ] || [ "$_wait_owned_seconds" -gt 180 ]; then
+        _wait_owned_seconds=180
+    fi
+    _wait_owned_deadline=$(($(date +%s) + _wait_owned_seconds))
+    while [ "$(date +%s)" -lt "$_wait_owned_deadline" ]; do
+        if magicnet_singbox_owned_ready "$_wait_owned_config"; then
+            return 0
+        else
+            _wait_owned_rc=$?
+        fi
+        [ "$_wait_owned_rc" -eq 1 ] || return 2
+        sleep 1 || return 2
+    done
+    return 1
+)
 
 magicnet_singbox_signal_pids_file() (
     _signal_file="$1"
@@ -1239,8 +1238,7 @@ magicnet_singbox_signal_pids_file() (
     [ -f "$_signal_file" ] && [ ! -L "$_signal_file" ] || return 2
     case "$_signal_number" in 15 | 9) ;; *) return 2 ;; esac
     while IFS= read -r _signal_pid; do
-        case "$_signal_pid" in '' | *[!0-9]* | 0*) return 2 ;; esac
-        [ "$_signal_pid" -le 2147483647 ] 2>/dev/null || return 2
+        magicnet_pid_valid "$_signal_pid" || return 2
         if kill "-$_signal_number" "$_signal_pid" 2>/dev/null; then
             continue
         fi

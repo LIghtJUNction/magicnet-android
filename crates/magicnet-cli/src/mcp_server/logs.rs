@@ -67,9 +67,7 @@ pub(crate) fn log_read(server: &Server, source: &str, lines: usize, redact: bool
         Err(err) => return format!("log not found {}: {err}", path.display()),
     };
     let lines = lines.clamp(1, 1000);
-    let all = text.lines().collect::<Vec<_>>();
-    let start = all.len().saturating_sub(lines);
-    let body = all[start..].join("\n");
+    let body = tail_lines(&text, lines).collect::<Vec<_>>().join("\n");
     if redact {
         redact_text(&body)
     } else {
@@ -80,11 +78,27 @@ pub(crate) fn log_read(server: &Server, source: &str, lines: usize, redact: bool
 pub(crate) fn read_bounded_tail(path: &Path) -> std::io::Result<String> {
     let file = open_regular_file(path)?;
     let len = file.metadata()?.len();
-    read_log_snapshot(file, len)
+    read_log_snapshot(file, len, MAX_LOG_READ_BYTES)
 }
 
-fn read_log_snapshot(mut file: impl Read + Seek, len: u64) -> std::io::Result<String> {
-    let start = len.saturating_sub(MAX_LOG_READ_BYTES);
+// Locate only the requested suffix, then preserve str::lines() handling of
+// CRLF, empty lines and an unterminated last line without indexing the prefix.
+pub(crate) fn tail_lines(text: &str, lines: usize) -> std::str::Lines<'_> {
+    let bytes: usize = text
+        .split_inclusive('\n')
+        .rev()
+        .take(lines)
+        .map(str::len)
+        .sum();
+    text[text.len() - bytes..].lines()
+}
+
+pub(crate) fn read_log_snapshot(
+    mut file: impl Read + Seek,
+    len: u64,
+    max_bytes: u64,
+) -> std::io::Result<String> {
+    let start = len.saturating_sub(max_bytes);
     file.seek(SeekFrom::Start(start))?;
     let mut bytes = Vec::with_capacity((len - start) as usize);
     file.take(len - start).read_to_end(&mut bytes)?;
@@ -93,7 +107,8 @@ fn read_log_snapshot(mut file: impl Read + Seek, len: u64) -> std::io::Result<St
             bytes.drain(..=index);
         }
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 }
 
 pub(crate) fn debug_snapshot(server: &Server, lines: usize) -> String {
@@ -226,6 +241,45 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn tail_lines_preserves_order_and_line_endings() {
+        for (text, count, expected) in [
+            ("", 10, vec![]),
+            ("one\n", 0, vec![]),
+            ("one", 10, vec!["one"]),
+            ("one\n", 10, vec!["one"]),
+            ("one\r\n", 10, vec!["one"]),
+            ("one\r", 10, vec!["one\r"]),
+            ("\n", 10, vec![""]),
+            ("one\n\n", 1, vec![""]),
+            ("one\n\n", 10, vec!["one", ""]),
+            ("old\none\ntwo\n", 2, vec!["one", "two"]),
+            ("old\none\ntwo", 2, vec!["one", "two"]),
+            ("old\r\n\r\n中文\r\n末行", 3, vec!["", "中文", "末行"]),
+        ] {
+            assert_eq!(tail_lines(text, count).collect::<Vec<_>>(), expected);
+        }
+    }
+
+    #[test]
+    fn tail_lines_keeps_only_requested_lines_from_a_dense_log() {
+        let mut text = "\n".repeat(MAX_LOG_READ_BYTES as usize);
+        text.push_str("first\r\nlast\n");
+        assert_eq!(tail_lines(&text, 2).collect::<Vec<_>>(), ["first", "last"]);
+        assert_eq!(tail_lines(&text, 1000).count(), 1000);
+    }
+
+    #[test]
+    fn bounded_log_snapshot_preserves_lossy_utf8() {
+        let source = std::io::Cursor::new(b"old\nvalid\ninvalid\xff\n");
+        let text = read_log_snapshot(source, 19, 15).unwrap();
+        assert_eq!(text, "invalid\u{fffd}\n");
+
+        // A tail containing no newline may start inside a multibyte character.
+        let source = std::io::Cursor::new("old\n中".as_bytes());
+        assert_eq!(read_log_snapshot(source, 7, 2).unwrap(), "\u{fffd}\u{fffd}");
+    }
+
+    #[test]
     fn redacts_authorization_credentials_across_whitespace() {
         for header in [
             "Authorization: Bearer example-access-token",
@@ -291,7 +345,10 @@ mod tests {
     #[test]
     fn bounded_log_tail_ignores_appends_after_metadata_snapshot() {
         let file = std::io::Cursor::new(b"old\nappended-after-stat\n");
-        assert_eq!(read_log_snapshot(file, 4).unwrap(), "old\n");
+        assert_eq!(
+            read_log_snapshot(file, 4, MAX_LOG_READ_BYTES).unwrap(),
+            "old\n"
+        );
     }
 
     #[test]

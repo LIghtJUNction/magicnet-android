@@ -55,8 +55,7 @@ magicnet_singbox_update_lock_live() (
     _start=${_rest%%:*}
     _nonce=${_rest#*:}
     [ "${#_owner}" -le 128 ] || return 2
-    case "$_pid" in '' | *[!0-9]* | 0*) return 2 ;; esac
-    [ "${#_pid}" -le 10 ] && [ "$_pid" -le 4294967295 ] || return 2
+    magicnet_pid_valid "$_pid" || return 2
     case "$_start" in '' | *[!0-9]*) return 2 ;; esac
     case "$_nonce" in '' | *[!A-Za-z0-9._-]*) return 2 ;; esac
     [ "$_rest" != "$_nonce" ] || return 2

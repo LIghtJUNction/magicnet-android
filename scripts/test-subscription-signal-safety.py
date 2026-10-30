@@ -24,6 +24,8 @@ CONFIG_SOURCE = Path(os.environ.get(
 SHELLS = [["sh"], ["bash"]]
 if shutil.which("busybox"):
     SHELLS.append(["busybox", "sh"])
+if shutil.which("mksh"):
+    SHELLS.append(["mksh"])
 
 
 class SubscriptionSignalSafety(unittest.TestCase):
@@ -53,6 +55,8 @@ class SubscriptionSignalSafety(unittest.TestCase):
                     core = mod / "bin/sing-box"
                     core.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                     core.chmod(0o700)
+                    (mod / "cli").write_text("#!/bin/sh\nprintf 'launch\\n' >>\"$MODDIR/events\"\ncat >/dev/null\nexit 1\n")
+                    (mod / "cli").chmod(0o700)
                     script = r'''
 set -eu
 MODDIR=__MODDIR__
@@ -148,6 +152,7 @@ magicnet_disable_dns_leak_guard() { event guard-clean; }
 __START_HELPER__
 nohup() { event launch; }
 magicnet_singbox_pid_owned() { return 1; }
+magicnet_singbox_owned_ready() { return 1; }
 magicnet_reapply_post_start_policy() { event policy-reapply; }
 magicnet_singbox_record_runtime_fingerprint() { event fingerprint; }
 magicnet_singbox_supervisor_restore() { event supervisors-restore; }

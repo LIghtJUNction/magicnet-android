@@ -37,8 +37,7 @@ singbox_signal_pids_file() (
     trap '[ -z "$_singbox_signal_probe" ] || rm -f "$_singbox_signal_probe"' EXIT
     case "$_singbox_signal" in 15 | 9) ;; *) return 2 ;; esac
     while IFS= read -r _singbox_signal_pid; do
-        case "$_singbox_signal_pid" in '' | *[!0-9]* | 0*) return 2 ;; esac
-        [ "$_singbox_signal_pid" -le 2147483647 ] 2>/dev/null || return 2
+        magicnet_pid_valid "$_singbox_signal_pid" || return 2
         if kill "-$_singbox_signal" "$_singbox_signal_pid" 2>/dev/null; then
             continue
         fi
@@ -97,10 +96,10 @@ singbox_start() {
     _attempt=1
     while [ "$_attempt" -le "${MAGICNET_SINGBOX_START_ATTEMPTS:-1}" ]; do
         info "Starting sing-box..."
-        # 使用 nohup 后台运行，并将日志重定向
-        nohup sing-box run -c "$_config" -D "$_workdir" >"$_log" 2>&1 &
-
-        if singbox_wait_ready; then
+        # The temporary launcher owns a separate core session until this
+        # readiness acknowledgement. EOF, timeout or a killed controller
+        # cleans a partial start; a ready core survives later worker cleanup.
+        if magicnet_core_launch singbox_wait_ready; then
             success "sing-box started successfully."
             unset _config _log _workdir _attempt
             return 0

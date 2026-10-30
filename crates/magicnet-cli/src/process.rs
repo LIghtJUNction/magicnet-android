@@ -15,6 +15,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod service_launch;
+pub(crate) use service_launch::{launch_singbox, launch_singbox_worker};
+
 pub(crate) const SHORT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 180;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 900;
@@ -1126,6 +1129,9 @@ pub(crate) fn magicnet_function_command(app: &App, function_name: &str) -> Comma
         .arg(app.moddir.join("cli").to_string_lossy().to_string())
         .env("MODDIR", &app.moddir)
         .env("MODPATH", &app.moddir)
+        // This budget belongs to the CLI that already consumed it. A daemon
+        // forked by the shell must not reuse it for future control operations.
+        .env_remove("MAGICNET_COMMAND_TIMEOUT")
         .stdin(Stdio::null());
     sanitize_cli_child_environment(&mut command);
     command
