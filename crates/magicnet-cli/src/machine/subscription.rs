@@ -7,11 +7,10 @@ use sha2::{Digest, Sha256};
 
 use super::{
     envelope, sub_status_data, App, MachineError, SUBSCRIPTION_STATUS, SUBSCRIPTION_TRANSACTION,
-    SUBSCRIPTION_URL,
 };
+use crate::subscriptions::{observe_source_configuration, SourceConfiguration};
 use crate::utils::{clean_module_lines_bounded, read_json_file_bounded};
 
-const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const INSPECTION_ERROR: MachineError = MachineError {
     code: "machine.subscription_observation_failed",
@@ -44,8 +43,7 @@ pub(super) fn cache_counts(path: &Path) -> (usize, usize) {
 }
 
 pub(super) fn inspect(app: &App) -> Result<Value, MachineError> {
-    let urls = clean_module_lines_bounded(app, Path::new(SUBSCRIPTION_URL), MAX_CONFIG_BYTES)
-        .map_err(|_| INSPECTION_ERROR)?;
+    let source = observe_sources(app)?;
     let user_agent = clean_module_lines_bounded(
         app,
         Path::new(".config/sing-box/subscription.user-agent"),
@@ -61,18 +59,18 @@ pub(super) fn inspect(app: &App) -> Result<Value, MachineError> {
         8192,
     )
     .map_err(|_| INSPECTION_ERROR)?;
-    if urls.len() > 5 || filters.len() > 32 {
+    if filters.len() > 32 {
         return Err(INSPECTION_ERROR);
     }
     let transaction = app.moddir.join(SUBSCRIPTION_TRANSACTION).exists();
     let generation = crate::read_kv(app.moddir.join(SUBSCRIPTION_STATUS));
-    let mut data = sub_status_data(app, &urls);
+    let mut data = sub_status_data(app, &source);
     let usage = if data["source"]["mode"] == "local_file" {
         Vec::new()
     } else {
         source_usage(
             app,
-            &urls,
+            &source.urls,
             data["last"]["result"].as_str().unwrap_or("unknown"),
         )
     };
@@ -80,9 +78,7 @@ pub(super) fn inspect(app: &App) -> Result<Value, MachineError> {
     // generation changes instead of assigning another provider's quota.
     if transaction != app.moddir.join(SUBSCRIPTION_TRANSACTION).exists()
         || generation != crate::read_kv(app.moddir.join(SUBSCRIPTION_STATUS))
-        || urls
-            != clean_module_lines_bounded(app, Path::new(SUBSCRIPTION_URL), MAX_CONFIG_BYTES)
-                .map_err(|_| INSPECTION_ERROR)?
+        || source != observe_sources(app)?
     {
         return Err(MachineError {
             code: "machine.snapshot_changed",
@@ -90,9 +86,13 @@ pub(super) fn inspect(app: &App) -> Result<Value, MachineError> {
         });
     }
     data["configuration"] =
-        json!({"sing_box_urls": urls, "user_agent": user_agent, "filters": filters});
+        json!({"sing_box_urls": source.urls, "user_agent": user_agent, "filters": filters});
     data["source_usage"] = json!(usage);
     Ok(envelope("sub.inspect", data))
+}
+
+pub(super) fn observe_sources(app: &App) -> Result<SourceConfiguration, MachineError> {
+    observe_source_configuration(app).map_err(|_| INSPECTION_ERROR)
 }
 
 fn safe_count(value: &Value, key: &str) -> Option<u64> {
@@ -138,6 +138,9 @@ fn source_usage(app: &App, urls: &[String], result: &str) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SUBSCRIPTION_URL: &str = ".config/sing-box/subscription.url";
+    const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 
     #[test]
     fn usage_is_bound_to_the_url_hash_not_list_position() {
@@ -192,7 +195,7 @@ mod tests {
             json!(["HK", "free"])
         );
         assert!(value.to_string().contains("PRIVATE"));
-        let status = super::super::sub_status_value(&app).to_string();
+        let status = super::super::sub_status_value(&app).unwrap().to_string();
         assert!(!status.contains("PRIVATE"));
         assert!(!status.contains("provider.example"));
         fs::remove_dir_all(root).unwrap();
@@ -207,6 +210,92 @@ mod tests {
         fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink("/etc/passwd", &path).unwrap();
         assert_eq!(inspect(&app).unwrap_err(), INSPECTION_ERROR);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn subscription_readers_reject_invalid_sources_without_leaking_or_writing() {
+        for name in ["subscription.url", "subscription.local"] {
+            let (root, app) = super::super::tests::fixture();
+            let path = root.join(".config/sing-box").join(name);
+            let limit = if name.ends_with(".url") {
+                64 * 1024
+            } else {
+                8 * 1024 * 1024
+            };
+            let reject = || {
+                for command in ["status", "inspect"] {
+                    let error = super::super::machine_value(&app, &["sub", command])
+                        .expect_err("invalid source must not look unconfigured");
+                    assert_eq!(error, INSPECTION_ERROR);
+                    assert!(!format!("{error:?}").contains("SOURCE-CANARY"));
+                }
+                assert!(!root.join(".state").exists());
+            };
+
+            for bytes in [b"SOURCE-CANARY\xff".as_slice(), b"# SOURCE-CANARY\0\n"] {
+                fs::write(&path, bytes).unwrap();
+                reject();
+                assert_eq!(fs::read(&path).unwrap(), bytes);
+            }
+            fs::write(&path, "x".repeat(limit + 1)).unwrap();
+            reject();
+            fs::remove_file(&path).unwrap();
+            fs::create_dir(&path).unwrap();
+            reject();
+            fs::remove_dir(&path).unwrap();
+
+            let outside = root.join("SOURCE-CANARY");
+            fs::write(&outside, "preserved").unwrap();
+            std::os::unix::fs::symlink(&outside, &path).unwrap();
+            reject();
+            fs::remove_file(&path).unwrap();
+            fs::hard_link(&outside, &path).unwrap();
+            reject();
+            assert_eq!(fs::read_to_string(&outside).unwrap(), "preserved");
+            fs::remove_file(&path).unwrap();
+
+            use std::os::unix::ffi::OsStrExt;
+            let fifo = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+            reject();
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn subscription_readers_accept_exact_bounds_and_detect_local_source_replacement() {
+        let (root, app) = super::super::tests::fixture();
+        let urls = root.join(SUBSCRIPTION_URL);
+        fs::write(&urls, format!("#{}", "x".repeat(64 * 1024 - 1))).unwrap();
+        let local = root.join(".config/sing-box/subscription.local");
+        fs::write(&local, "x".repeat(8 * 1024 * 1024)).unwrap();
+        for command in ["status", "inspect"] {
+            let value = super::super::machine_value(&app, &["sub", command]).unwrap();
+            assert_eq!(value["data"]["source"]["mode"], "local_file");
+            assert_eq!(value["data"]["source"]["configured_count"], 1);
+        }
+        let before = observe_sources(&app).unwrap();
+        fs::write(&local, "a new local subscription").unwrap();
+        let after = observe_sources(&app).unwrap();
+        assert_eq!(before.mode(), after.mode());
+        assert_eq!(before.configured_count(), after.configured_count());
+        assert!(
+            before != after,
+            "same mode must not conceal changed local bytes"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn service_keeps_independent_evidence_when_subscription_intent_is_unreadable() {
+        let (root, app) = super::super::tests::fixture();
+        fs::write(root.join(SUBSCRIPTION_URL), b"SOURCE-CANARY\xff").unwrap();
+        let value = super::super::service_status_value(&app);
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["data"]["subscription"]["source"], "unknown");
+        assert!(value["data"]["core"].is_object());
+        assert!(!value.to_string().contains("SOURCE-CANARY"));
         fs::remove_dir_all(root).unwrap();
     }
 

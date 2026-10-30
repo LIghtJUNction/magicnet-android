@@ -115,8 +115,13 @@ magicnet_singbox_build_outbounds_with_proxylink() {
         # A direct-only/unsupported source must not disappear behind another
         # provider's valid nodes. Keep the active configuration on any failure.
         "$_proxylink_jq" '.outbounds' "$_tmp_config" >"${_tmp_config}.nodes" || return 1
-        _source_valid_count=$(magicnet_singbox_count_valid_outbounds_nodes "${_tmp_config}.nodes") || return 1
+        _source_expected_count=$(magicnet_singbox_count_source_native_nodes "$_source_file" "$_tmp_config") || return 1
+        # Compare this source before name filters and cross-source merging.
+        # Another provider's extra nodes cannot compensate for its losses.
+        _source_valid_count=$(magicnet_singbox_count_valid_outbounds_nodes "${_tmp_config}.nodes" true) || return 1
         [ "${_source_valid_count:-0}" -gt 0 ] || return 1
+        [ "$_source_expected_count" = unknown ] ||
+            [ "$_source_valid_count" -ge "$_source_expected_count" ] || return 1
         "$_proxylink_jq" -s '.[0] + .[1].outbounds' "$_tmp_outbounds" "$_tmp_config" >"${_tmp_outbounds}.next" || return 1
         mv -f "${_tmp_outbounds}.next" "$_tmp_outbounds" || return 1
         _source_count=$((_source_count + 1))

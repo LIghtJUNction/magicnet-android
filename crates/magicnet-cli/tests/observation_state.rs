@@ -36,6 +36,36 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn subscription_machine_reads_are_structured_and_do_not_create_configuration() {
+    for action in ["status", "inspect"] {
+        let fixture = Fixture::new();
+        let output = fixture.run(&["--json", "sub", action]);
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["data"]["source"]["configured_count"], 0);
+        assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 0);
+
+        let config = fixture.0.join(".config/sing-box");
+        fs::create_dir_all(&config).unwrap();
+        let source = config.join("subscription.url");
+        fs::write(&source, b"https://SOURCE-CANARY.invalid/?token=PRIVATE\xff").unwrap();
+        let output = fixture.run(&["--json", "sub", action]);
+        assert!(!output.status.success());
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["ok"], false);
+        assert_eq!(
+            value["error"]["code"],
+            "machine.subscription_observation_failed"
+        );
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("SOURCE-CANARY"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("SOURCE-CANARY"));
+        assert!(!fixture.0.join(".state").exists());
+        assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
+    }
+}
+
+#[test]
 fn help_and_rejected_commands_do_not_create_state() {
     for (args, success) in [
         (vec![], true),

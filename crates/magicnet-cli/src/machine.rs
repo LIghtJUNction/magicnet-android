@@ -17,8 +17,6 @@ const TRANSPARENT_MODE_CONF: &str = ".config/magicnet/transparent-mode.conf";
 const DNS_CONF: &str = ".config/magicnet/dns.conf";
 const NETWORK_POLICY_CONF: &str = ".config/magicnet/network-policy.conf";
 const SINGBOX_CONFIG: &str = ".config/sing-box/config.json";
-const SUBSCRIPTION_URL: &str = ".config/sing-box/subscription.url";
-const SUBSCRIPTION_LOCAL: &str = ".config/sing-box/subscription.local";
 const SUBSCRIPTION_STATUS: &str = ".state/sing-box/subscription-status";
 const SUBSCRIPTION_TRANSACTION: &str = ".state/sing-box/subscription-transaction";
 const SUBSCRIPTION_UPDATE_LOCK: &str = ".state/sing-box/subscription-update.lock";
@@ -153,7 +151,7 @@ fn machine_value(app: &App, command: &[&str]) -> Result<Value, MachineError> {
             "network.preflight",
             crate::network::DnsCaptureCapabilities::observe(app).as_value(),
         )),
-        [command, action] if *command == "sub" && *action == "status" => Ok(sub_status_value(app)),
+        [command, action] if *command == "sub" && *action == "status" => sub_status_value(app),
         [command, action] if *command == "sub" && *action == "inspect" => {
             subscription::inspect(app)
         }
@@ -462,19 +460,13 @@ fn network_status_value(app: &App) -> Value {
     )
 }
 
-fn sub_status_value(app: &App) -> Value {
-    let urls = clean_module_lines(app, Path::new(SUBSCRIPTION_URL)).unwrap_or_default();
-    envelope("sub.status", sub_status_data(app, &urls))
+fn sub_status_value(app: &App) -> Result<Value, MachineError> {
+    let source = subscription::observe_sources(app)?;
+    Ok(envelope("sub.status", sub_status_data(app, &source)))
 }
 
-fn sub_status_data(app: &App, urls: &[String]) -> Value {
+fn sub_status_data(app: &App, source: &crate::subscriptions::SourceConfiguration) -> Value {
     let values = read_kv(app.moddir.join(SUBSCRIPTION_STATUS));
-    let source_mode = subscription_source_mode(app);
-    let configured_count = if source_mode == "local_file" {
-        1
-    } else {
-        urls.len()
-    };
     let reason = values.get("reason").map(String::as_str).unwrap_or("none");
     let stored_result = status_token(&values, "result", "never");
     let owner = crate::state::subscription_update_owner_state(app);
@@ -492,7 +484,7 @@ fn sub_status_data(app: &App, urls: &[String]) -> Value {
         &app.log_dir.join("subscription-refresh.log"),
     );
     json!({
-        "source": {"mode": source_mode, "configured_count": configured_count},
+        "source": {"mode": source.mode(), "configured_count": source.configured_count()},
         "update": {
             "lock_present": app.moddir.join(SUBSCRIPTION_UPDATE_LOCK).is_dir(),
             "transaction_pending": app.moddir.join(SUBSCRIPTION_TRANSACTION).is_dir(),
@@ -666,14 +658,9 @@ fn service_lifecycle(
 }
 
 fn subscription_source_mode(app: &App) -> &'static str {
-    if clean_module_lines(app, Path::new(SUBSCRIPTION_LOCAL))
-        .map(|lines| !lines.is_empty())
-        .unwrap_or(false)
-    {
-        "local_file"
-    } else {
-        "remote_url"
-    }
+    crate::subscriptions::observe_source_configuration(app)
+        .map(|source| source.mode())
+        .unwrap_or("unknown")
 }
 
 fn status_u64(values: &std::collections::HashMap<String, String>, key: &str) -> u64 {
@@ -1161,7 +1148,7 @@ mod tests {
         )
         .expect("write schedule");
 
-        let value = sub_status_value(&app);
+        let value = sub_status_value(&app).expect("observe subscription status");
         assert_eq!(value["command"], "sub.status");
         assert_eq!(value["data"]["source"]["configured_count"], 2);
         assert_eq!(value["data"]["last"]["result"], "failed");

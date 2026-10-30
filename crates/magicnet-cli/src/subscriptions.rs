@@ -12,6 +12,8 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use sha2::{Digest, Sha256};
+
 use crate::{
     clean_module_lines, clear_node_cache, cstring_from_os_str, decode_base64,
     first_clean_module_line, read_proc_text_bounded, run_magicnet_function,
@@ -24,12 +26,69 @@ const MAX_SUBSCRIPTION_USER_AGENT_BYTES: usize = 256;
 const MAX_SUBSCRIPTION_FILTERS: usize = 32;
 const MAX_SUBSCRIPTION_FILTER_BYTES: usize = 64;
 const MAX_LOCAL_SUBSCRIPTION_BYTES: usize = 8 * 1024 * 1024;
+const MAX_SUBSCRIPTION_URL_FILE_BYTES: u64 = 64 * 1024;
 const SUBSCRIPTION_USER_AGENT_PATH: &str = ".config/sing-box/subscription.user-agent";
 const SUBSCRIPTION_FILTER_PATH: &str = ".config/sing-box/subscription-filter.list";
 const SUBSCRIPTION_URL_PATH: &str = ".config/sing-box/subscription.url";
 const SELECTOR_REPLAY_WARNING: &str =
     "subscription committed, but saved selector choices could not be replayed";
 static SUBSCRIPTION_CANDIDATE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct SourceConfiguration {
+    pub(crate) urls: Vec<String>,
+    local: bool,
+    local_identity: Option<[u8; 32]>,
+}
+
+impl SourceConfiguration {
+    pub(crate) fn mode(&self) -> &'static str {
+        if self.local {
+            "local_file"
+        } else {
+            "remote_url"
+        }
+    }
+
+    pub(crate) fn configured_count(&self) -> usize {
+        if self.local {
+            1
+        } else {
+            self.urls.len()
+        }
+    }
+}
+
+/// Read source intent once for machine status, canonical state and diagnostics.
+/// Missing files mean unconfigured; unsafe, malformed or oversized files fail.
+/// The local digest is only a private observation identity, never public state.
+pub(crate) fn observe_source_configuration(app: &App) -> Result<SourceConfiguration, String> {
+    let urls = crate::utils::clean_module_lines_bounded(
+        app,
+        Path::new(SUBSCRIPTION_URL_PATH),
+        MAX_SUBSCRIPTION_URL_FILE_BYTES,
+    )?;
+    if urls.len() > MAX_SINGBOX_SUBSCRIPTION_URLS {
+        return Err("invalid subscription source list".to_string());
+    }
+    let local = crate::utils::read_module_text_bounded(
+        app,
+        Path::new(".config/sing-box/subscription.local"),
+        MAX_LOCAL_SUBSCRIPTION_BYTES as u64,
+    )?;
+    if local.as_ref().is_some_and(|text| text.contains('\0')) {
+        return Err("invalid local subscription source".to_string());
+    }
+    Ok(SourceConfiguration {
+        urls,
+        local: local.as_ref().is_some_and(|text| {
+            text.lines()
+                .map(str::trim)
+                .any(|line| !line.is_empty() && !line.starts_with('#'))
+        }),
+        local_identity: local.map(|text| Sha256::digest(text.as_bytes()).into()),
+    })
+}
 
 fn subscription_update_outcome(
     update: Result<(), String>,

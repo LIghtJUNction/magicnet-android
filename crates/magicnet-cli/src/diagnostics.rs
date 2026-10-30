@@ -606,30 +606,21 @@ fn subscription_evidence(app: &App) -> String {
     ];
     let status = fs::read_to_string(app.moddir.join(".state/sing-box/subscription-status"))
         .unwrap_or_default();
-    let local_source = app.moddir.join(".config/sing-box/subscription.local");
-    let source_mode = if fs::metadata(&local_source)
-        .map(|metadata| metadata.len() > 0)
-        .unwrap_or(false)
-    {
-        "local"
-    } else {
-        "url"
-    };
+    let (source_mode, configured_count) =
+        match crate::subscriptions::observe_source_configuration(app) {
+            Ok(source) => (
+                if source.mode() == "local_file" {
+                    "local"
+                } else {
+                    "url"
+                },
+                source.configured_count().to_string(),
+            ),
+            Err(_) => ("unknown", "unknown".to_string()),
+        };
     let update_owner = crate::state::subscription_update_owner_state(app);
     let mut lines = vec![
-        format!(
-            "configured_count={}",
-            if fs::metadata(&local_source)
-                .map(|metadata| metadata.len() > 0)
-                .unwrap_or(false)
-            {
-                1
-            } else {
-                clean_module_lines(app, Path::new(".config/sing-box/subscription.url"))
-                    .unwrap_or_default()
-                    .len()
-            }
-        ),
+        format!("configured_count={configured_count}"),
         format!("source_mode={source_mode}"),
         format!("update_running={}", (update_owner == "active") as u8),
         format!("update_lock_owner={update_owner}"),

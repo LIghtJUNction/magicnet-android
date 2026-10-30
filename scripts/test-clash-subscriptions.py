@@ -18,6 +18,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--converter', type=Path)
+parser.add_argument('--shell', default='bash')
 args, remaining = parser.parse_known_args()
 CONVERTER = args.converter.resolve() if args.converter else None
 if CONVERTER and not os.access(CONVERTER, os.X_OK):
@@ -82,7 +83,7 @@ magicnet_singbox_subscription_filter_file() {{ printf '/dev/null\\n'; }}
         return path
 
     def shell(self, code, success=True):
-        cp = subprocess.run(['bash', '-c', self.prefix + code], text=True, capture_output=True, timeout=45)
+        cp = subprocess.run([args.shell, '-c', self.prefix + code], text=True, capture_output=True, timeout=45)
         if success:
             self.assertEqual(cp.returncode, 0, cp.stdout + cp.stderr)
         else:
@@ -160,6 +161,115 @@ magicnet_singbox_subscription_filter_file() {{ printf '/dev/null\\n'; }}
         valid = self.file('valid.json', json.dumps({'outbounds': [{'type': 'trojan', 'tag': 'valid', 'server': 'ok.invalid', 'server_port': 443, 'password': 'fixture'}]}))
         invalid = self.file('invalid.json', '{"outbounds":[{"type":"direct","tag":"direct"}]}')
         self.convert([valid, invalid], converter, success=False)
+
+    def test_unrelated_references_do_not_block_same_name_nodes(self):
+        nodes = [
+            {'type': 'trojan', 'tag': 'HK', 'server': host,
+             'server_port': 443, 'password': 'fixture'}
+            for host in ('a.invalid', 'b.invalid')
+        ] + [
+            {'type': 'trojan', 'tag': 'JP', 'server': 'jp.invalid',
+             'server_port': 443, 'password': 'fixture', 'detour': 'base'},
+            {'type': 'trojan', 'tag': 'base', 'server': 'base.invalid',
+             'server_port': 443, 'password': 'fixture'},
+            {'type': 'selector', 'tag': 'fixture-selector',
+             'outbounds': ['base'], 'default': 'base'},
+        ]
+        source = self.file('references.json', json.dumps(nodes))
+        output = self.root / 'references-out.json'
+        identities = []
+        for ordered in (nodes, [nodes[1], nodes[0], *nodes[2:]]):
+            source.write_text(json.dumps(ordered))
+            self.shell(f'magicnet_singbox_disambiguate_outbound_tags {source} {output}')
+            actual = json.loads(output.read_text())
+            identities.append({node['server']: node['tag'] for node in actual if 'server' in node})
+            self.assertEqual(len(set(identities[-1].values())), 4)
+            self.assertEqual(next(node for node in actual if node['tag'] == 'JP')['detour'], 'base')
+            self.assertEqual(next(node for node in actual if node['tag'] == 'fixture-selector'), nodes[-1])
+        self.assertEqual(identities[0], identities[1])
+
+    def test_references_to_conflicting_tags_keep_previous_output(self):
+        for names, target in ((('HK', 'HK'), 'HK'), (('H\tK', 'H K'), 'H K')):
+            for field in ('detour', 'default', 'outbounds'):
+                with self.subTest(names=names, field=field):
+                    nodes = [
+                        {'type': 'trojan', 'tag': name, 'server': host,
+                         'server_port': 443, 'password': 'fixture'}
+                        for name, host in zip(names, ('a.invalid', 'b.invalid'))
+                    ] + [{'type': 'selector', 'tag': 'fixture-selector',
+                          field: [target] if field == 'outbounds' else target}]
+                    source = self.file('conflicting-references.json', json.dumps(nodes))
+                    output = self.file('references-out.json', '[{"previous":true}]\n')
+                    before = output.read_bytes()
+                    self.shell(f'magicnet_singbox_build_outbounds_file_with_jq {source} {output}', success=False)
+                    self.assertEqual(output.read_bytes(), before)
+
+    def test_one_source_cannot_compensate_for_another_sources_lost_nodes(self):
+        first = self.file('first.yaml', 'proxies:\n' + ''.join(
+            f'  - name: first-{i}\n    type: trojan\n    server: first-{i}.invalid\n'
+            '    port: 443\n    password: fixture\n' for i in range(2)
+        ))
+        converted = [
+            {'type': 'trojan', 'tag': 'first-0', 'server': 'first-0.invalid',
+             'server_port': 443, 'password': 'fixture'},
+            {'type': 'trojan', 'tag': 'second', 'server': 'second.invalid',
+             'server_port': 443, 'password': 'fixture'},
+        ]
+        second = self.file('second.json', json.dumps({'outbounds': [converted[1]]}))
+        for source, node in zip((first, second), converted):
+            self.file(source.name + '.converted', json.dumps({'outbounds': [node]}))
+        converter = self.file('converter', '#!/bin/sh\n'
+            'while [ "$#" -gt 0 ]; do case "$1" in -file|-singbox) src="$2"; shift;; '
+            '-o) out="$2"; shift;; esac; shift; done\ncp "$src.converted" "$out"\n')
+        converter.chmod(0o700)
+        output = self.file('out.json', '[{"previous":true}]\n')
+        before = output.read_bytes()
+        self.convert([first, second], converter, expected=2, success=False)
+        self.assertEqual(output.read_bytes(), before)
+
+        complete = [converted[0], {**converted[0], 'tag': 'first-1', 'server': 'first-1.invalid'}]
+        self.file(first.name + '.converted', json.dumps({'outbounds': complete}))
+        actual = self.convert([first, second], converter, expected=3)
+        self.assertEqual({node['server'] for node in actual.values()},
+                         {'first-0.invalid', 'first-1.invalid', 'second.invalid'})
+
+    def test_native_unknown_format_can_still_use_converter(self):
+        converted = [{'type': 'trojan', 'tag': 'flow', 'server': 'flow.example.invalid',
+                      'server_port': 443, 'password': 'fixture'}]
+        for content in (FLOW, json.dumps({'outbounds': converted})):
+            with self.subTest(content=content):
+                source = self.file('opaque-source', content)
+                actual = self.convert([source], self.converter_output(converted), expected=1)
+                self.assertEqual(actual['flow'], converted[0])
+
+    def test_source_count_read_and_extract_errors_do_not_become_unknown(self):
+        source = self.file('count-source.yaml', 'proxies:\n  - name: fixture\n')
+        output = self.root / 'count-stage'
+        commands = (
+            f'magicnet_singbox_count_source_native_nodes {self.root / "missing-source"} {output}',
+            'magicnet_singbox_extract_clash_nodes() { return 73; }; '
+            f'magicnet_singbox_count_source_native_nodes {source} {output}',
+            'magicnet_singbox_count_native_nodes() { return 74; }; '
+            f'magicnet_singbox_count_source_native_nodes {source} {output}',
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                cp = self.shell(command, success=False)
+                self.assertNotIn('unknown', cp.stdout)
+                self.assertEqual(list(self.root.glob('count-stage.native.*')), [])
+
+    def test_per_source_bound_allows_duplicate_nodes_and_notice_filtering(self):
+        real = {'type': 'trojan', 'tag': 'real', 'server': 'real.invalid',
+                'server_port': 443, 'password': 'fixture'}
+        notice = {**real, 'tag': '剩余流量：100GB', 'server': 'notice.invalid'}
+        content = 'proxies:\n' + ''.join(
+            f'  - name: {node["tag"]}\n    type: trojan\n    server: {node["server"]}\n'
+            '    port: 443\n    password: fixture\n' for node in (real, real, notice)
+        )
+        first = self.file('duplicates-a.yaml', content)
+        second = self.file('duplicates-b.yaml', content)
+        actual = self.convert([first, second], self.converter_output([real, notice]), expected=1)
+        self.assertEqual(actual, {'real': real})
 
     def reality_fixture(self):
         # The source has ten usable nodes plus ten well-formed notice rows.

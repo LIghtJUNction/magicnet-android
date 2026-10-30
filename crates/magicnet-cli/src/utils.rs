@@ -1139,9 +1139,13 @@ pub(crate) fn clean_module_lines_bounded(
     relative: &Path,
     max_bytes: u64,
 ) -> Result<Vec<String>, String> {
-    Ok(read_module_text_bounded(app, relative, max_bytes)?
-        .map(|text| filter_clean_lines(&text))
-        .unwrap_or_default())
+    let Some(text) = read_module_text_bounded(app, relative, max_bytes)? else {
+        return Ok(Vec::new());
+    };
+    if text.contains('\0') {
+        return Err("configuration contains a NUL byte".to_string());
+    }
+    Ok(filter_clean_lines(&text))
 }
 
 /// Reads exact optional configuration bytes through the module-root boundary.
@@ -1151,7 +1155,9 @@ pub(crate) fn read_module_text_bounded(
     max_bytes: u64,
 ) -> Result<Option<String>, String> {
     let target = split_module_relative_file(relative)?;
-    let directory = open_module_directory(app, &target.directory)?;
+    let Some(directory) = open_existing_module_directory(app, &target.directory)? else {
+        return Ok(None);
+    };
     let Some(file) = open_existing_private_module_file(&directory, &target.name)? else {
         return Ok(None);
     };
@@ -1616,6 +1622,32 @@ fn split_module_relative_file(relative: &Path) -> Result<ModuleRelativeFile, Str
 
 fn open_module_directory(app: &App, relative: &Path) -> Result<File, String> {
     open_module_directory_from_root(open_module_root(app)?, relative)
+}
+
+fn open_existing_module_directory(app: &App, relative: &Path) -> Result<Option<File>, String> {
+    let mut directory = open_module_root(app)?;
+    for component in normal_module_components(relative)? {
+        let name = cstring_from_os_str(component, "module directory name")?;
+        // Inspect from the already-open parent without creating directories or
+        // following a substituted link in any path component.
+        let fd = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            let error = io::Error::last_os_error();
+            return if error.kind() == ErrorKind::NotFound {
+                Ok(None)
+            } else {
+                Err(format!("open module directory: {error}"))
+            };
+        }
+        directory = unsafe { File::from_raw_fd(fd) };
+    }
+    Ok(Some(directory))
 }
 
 fn open_module_directory_from_root(mut directory: File, relative: &Path) -> Result<File, String> {

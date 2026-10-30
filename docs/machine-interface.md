@@ -199,11 +199,21 @@ removed, scheme/host are lowercase, default port 443 is omitted, empty path is
 `/`, and non-ASCII path/query bytes are percent-encoded. Existing ASCII path,
 query bytes, parameter order, duplicate keys and percent escapes are preserved.
 This identity matches the download cache and is used instead of list position.
-Pending transactions suppress uncommitted usage; detected generation or URL
+Pending transactions suppress uncommitted usage; detected generation, URL or local-source
 changes reject the snapshot. This is change detection, not an OS-wide atomic
 snapshot.
 The cache includes separate source/provenance counts; refresh counters summarize
 at most the last 200 lines of the bounded refresh-log tail, not lifetime totals.
+
+Both subscription readers use the same descriptor-verified source observation:
+the URL list is limited to 64 KiB and local subscription content to 8 MiB.
+Missing files or parent directories mean unconfigured and are never created by
+the read. Invalid UTF-8, NUL bytes, links, nonregular files, oversized content or
+other read failures return `machine.subscription_observation_failed`, without
+echoing configuration or treating the failure as zero sources. `service.status`
+keeps its independent service evidence and reports `subscription.source=unknown`
+when the source configuration cannot be inspected. The redacted support summary
+likewise uses `configured_count=unknown` and `source_mode=unknown`.
 
 Update and schedule ownership are independently verified with PID start time
 (and the exact script/owner marker for the scheduler). An empty newly-created

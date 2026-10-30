@@ -371,3 +371,32 @@ fn support_bundle_has_unique_redacted_read_only_evidence_sections(
     fs::remove_dir_all(root)?;
     Ok(())
 }
+
+#[test]
+fn subscription_support_evidence_marks_read_failures_unknown() {
+    for name in ["subscription.url", "subscription.local"] {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("magicnet-support-source-{nonce}"));
+        let app = App::for_test(root.clone());
+        fs::create_dir_all(root.join(".config/sing-box")).unwrap();
+        let path = root.join(".config/sing-box").join(name);
+        fs::write(&path, b"SOURCE-CANARY\xff").unwrap();
+        let check = || {
+            let text = super::subscription_evidence(&app);
+            assert!(
+                text.starts_with("configured_count=unknown\nsource_mode=unknown\n"),
+                "{text}"
+            );
+            assert!(!text.contains("SOURCE-CANARY"));
+            assert!(!root.join(".state").exists());
+        };
+        check();
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        check();
+        fs::remove_dir_all(root).unwrap();
+    }
+}

@@ -124,6 +124,13 @@ These files are intentionally retained because they contain information needed t
 
 A canonical record summarizes these without replacing the detailed rollback payload.
 
+Subscription source observation uses the same bounded, descriptor-verified reader
+as the machine interface. A failed source read publishes `state=unknown`,
+`source=unknown` and `configured_count=unknown`; it does not turn an unreadable
+configuration into a successful zero-source observation. The independent
+`phase`, `result`, `owner` and `generation` fields retain their observed transaction
+history, so a historical success does not override an unknown current source.
+
 ### Cache, checkpoint, and raw evidence
 
 These are not state-machine contracts and must not gain public semantics merely because they live below `.state`:

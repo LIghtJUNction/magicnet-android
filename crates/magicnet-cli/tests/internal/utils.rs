@@ -31,6 +31,10 @@ fn optional_module_text_snapshot_is_exact_bounded_and_rejects_links() {
         super::read_module_text_bounded(&app, relative, 64).unwrap(),
         None
     );
+    assert!(
+        !root.join(".config").exists(),
+        "read created a missing directory"
+    );
     let text = "# previous intent\nMAGICNET_TUN_MTU=1400\n";
     write_text_file(&app, relative, text).unwrap();
     assert_eq!(
@@ -48,6 +52,23 @@ fn optional_module_text_snapshot_is_exact_bounded_and_rejects_links() {
     assert!(super::read_module_text_bounded(&app, relative, 64).is_err());
     assert!(super::remove_module_file(&app, relative).is_err());
     assert_eq!(fs::read_to_string(outside).unwrap(), "preserved");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bounded_module_reader_rejects_symlinked_parent_without_touching_its_target() {
+    let root = test_directory("bounded-parent-link");
+    let app = App::for_test(root.clone());
+    let outside = root.join("outside");
+    fs::create_dir(&outside).unwrap();
+    symlink(&outside, root.join(".config")).unwrap();
+    assert!(super::read_module_text_bounded(
+        &app,
+        Path::new(".config/sing-box/subscription.url"),
+        64 * 1024,
+    )
+    .is_err());
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
     fs::remove_dir_all(root).unwrap();
 }
 

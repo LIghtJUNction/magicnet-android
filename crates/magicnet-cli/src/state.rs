@@ -10,9 +10,8 @@ use serde_json::Value;
 use crate::diagnostics::supervisor_pid;
 use crate::utils::read_json_file_bounded as read_json;
 use crate::{
-    clean_module_lines, cmdline_has_script, proc_start_time, read_kv, read_proc_argv,
-    read_proc_text_bounded, replace_module_text_files_transactionally, singbox_pid_summary, App,
-    MAX_PROC_STAT_BYTES,
+    cmdline_has_script, proc_start_time, read_kv, read_proc_argv, read_proc_text_bounded,
+    replace_module_text_files_transactionally, singbox_pid_summary, App, MAX_PROC_STAT_BYTES,
 };
 
 const STATE_ROOT: &str = ".state/machines";
@@ -42,8 +41,6 @@ const TAILSCALE_AUTH: &str = ".config/sing-box/tailscale-auth.json";
 const SINGBOX_CONFIG: &str = ".config/sing-box/config.json";
 const TRANSPARENT_MODE_CONF: &str = ".config/magicnet/transparent-mode.conf";
 const SELECTED_CORE_CONF: &str = ".config/magicnet/current-core.conf";
-const SUBSCRIPTION_URL: &str = ".config/sing-box/subscription.url";
-const SUBSCRIPTION_LOCAL: &str = ".config/sing-box/subscription.local";
 const SUBSCRIPTION_REFRESH_HOURS: &str = ".config/magicnet/subscription-refresh-hours";
 const MODULE_TRANSACTION_STAGE: &str = ".tmp/magicnet-app-transaction";
 
@@ -409,21 +406,26 @@ fn subscription_record(app: &App) -> StateRecord {
             _ => "unknown",
         }
     };
-    let local = regular_nonempty(&app.moddir.join(SUBSCRIPTION_LOCAL));
-    let configured_count = if local {
-        1
-    } else {
-        clean_module_lines(app, Path::new(SUBSCRIPTION_URL))
-            .map(|items| items.len())
-            .unwrap_or(0)
-    };
+    let (state, source, configured_count) =
+        match crate::subscriptions::observe_source_configuration(app) {
+            Ok(source) => (
+                state,
+                if source.mode() == "local_file" {
+                    "local"
+                } else {
+                    "url"
+                },
+                source.configured_count().to_string(),
+            ),
+            Err(_) => ("unknown", "unknown", "unknown".to_string()),
+        };
     StateRecord::new(Domain::Subscription)
         .field("state", state)
         .field("phase", phase)
         .field("result", result)
         .field("owner", owner)
-        .field("source", if local { "local" } else { "url" })
-        .field("configured_count", configured_count.to_string())
+        .field("source", source)
+        .field("configured_count", configured_count)
         .field("generation", map_value(&values, "generation_id", "none"))
         .bool("update_lock", lock_present)
         .bool("transaction_pending", transaction_pending)
@@ -1048,6 +1050,33 @@ mod tests {
         assert!(text.contains("transaction_pending=1"));
         fs::remove_dir_all(root).expect("remove fixture");
     }
+
+    #[test]
+    fn subscription_configuration_errors_are_unknown_not_zero_or_success() {
+        for name in ["subscription.url", "subscription.local"] {
+            let (root, app) = fixture();
+            let source = root.join(".config/sing-box").join(name);
+            fs::write(&source, b"SOURCE-CANARY\xff").unwrap();
+            fs::write(
+                root.join(super::SUBSCRIPTION_STATUS),
+                "result=success\nphase=complete\ngeneration_id=old-generation\n",
+            )
+            .unwrap();
+            let text = subscription_record(&app).encode();
+            assert!(text.contains("state=unknown\n"), "{text}");
+            assert!(text.contains("source=unknown\n"), "{text}");
+            assert!(text.contains("configured_count=unknown\n"), "{text}");
+            assert!(
+                text.contains("result=success\n"),
+                "historical result: {text}"
+            );
+            assert!(!text.contains("configured_count=0\n"));
+            assert!(!text.contains("SOURCE-CANARY"));
+            assert!(!root.join(".state/machines").exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn subscription_stale_lock_never_proves_running() {
         let (root, app) = fixture();

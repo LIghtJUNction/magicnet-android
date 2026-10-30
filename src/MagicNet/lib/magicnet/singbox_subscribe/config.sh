@@ -67,11 +67,12 @@ magicnet_singbox_disambiguate_outbound_tags() (
         ] | unique;
       ([ .[] | select(proxy_candidate) | .tag |= normalize_tag ]) as $nodes
       | (referenced_tags) as $references
-      | ($nodes | group_by(.tag) | any(.[]; ([.[] | del(.tag)] | unique | length) > 1)) as $tag_conflict
-      | if $tag_conflict and any($nodes[]; .tag as $tag | any($references[]; . == $tag)) then
+      | ($nodes | group_by(.tag)
+          | map(select(([.[] | del(.tag)] | unique | length) > 1) | .[0].tag)) as $conflicting_tags
+      | if any($conflicting_tags[]; . as $tag | any($references[]; . == $tag)) then
           "unsafe"
         else
-          $tag_conflict
+          ($conflicting_tags | length > 0)
         end
     ' "$_identity_input") || return 1
     case "$_identity_status" in
@@ -367,6 +368,32 @@ magicnet_singbox_build_outbounds_file_with_jq() (
         ]
     ' >"$_out_tmp" || return 1
     chmod 600 "$_out_tmp" && mv -f "$_out_tmp" "$_out_file"
+)
+
+# A per-source lower bound, not a proof of complete conversion. The native
+# grammar cannot count every converter format; keep that result unknown.
+# Isolate the extractors' shell variables from the converter's source loop.
+magicnet_singbox_count_source_native_nodes() (
+    _source_native_input="$1"
+    umask 077
+    _source_native_dir=$(mktemp -d "${2}.native.XXXXXX") || return 1
+    trap 'rm -rf "$_source_native_dir"' 0
+    trap 'exit 1' 1 2 3 15
+    if magicnet_singbox_source_is_clash "$_source_native_input"; then
+        magicnet_singbox_extract_clash_nodes "$_source_native_input" "$_source_native_dir" >/dev/null || return 1
+    else
+        # awk's ordinary no-match is 1; an unreadable source is not an
+        # unsupported format and must not turn into an unknown lower bound.
+        [ "$?" -eq 1 ] || return 1
+        magicnet_singbox_extract_share_links "$_source_native_input" "$_source_native_dir" >/dev/null || return 1
+    fi
+    _source_native_count=$(magicnet_singbox_count_native_nodes "$_source_native_dir" true) || return 1
+    case "$_source_native_count" in '' | *[!0-9]*) return 1 ;; esac
+    if [ "$_source_native_count" -gt 0 ]; then
+        printf '%s\n' "$_source_native_count"
+    else
+        printf 'unknown\n'
+    fi
 )
 
 magicnet_singbox_count_native_nodes() (
