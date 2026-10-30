@@ -459,13 +459,13 @@ async function copySummary(): Promise<void> {
 
 <style scoped>
 .subscriptions-page { width: 100%; max-width: 832px; min-width: 0; margin: 0 auto; }
-.subscription-summary { display: flex; align-items: center; gap: 12px; margin: 8px 0 14px; color: var(--mn-ink-muted); font-size: .875rem; }
+.subscription-summary { display: flex; align-items: center; gap: 12px; margin: 12px 0 20px; color: var(--mn-ink-muted); font-size: .875rem; }
 .subscription-summary > :last-child { margin-left: auto; }
 .unsaved-note { color: var(--mn-warning); }
-.subscription-feedback { margin: 16px 0; border: 1px solid var(--mn-border); border-radius: var(--mn-radius-sm); padding: 12px 16px; color: var(--mn-ink-soft); background: var(--mn-surface-sunken); font-size: .875rem; line-height: 1.65; overflow-wrap: anywhere; }
+.subscription-feedback { margin: 20px 0; border-radius: var(--mn-radius-md); padding: 16px 20px; color: var(--mn-ink-soft); background: var(--mn-surface-sunken); font-size: .875rem; line-height: 1.65; overflow-wrap: anywhere; }
 .subscription-feedback[data-error="true"] { color: var(--mn-warning); }
 .usage-footnote { margin: 0 0 28px; color: var(--mn-ink-muted); font-size: .8125rem; line-height: 1.6; }
-.source-editor { margin: 24px 0; padding: 24px; border: 1px solid var(--mn-border); border-radius: var(--mn-radius-lg); background: var(--mn-surface); scroll-margin-top: 120px; }
+.source-editor { margin: 32px 0; padding: 24px; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); scroll-margin-top: 120px; }
 .editor-heading h3 { margin: 0; font-size: 1rem; font-weight: 600; }
 .editor-heading p { margin: 8px 0 0; color: var(--mn-ink-muted); font-size: .875rem; line-height: 1.65; }
 .source-textarea { margin-top: 20px; min-height: 144px; font-size: max(16px, .875rem); line-height: 1.7; overflow-wrap: anywhere; }
@@ -473,7 +473,7 @@ async function copySummary(): Promise<void> {
 .editor-validation[data-error="true"] { color: var(--mn-danger); }
 .editor-actions, .source-import-actions, .source-save-actions, .preview-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .editor-actions { justify-content: space-between; }
-.source-preview { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--mn-border); }
+.source-preview { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--mn-border); }
 .source-preview summary, .settings-section > summary { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; font-size: .875rem; color: var(--mn-ink-soft); }
 summary::-webkit-details-marker { display: none; }
 summary:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 4px; border-radius: 2px; }
@@ -482,7 +482,7 @@ details[open] > summary > svg:last-child { transform: rotate(180deg); }
 .source-preview li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; padding: 8px 0; color: var(--mn-ink-muted); font-size: .8125rem; }
 .source-preview li strong { font-weight: 500; color: var(--mn-ink-soft); overflow-wrap: anywhere; }
 .source-preview li[data-invalid="true"] { color: var(--mn-danger); }
-.subscription-settings { margin-top: 28px; }
+.subscription-settings { margin-top: 36px; }
 .settings-section { border-top: 1px solid var(--mn-border); }
 .settings-section > summary { min-height: 62px; font-size: .9375rem; font-weight: 500; }
 .settings-section > summary > span { display: inline-flex; align-items: center; gap: 12px; }
@@ -490,9 +490,9 @@ details[open] > summary > svg:last-child { transform: rotate(180deg); }
 .settings-section > summary > :deep(.update-outcome) { margin-inline-start: auto; }
 .settings-section > summary > span:first-child { min-width: 0; }
 .settings-section > summary > span:first-child > svg { flex: 0 0 auto; }
-.subscription-settings-content { display: grid; gap: 16px; padding-bottom: 20px; }
+.subscription-settings-content { display: grid; gap: 24px; padding: 8px 0 24px; }
 @media (max-width: 600px) {
-  .source-editor { padding: 20px 16px; }
+  .source-editor { padding: 20px; }
   .source-save-actions { order: 1; }
   .editor-actions { align-items: stretch; gap: 16px; }
   .source-import-actions, .source-save-actions { width: 100%; }

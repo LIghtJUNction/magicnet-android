@@ -99,7 +99,7 @@ onMounted(() => void refreshStatus(true));
 </script>
 
 <template>
-  <Card class="grid gap-3" :aria-busy="busy">
+  <Card class="grid gap-5" :aria-busy="busy">
     <div class="flex items-center justify-between gap-3">
       <h3 class="inline-flex items-center gap-2 text-base font-semibold">
         <Network :size="17" /> UDP / IPv6
@@ -113,9 +113,9 @@ onMounted(() => void refreshStatus(true));
     </p>
     <p v-if="readFailed" role="alert" class="text-sm text-[var(--mn-danger)]">{{ t("读取 UDP / IPv6 策略失败") }}</p>
     <p v-if="dirty" role="status" class="text-xs text-[var(--mn-ink-muted)]">{{ t("有未保存的更改") }}</p>
-    <label class="grid gap-1 text-xs text-[var(--mn-ink-muted)]">
+    <label class="grid gap-2 text-sm text-[var(--mn-ink-muted)]">
       {{ t("IPv6 策略") }}
-      <select v-model="ipv6Mode" :disabled="unavailable || busy" class="h-10 rounded-md border bg-transparent px-3 text-sm text-[var(--mn-ink)]">
+      <select v-model="ipv6Mode" :disabled="unavailable || busy" class="mn-field min-h-12 px-3">
         <option value="prefer_ipv4">{{ t("双栈 · IPv4 优先（推荐）") }}</option>
         <option value="prefer_ipv6">{{ t("双栈 · IPv6 优先") }}</option>
         <option value="ipv4_only">{{ t("仅 IPv4 · 兼容模式") }}</option>
@@ -126,18 +126,18 @@ onMounted(() => void refreshStatus(true));
     </p>
     <p v-if="captureHint" role="alert" class="rounded-md border border-[var(--mn-danger)] px-3 py-2 text-xs leading-5 text-[var(--mn-danger)]">{{ captureHint }}</p>
     <div class="grid gap-3 sm:grid-cols-2">
-      <label class="grid gap-1 text-xs text-[var(--mn-ink-muted)]">
+      <label class="grid gap-2 text-sm text-[var(--mn-ink-muted)]">
         TUN MTU
-        <select v-model="mtu" :disabled="unavailable || busy" class="h-10 rounded-md border bg-transparent px-3 text-sm text-[var(--mn-ink)]">
+        <select v-model="mtu" :disabled="unavailable || busy" class="mn-field min-h-12 px-3">
           <option v-for="customMtu in customMtus" :key="customMtu" :value="String(customMtu)">{{ customMtu }}</option>
           <option value="1280">{{ t("1280 · IPv6 最稳妥") }}</option>
           <option value="1400">{{ t("1400 · 推荐") }}</option>
           <option value="1500">{{ t("1500 · 标准以太网") }}</option>
         </select>
       </label>
-      <label class="grid gap-1 text-xs text-[var(--mn-ink-muted)]">
+      <label class="grid gap-2 text-sm text-[var(--mn-ink-muted)]">
         {{ t("UDP 会话超时") }}
-        <select v-model="udpTimeout" :disabled="unavailable || busy" class="h-10 rounded-md border bg-transparent px-3 text-sm text-[var(--mn-ink)]">
+        <select v-model="udpTimeout" :disabled="unavailable || busy" class="mn-field min-h-12 px-3">
           <option value="1m">{{ t("1 分钟") }}</option>
           <option value="3m">{{ t("3 分钟") }}</option>
           <option value="5m">{{ t("5 分钟 · 推荐") }}</option>

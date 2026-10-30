@@ -193,7 +193,7 @@ watch(() => state.hasKsu, () => { if (active) void reload(); });
 </template>
 
 <style scoped>
-.mn-module-update { margin-block-end: 28px; padding: 20px; border: 1px dashed var(--mn-border-strong); border-radius: var(--mn-radius-lg); background: color-mix(in srgb, var(--mn-surface-raised) 60%, transparent); }
+.mn-module-update { margin-block-end: 40px; padding: 24px 0; border-top: 1px solid var(--mn-border); }
 .mn-module-update[data-tone="success"], .mn-module-update[data-tone="warning"] { border-style: solid; border-color: var(--mn-current-tone-border, var(--mn-border-strong)); }
 .mn-module-update__heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 24px; margin-block-end: 16px; }
 .mn-module-update__heading h3 { margin: 0; font-family: var(--font-serif); font-size: 20px; font-weight: 500; letter-spacing: -.02em; }

@@ -21,9 +21,12 @@ void test("network instrument palette keeps readable text and controls in both t
     const token=name=>block.match(new RegExp(`--mn-${name}:\\s*(#[0-9a-f]{6})`,"i"))[1];
     assert.ok(contrast(token("ink"),token("ivory"))>=4.5,"body text contrast");
     assert.ok(contrast(token("on-accent"),token("primary"))>=4.5,"primary control contrast");
+    for (const surface of ["ivory", "surface-raised", "surface-sunken", "surface-input"]) {
+      assert.ok(contrast(token("ink-faint"), token(surface)) >= 4.5, `${theme} auxiliary text on ${surface}`);
+    }
   }
   assert.doesNotMatch(styles, /@font-face|fonts\.googleapis/);
-  // The star field is static paint, removed for high contrast and forced colors.
+  // The page canvas stays quiet, including in high contrast and forced colors.
   assert.match(styles, /--mn-sky-field:\s*none/);
   assert.match(styles, /@media \(prefers-contrast: more\)[\s\S]*--mn-sky-field: none/);
   assert.match(styles, /@media \(forced-colors: active\)\s*\{\s*body\s*\{\s*background-image: none/);

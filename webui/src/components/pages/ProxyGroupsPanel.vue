@@ -171,7 +171,7 @@ const { target: visibilityTarget } = useVisibilityTask(refreshGroups);
 
 <template>
   <div ref="visibilityTarget" class="mn-deferred-region">
-    <Card class="grid gap-3">
+    <Card class="grid gap-5">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0">
         <h3 class="inline-flex items-center gap-2 text-base font-semibold"><Route :size="17" /> {{ t("代理组") }}</h3>
@@ -223,8 +223,8 @@ const { target: visibilityTarget } = useVisibilityTask(refreshGroups);
       </template>
     </ConfirmPanel>
 
-    <div v-if="visibleGroups.length" class="grid gap-6">
-      <section v-for="group in visibleGroups" :key="group.name" class="proxy-group min-w-0 border-t border-[var(--mn-border)] pt-4">
+    <div v-if="visibleGroups.length" class="grid gap-8">
+      <section v-for="group in visibleGroups" :key="group.name" class="proxy-group min-w-0 border-t border-[var(--mn-border)] pt-6">
         <div class="mb-3 min-w-0">
           <div class="min-w-0">
             <h4 class="break-words text-base font-semibold text-[var(--mn-ink)]">{{ proxyNameLabel(group.name) }}</h4>
@@ -248,9 +248,8 @@ const { target: visibilityTarget } = useVisibilityTask(refreshGroups);
           <button
             v-for="node in visibleGroupNodes(group)"
             :key="`${group.name}-${node}`"
-            class="grid min-h-12 rounded-md border px-3 py-3 text-left text-sm"
+            class="proxy-node grid min-h-12 gap-1 rounded-[var(--mn-radius-md)] px-4 py-3 text-left text-sm"
             :aria-pressed="node === group.now"
-            :class="node === group.now ? 'mn-tone-ok' : 'border-[var(--mn-border)] text-[var(--mn-ink-soft)]'"
             type="button"
             :disabled="node === group.now || isRunning('proxy-groups-select')"
             @click="requestSelect(group, node)"
@@ -283,3 +282,17 @@ const { target: visibilityTarget } = useVisibilityTask(refreshGroups);
     </Card>
   </div>
 </template>
+
+<style scoped>
+.proxy-node { border: 0; background: var(--mn-surface-sunken); color: var(--mn-ink-soft); cursor: pointer; transition: background-color 160ms ease-out; }
+.proxy-node[aria-pressed="true"] { background: var(--mn-accent-soft); color: var(--mn-primary-strong); }
+.proxy-node[aria-pressed="true"] > span { color: inherit; }
+.proxy-node:disabled { cursor: default; }
+.proxy-node:disabled:not([aria-pressed="true"]) { opacity: .55; }
+.proxy-node:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 2px; }
+@media (hover: hover) { .proxy-node:hover:not(:disabled) { background: var(--mn-carrier-deep); } }
+@media (forced-colors: active) {
+  .proxy-node { border: 1px solid ButtonText; }
+  .proxy-node[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; color: CanvasText; }
+}
+</style>

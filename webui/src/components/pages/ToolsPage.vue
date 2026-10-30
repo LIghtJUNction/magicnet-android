@@ -385,7 +385,7 @@ allowed_ips={{ state.warp.allowedIps }}</pre>
           <Button :loading="isRunning('backup-export')" @click="exportBackup"><Download :size="16" />{{ t("导出到备份框") }}</Button>
         </div>
         <Textarea v-model="state.backup.payload" class="min-h-28" spellcheck="false" :placeholder="t('备份字符串会出现在这里，也可以手动粘贴剪切板内容')" />
-        <div class="grid gap-2 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3 text-xs text-[var(--mn-ink-muted)] sm:grid-cols-4">
+        <div class="mn-inset grid gap-3 p-4 text-xs text-[var(--mn-ink-muted)] sm:grid-cols-4">
           <span>{{ t("行数：{count}", { count: backupPayloadSummary.lines }) }}</span>
           <span>{{ t("字符数：{count}", { count: backupPayloadSummary.chars }) }}</span>
           <span>{{ t("非空白字符数：{count}", { count: backupPayloadSummary.compactChars }) }}</span>

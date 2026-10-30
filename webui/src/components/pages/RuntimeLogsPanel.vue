@@ -164,7 +164,7 @@ onUnmounted(stopTimer);
     </div>
 
     <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
-      <select v-model="target" class="h-10 min-w-0 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] px-3 text-sm text-[var(--mn-ink)]">
+      <select v-model="target" class="mn-field min-h-12 min-w-0 px-3">
         <option value="webui">{{ t("WebUI 后台任务") }}</option>
         <option value="sing-box">sing-box</option>
         <option value="fswatch">fswatch</option>
@@ -179,7 +179,7 @@ onUnmounted(stopTimer);
 
     <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem]">
       <Input v-model="query" :placeholder="t('过滤关键字，例如 error / dns / selector')" spellcheck="false" />
-      <select v-model="level" class="h-10 min-w-0 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] px-3 text-sm text-[var(--mn-ink)]">
+      <select v-model="level" class="mn-field min-h-12 min-w-0 px-3">
         <option value="all">{{ t("全部") }}</option>
         <option value="warn">{{ t("警告") }}</option>
         <option value="error">{{ t("错误") }}</option>

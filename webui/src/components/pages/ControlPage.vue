@@ -474,8 +474,8 @@ onMounted(() => {
       <div class="mn-control-overview">
         <div class="mn-control-status" role="status" aria-live="polite">
           <div class="mn-control-state-heading">
-            <p class="mn-control-eyebrow"><StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />{{ t("代理服务") }}<span v-if="state.hasKsu && state.runtime.transparentMode !== 'unknown'" class="mn-control-mode">{{ transparentModeLabel }}</span></p>
             <h2>{{ controlTitle }}</h2>
+            <p class="mn-control-label"><StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />{{ t("代理服务") }}<span v-if="state.hasKsu && state.runtime.transparentMode !== 'unknown'" class="mn-control-mode">{{ transparentModeLabel }}</span></p>
             <p class="mn-control-description">{{ controlDescription }}</p>
           </div>
           <dl v-if="state.hasKsu && state.runtime.singBoxState === 'sing-box'" class="mn-control-memory">
@@ -565,7 +565,7 @@ onMounted(() => {
           <Badge :tone="transparentTransitionTone">{{ state.runtime.transparentTransition }}</Badge>
         <dl
           aria-live="polite"
-          class="grid gap-x-4 gap-y-2 rounded-[var(--mn-radius-md)] border border-[var(--mn-border)] bg-[var(--mn-surface-sunken)] p-3 text-xs sm:grid-cols-2"
+          class="mn-inset grid gap-x-4 gap-y-3 p-4 text-xs sm:grid-cols-2"
         >
           <div class="min-w-0">
             <dt class="text-[var(--mn-ink-muted)]">configured</dt>
@@ -799,60 +799,58 @@ onMounted(() => {
 
 <style scoped>
 .mn-control { max-width: 1040px; margin-inline: auto; }
-.mn-control-hero { position: relative; overflow: hidden; padding: clamp(20px, 4vw, 36px); border: 1px solid var(--mn-border); border-radius: var(--mn-radius-xl); background: var(--mn-surface-raised); box-shadow: var(--mn-shadow-card); }
-.mn-control-hero::before { position: absolute; z-index: 0; top: -62%; right: -24%; width: 58%; aspect-ratio: 1; border: 1.5px dashed color-mix(in srgb, var(--mn-accent) 30%, transparent); border-radius: 50%; content: ""; pointer-events: none; }
-.mn-control-hero[data-service-state="ready"]::before { border-color: color-mix(in srgb, var(--mn-accent) 55%, transparent); }
-.mn-control-hero > * { position: relative; z-index: 1; }
-.mn-control-overview { display: grid; gap: 24px; }
+.mn-control-hero { padding: 12px 0 8px; }
+.mn-control-overview { display: grid; gap: 28px; }
 .mn-control-status { display: grid; gap: 18px; min-width: 0; }
 .mn-control-state-heading { min-width: 0; }
-.mn-control-eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 0 0 12px; color: var(--mn-ink-muted); font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.mn-control-mode { padding: 1px 8px; border: 1px solid var(--mn-border); border-radius: 999px; color: var(--mn-ink-soft); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0; text-transform: none; }
-.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-serif); font-size: clamp(36px, 9vw, 56px); font-weight: 500; line-height: 1.08; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.mn-control-label { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 16px 0 0; color: var(--mn-ink-muted); font-size: 13px; font-weight: 500; }
+.mn-control-mode { padding: 2px 8px; border-radius: 6px; background: var(--mn-surface-sunken); color: var(--mn-ink-soft); font-family: var(--font-mono); font-size: 12px; }
+.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-sans); font-size: clamp(32px, 7vw, 48px); font-weight: 550; line-height: 1.15; letter-spacing: -.03em; overflow-wrap: anywhere; }
 .mn-control-hero[data-service-state="ready"] .mn-control-status h2 { color: var(--mn-ink); }
-.mn-control-description { margin: 12px 0 0; max-width: 46ch; color: var(--mn-ink-muted); font-size: 13.5px; line-height: 1.75; }
+.mn-control-description { margin: 12px 0 0; max-width: 46ch; color: var(--mn-ink-muted); font-size: 15px; line-height: 1.7; }
 .mn-control-memory { display: inline-flex; width: fit-content; align-items: baseline; gap: 12px; margin: 0; padding: 8px 14px; border-radius: 999px; background: var(--mn-surface-sunken); }
 .mn-control-memory dt { color: var(--mn-ink-muted); font-size: 12px; }
 .mn-control-memory dd { margin: 0; color: var(--mn-ink); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mn-control-memory dd > span { color: var(--mn-ink-muted); font-size: 12px; font-weight: 400; }
 .mn-control-memory dd[data-unavailable="true"] { color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; }
 .mn-control-actions { align-self: center; min-width: 0; }
-.mn-control-power { width: 100%; min-height: 58px; border-radius: 999px; font-size: 15px; font-weight: 600; }
+.mn-control-power { width: 100%; min-height: 56px; border-radius: var(--mn-radius-lg); font-size: 15px; font-weight: 600; }
 .mn-control-power[data-running="true"] { border-color: var(--mn-ink); background: var(--mn-ink); color: var(--mn-ivory); box-shadow: none; }
 .mn-control-power[data-running="true"]:hover { border-color: var(--mn-ink-soft); background: var(--mn-ink-soft); }
-.mn-control-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
-.mn-control-shortcuts > button { padding-inline: 6px; border-radius: 999px; }
-.mn-service-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 20px 0 0; }
-.mn-service-facts > div { min-width: 0; padding: 10px 12px; border-radius: var(--mn-radius-md); background: var(--mn-surface-sunken); }
-.mn-service-facts dt { color: var(--mn-ink-muted); font-size: 11px; overflow-wrap: anywhere; }
-.mn-service-facts dd { margin: 4px 0 0; color: var(--mn-ink); font-size: 12.5px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.mn-control-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.mn-control-shortcuts > button { padding-inline: 6px; }
+.mn-service-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 24px 0 0; }
+.mn-service-facts > div { min-width: 0; padding: 8px 0; }
+.mn-service-facts dt { color: var(--mn-ink-muted); font-size: 12px; overflow-wrap: anywhere; }
+.mn-service-facts dd { margin: 6px 0 0; color: var(--mn-ink); font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .mn-control-notice { margin-top: 20px; border: 1px solid var(--mn-current-tone-border, var(--mn-border)); border-radius: var(--mn-radius-md); padding: 16px; font-size: 13px; }
 .mn-control-notice h3 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .mn-control-notice p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
 .mn-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0 28px; }
-.mn-control-destinations > button { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 80px; padding: 16px; border: 1px solid var(--mn-border); border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); box-shadow: var(--mn-shadow-card); color: var(--mn-ink); text-align: left; cursor: pointer; transition: border-color 160ms ease-out, transform 160ms var(--mn-motion-spring); }
-.mn-control-destinations > button:hover:not(:disabled) { border-color: var(--mn-primary); transform: translateY(-1px); }
+.mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 24px 0 40px; }
+.mn-control-destinations > button { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 80px; padding: 16px; border: 0; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); color: var(--mn-ink); text-align: left; cursor: pointer; transition: background-color 160ms ease-out; }
+.mn-control-destinations > button:hover:not(:disabled) { background: var(--mn-surface-sunken); }
 .mn-control-destinations > button:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 3px; }
 .mn-control-destinations > button:disabled { cursor: not-allowed; opacity: .55; }
 .mn-control-destinations svg { flex-shrink: 0; }
 .mn-control-destinations > button > svg:first-child { box-sizing: content-box; padding: 9px; border-radius: 12px; background: var(--mn-accent-soft); color: var(--mn-primary-strong); }
 .mn-control-destinations span { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-.mn-control-destinations small { display: block; margin-top: 4px; color: var(--mn-ink-muted); font-size: 11.5px; font-weight: 400; line-height: 1.5; }
-.mn-control-section-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 4px 0 14px; }
+.mn-control-destinations small { display: block; margin-top: 4px; color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; line-height: 1.5; }
+.mn-control-section-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin: 8px 0 20px; }
 .mn-control-section-title h3 { margin: 0; color: var(--mn-ink); font-family: var(--font-serif); font-size: 22px; font-weight: 500; letter-spacing: -.02em; }
-.mn-control-section-title > span { color: var(--mn-ink-muted); font-size: 12px; }
-.mn-control-settings { display: grid; gap: 14px; }
+.mn-control-section-title > span { color: var(--mn-ink-muted); font-size: 13px; }
+.mn-control-settings { display: grid; gap: 24px; }
 @media (min-width: 760px) {
   .mn-control-overview { grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 36px; }
   .mn-control-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }
 @media (max-width: 420px) {
-  .mn-control-hero { padding: 20px 16px; border-radius: var(--mn-radius-lg); }
-  .mn-control-destinations { grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 24px; }
+  .mn-control-destinations { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-bottom: 32px; }
   .mn-control-destinations > button { min-height: 72px; }
-  .mn-service-facts { gap: 6px; }
-  .mn-service-facts > div { padding: 8px 10px; }
+  .mn-service-facts { gap: 16px; }
+}
+@media (forced-colors: active) {
+  .mn-control-destinations > button { border: 1px solid ButtonText; }
 }
 @media (prefers-reduced-motion: reduce) {
   .mn-control-destinations > button { transition: none; }

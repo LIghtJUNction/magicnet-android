@@ -30,13 +30,13 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "border-[var(--mn-primary)] bg-[var(--mn-primary)] text-[var(--mn-on-accent)] shadow-[0_8px_20px_-12px_var(--mn-primary)] hover:border-[var(--mn-primary-strong)] hover:bg-[var(--mn-primary-strong)]",
+          "border-transparent bg-[var(--mn-primary)] text-[var(--mn-on-accent)] hover:bg-[var(--mn-primary-strong)]",
         secondary:
-          "border-transparent bg-[var(--mn-surface-sunken)] text-[var(--mn-ink)] hover:border-[var(--mn-border-strong)] hover:bg-[var(--mn-carrier-deep)]",
+          "border-transparent bg-[var(--mn-surface-sunken)] text-[var(--mn-ink)] hover:bg-[var(--mn-carrier-deep)]",
         outline:
-          "border-[var(--mn-border-strong)] bg-[var(--mn-surface-raised)] text-[var(--mn-ink)] hover:border-[var(--mn-primary)] hover:bg-[color-mix(in_srgb,var(--mn-primary)_7%,var(--mn-surface-raised))]",
+          "border-[var(--mn-border)] bg-transparent text-[var(--mn-ink)] hover:border-[var(--mn-border-strong)] hover:bg-[var(--mn-surface-sunken)]",
         ghost:
-          "border-transparent bg-transparent text-[var(--mn-ink-muted)] hover:border-[var(--mn-border)] hover:bg-[var(--mn-surface-sunken)] hover:text-[var(--mn-ink)]",
+          "border-transparent bg-transparent text-[var(--mn-ink-muted)] hover:bg-[var(--mn-surface-sunken)] hover:text-[var(--mn-ink)]",
         destructive:
           "border-[var(--mn-danger)] bg-[var(--mn-danger)] text-[var(--mn-on-danger)] hover:brightness-110",
       },

@@ -902,17 +902,17 @@ onUnmounted(() => {
   gap: 6px;
   width: 100%;
   margin-top: 4px;
-  padding: 14px;
-  border: 1px dashed var(--mn-border-strong);
-  border-radius: 16px;
-  background: var(--mn-surface-sunken);
+  padding: 20px 12px 8px;
+  border: 0;
+  border-top: 1px solid var(--mn-border);
+  background: transparent;
   color: var(--mn-ink);
   text-align: left;
   cursor: pointer;
 }
 
 .mn-rail-status:hover {
-  border-color: var(--mn-primary);
+  color: var(--mn-primary-strong);
 }
 
 .mn-rail-status__line {
@@ -934,13 +934,13 @@ onUnmounted(() => {
   background: var(--mn-surface-raised);
   color: var(--mn-ink-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mn-rail-status__task {
   overflow: hidden;
   color: var(--mn-ink-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   display: -webkit-box;
   -webkit-box-orient: vertical;

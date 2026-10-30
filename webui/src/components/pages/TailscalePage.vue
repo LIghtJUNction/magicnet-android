@@ -284,7 +284,7 @@ onActivated(() => { active = true; if (!edited.value) void read(); });
 </script>
 
 <template>
-  <div class="tailscale-page space-y-6">
+  <div class="tailscale-page space-y-8">
     <PageHeader title="Tailscale">
       <Button variant="ghost" :disabled="locked || edited" :loading="loading" @click="read">
         <RefreshCw :size="16" aria-hidden="true" />{{ t("重新读取") }}
@@ -302,7 +302,7 @@ onActivated(() => { active = true; if (!edited.value) void read(); });
     </p>
     <p v-if="customControl" role="alert" class="text-sm text-[var(--mn-warning)]">{{ errorMessage("custom-control") }}</p>
 
-    <div v-if="snapshot && controlState && !controlState.resumable && !controlState.logout_pending" class="tailscale-setup space-y-6">
+    <div v-if="snapshot && controlState && !controlState.resumable && !controlState.logout_pending" class="tailscale-setup space-y-8">
     <div class="tailscale-device-name space-y-2">
       <label for="tailscale-hostname" class="block text-sm font-medium">{{ t("设备名称") }}</label>
       <Input id="tailscale-hostname" v-model="hostname" :disabled="locked || !snapshot || customControl"
@@ -356,7 +356,7 @@ onActivated(() => { active = true; if (!edited.value) void read(); });
             <p id="tailscale-key-note" class="text-xs leading-5 text-[var(--mn-ink-muted)]">{{ t(snapshot?.configured ? "留空保留当前登录。新密钥不会自动切换已登录账号。" : "使用你账号生成的 Auth key，不要使用 API access token。") }}</p>
           </div>
           <details class="border-t border-[var(--mn-border)] pt-3">
-            <summary class="min-h-10 cursor-pointer content-center text-sm text-[var(--mn-ink-muted)]">{{ t("高级选项") }}</summary>
+            <summary class="min-h-12 cursor-pointer content-center text-sm text-[var(--mn-ink-muted)]">{{ t("高级选项") }}</summary>
             <dl v-if="snapshot" class="mt-3 space-y-3 text-xs leading-5 text-[var(--mn-ink-muted)]">
               <div><dt>{{ t("节点标识") }}</dt><dd class="break-all font-mono">{{ snapshot.tag }}</dd></div>
               <div><dt>{{ t("控制服务器") }}</dt><dd class="break-all font-mono">{{ snapshot.controlUrl }}</dd></div>
@@ -382,11 +382,11 @@ onActivated(() => { active = true; if (!edited.value) void read(); });
 .tailscale-page :deep(button) { overflow-wrap: anywhere; }
 .tailscale-device-name { max-width: 32rem; }
 .tailscale-setup { padding-top: .25rem; }
-.tailscale-panel { padding: 1.5rem; border: 1px solid var(--mn-border); border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); }
-.tailscale-auth { border-top: 1px solid var(--mn-border); padding-top: 1rem; }
+.tailscale-panel { padding: 1.5rem; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); }
+.tailscale-auth { border-top: 1px solid var(--mn-border); padding-top: 1.5rem; }
 .tailscale-method-heading > div { flex: 1 1 16rem; min-width: 0; }
 @media (max-width: 480px) {
   .tailscale-method-heading > button { width: 100%; }
-  .tailscale-panel { padding: 1rem; }
+  .tailscale-panel { padding: 1.25rem; }
 }
 </style>

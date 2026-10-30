@@ -194,7 +194,7 @@ onMounted(() => {
       </template>
     </PageHeader>
 
-    <Card class="grid gap-4 !p-4 md:!p-6">
+    <Card class="grid gap-5">
       <CardHeading
         :overline="t('当前配置')"
         :description="t('保存后重新应用配置；节点凭据仍由订阅管理。')"
@@ -229,7 +229,7 @@ onMounted(() => {
       </div>
     </Card>
 
-    <Card class="grid gap-5 !p-4 md:!p-6">
+    <Card class="grid gap-5">
       <CardHeading
         :overline="t('链路角色')"
         :title="t('选择两跳节点')"
@@ -247,14 +247,14 @@ onMounted(() => {
             <button
               v-if="draft.upstream"
               type="button"
-              class="inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-xs font-medium text-[var(--mn-ink-muted)] hover:bg-[color-mix(in_srgb,var(--mn-ink)_7%,transparent)] hover:text-[var(--mn-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)]"
+              class="inline-flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-[var(--mn-radius-md)] px-3 text-xs font-medium text-[var(--mn-ink-muted)] hover:bg-[var(--mn-surface-sunken)] hover:text-[var(--mn-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)]"
               :aria-label="t('清除中转节点')"
               @click="clearRole('upstream')"
             ><Trash2 :size="14" />{{ t('清除') }}</button>
           </span>
           <select
             v-model="draft.upstream"
-            class="h-12 min-w-0 rounded-[var(--mn-radius-md)] border border-[var(--mn-border)] bg-[var(--mn-material-heavy)] px-3 text-sm text-[var(--mn-ink)] shadow-[inset_0_1px_0_var(--mn-material-edge)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)]"
+            class="mn-field min-h-12 min-w-0 px-3"
             :disabled="!loaded || isRunning('proxy-chain-apply')"
           >
             <option value="">{{ t('未选择中转节点') }}</option>
@@ -269,14 +269,14 @@ onMounted(() => {
             <button
               v-if="draft.exit"
               type="button"
-              class="inline-flex min-h-8 items-center gap-1 rounded-full px-2 text-xs font-medium text-[var(--mn-ink-muted)] hover:bg-[color-mix(in_srgb,var(--mn-ink)_7%,transparent)] hover:text-[var(--mn-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)]"
+              class="inline-flex min-h-12 min-w-12 items-center justify-center gap-1 rounded-[var(--mn-radius-md)] px-3 text-xs font-medium text-[var(--mn-ink-muted)] hover:bg-[var(--mn-surface-sunken)] hover:text-[var(--mn-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)]"
               :aria-label="t('清除落地节点')"
               @click="clearRole('exit')"
             ><Trash2 :size="14" />{{ t('清除') }}</button>
           </span>
           <select
             v-model="draft.exit"
-            class="h-12 min-w-0 rounded-[var(--mn-radius-md)] border border-[var(--mn-border)] bg-[var(--mn-material-heavy)] px-3 text-sm text-[var(--mn-ink)] shadow-[inset_0_1px_0_var(--mn-material-edge)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)]"
+            class="mn-field min-h-12 min-w-0 px-3"
             :disabled="!loaded || isRunning('proxy-chain-apply')"
           >
             <option value="">{{ t('未选择落地节点') }}</option>
@@ -296,8 +296,8 @@ onMounted(() => {
             :aria-pressed="draft.mode === mode"
             :disabled="!loaded || isRunning('proxy-chain-apply')"
             :class="[
-              'rounded-[2px] border border-transparent px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)] disabled:cursor-not-allowed disabled:opacity-60',
-              draft.mode === mode ? 'bg-[var(--mn-cactus)] text-[var(--mn-on-accent)]' : 'bg-[color-mix(in_srgb,var(--mn-ink)_5%,transparent)] text-[var(--mn-ink-soft)] hover:bg-[color-mix(in_srgb,var(--mn-ink)_9%,transparent)]',
+              'proxy-chain-mode min-h-12 rounded-[var(--mn-radius-md)] border-0 px-4 py-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--mn-focus)] disabled:cursor-not-allowed disabled:opacity-60',
+              draft.mode === mode ? 'bg-[var(--mn-accent-soft)] text-[var(--mn-primary-strong)]' : 'bg-[var(--mn-surface-sunken)] text-[var(--mn-ink-soft)] hover:bg-[var(--mn-carrier-deep)]',
             ]"
             @click="setMode(mode)"
           >
@@ -322,7 +322,7 @@ onMounted(() => {
       ><Save :size="17" />{{ t('保存并应用链式代理') }}</Button>
     </Card>
 
-    <Card class="grid gap-4 !p-4 md:!p-6">
+    <Card class="grid gap-5">
       <CardHeading
         size="md"
         :overline="t('应用预览')"
@@ -347,7 +347,7 @@ onMounted(() => {
       <p v-else class="rounded-[var(--mn-radius-md)] bg-[var(--mn-ivory)] px-4 py-3 text-sm text-[var(--mn-ink-muted)]">{{ dirty ? t('保存按钮会在这里生成操作预览。') : t('当前没有待应用的链式代理变更。') }}</p>
     </Card>
 
-    <Card class="grid gap-3 !p-4 md:!p-6">
+    <Card class="grid gap-5">
       <CardHeading size="md" :overline="t('运行观察')" :title="t('链路选择器状态')" />
       <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
@@ -369,3 +369,10 @@ onMounted(() => {
     </Card>
   </div>
 </template>
+
+<style scoped>
+@media (forced-colors: active) {
+  .proxy-chain-mode { border: 1px solid ButtonText; }
+  .proxy-chain-mode[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
+}
+</style>

@@ -233,7 +233,7 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
     <details class="mn-disclosure">
       <summary>{{ t("协助排查") }}</summary>
     <Card>
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3">
+      <div class="mn-inset mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
         <div class="min-w-0">
           <h3 class="inline-flex items-center gap-2 text-base font-semibold"><Server :size="17" />{{ t("MCP 服务器") }}</h3>
           <p class="mt-1 break-all text-sm text-[var(--mn-ink-muted)]">pid={{ state.mcp.pid }} · {{ state.mcp.url }}</p>
@@ -277,7 +277,7 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
         </p>
       </div>
       <div v-if="apiProbes.length" class="grid gap-2 sm:grid-cols-3">
-        <div v-for="probe in apiProbes" :key="probe.key" class="rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3">
+        <div v-for="probe in apiProbes" :key="probe.key" class="mn-inset p-4">
           <div class="flex items-center justify-between gap-2">
             <p class="text-sm font-semibold text-[var(--mn-ink)]">{{ t(probe.label) }}</p>
             <Badge :tone="probe.ok ? 'success' : 'danger'">{{ t(probe.ok ? "ok" : "fail") }}</Badge>
@@ -318,7 +318,7 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
         <span>{{ t("{value1} 条问题线索", { value1: supportIssueLines.length }) }}</span>
       </div>
       <div v-if="supportTriage.totalIssues" class="grid gap-2 sm:grid-cols-3">
-        <div v-for="bucket in supportTriage.buckets.slice(0, 6)" :key="`${bucket.section}-${bucket.severity}`" class="rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3">
+        <div v-for="bucket in supportTriage.buckets.slice(0, 6)" :key="`${bucket.section}-${bucket.severity}`" class="mn-inset p-4">
           <p class="truncate text-xs text-[var(--mn-ink-muted)]">{{ t(bucket.section) }}</p>
           <p class="mt-1 text-base font-semibold text-[var(--mn-ink)]">{{ bucket.count }} · {{ t(bucket.severity) }}</p>
         </div>

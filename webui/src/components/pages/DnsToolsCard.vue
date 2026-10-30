@@ -163,7 +163,7 @@ function normalizeDomain(value: string): string {
 
     <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
       <select
-        class="h-10 min-w-0 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] px-3 text-sm text-[var(--mn-ink)]"
+        class="mn-field min-h-12 min-w-0 px-3"
         :value="pendingDnsProfile || state.dns.profile"
         @change="setDnsProfile(($event.target as HTMLSelectElement).value)"
       >

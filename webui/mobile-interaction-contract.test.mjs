@@ -27,10 +27,10 @@ assert.match(
   "button targets must remain at least 48px tall",
 );
 assert.match(card, /magic-card/, "shared sections retain their semantic surface class");
-assert.match(styles, /\.magic-card\s*\{[^}]*border: 1px solid var\(--mn-border\);[^}]*border-radius: var\(--mn-radius-lg\);[^}]*background: var\(--mn-surface-raised\);/,
-  "top-level sections are bordered paper surfaces");
-assert.match(styles, /\.magic-card \.magic-card\s*\{[^}]*background: var\(--mn-surface-sunken\);/,
-  "nested sections sink instead of stacking raised cards");
+assert.match(styles, /\.magic-card\s*\{[^}]*border: 0;[^}]*border-radius: var\(--mn-radius-lg\);[^}]*background: var\(--mn-surface-raised\);/,
+  "top-level sections use quiet surfaces without enclosing borders");
+assert.match(styles, /\.magic-card \.magic-card\s*\{[^}]*background: transparent;/,
+  "nested sections use spacing instead of another card surface");
 
 assert.match(
   app,

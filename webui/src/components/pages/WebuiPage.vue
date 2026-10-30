@@ -273,7 +273,7 @@ watch(() => [panel.value.name, panel.value.url, panel.value.sha256], () => {
         <Input v-model="panel.url" placeholder="https://example.com/panel.zip" spellcheck="false" />
         <Input v-model="panel.sha256" :placeholder="t('面板包 SHA-256（64 位十六进制）')" spellcheck="false" />
         <Textarea v-model="panel.metadata" class="min-h-28" :placeholder="t('面板元数据、说明、仓库链接、适配注意事项')" spellcheck="false" />
-        <div class="grid gap-2 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3">
+        <div class="mn-inset grid gap-3 p-4">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <span class="text-sm font-medium text-[var(--mn-ink)]">{{ t("安装前检查") }}</span>
             <Button variant="outline" :disabled="!installArgs" @click="copyInstallCommand"><Terminal :size="16" />{{ commandCopied ? t("已复制脱敏命令") : t("复制脱敏命令") }}</Button>
@@ -306,7 +306,7 @@ watch(() => [panel.value.name, panel.value.url, panel.value.sha256], () => {
         </div>
         <Button variant="outline" @click="openExternal(REPO, 'MagicNet GitHub')"><ExternalLink :size="17" />{{ t("打开项目仓库") }}</Button>
         <div v-if="verifyChecks.length" class="grid gap-2">
-          <div v-for="check in verifyChecks" :key="check.name" class="grid gap-1 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3">
+          <div v-for="check in verifyChecks" :key="check.name" class="mn-inset grid gap-2 p-4">
             <div class="flex items-center justify-between gap-2">
               <span class="text-sm font-medium text-[var(--mn-ink)]">{{ check.name }}</span>
               <Badge :tone="check.status === 'ok' ? 'success' : 'danger'">{{ check.status === "ok" ? t("通过") : check.status === "missing" ? t("缺失") : t("未知") }}</Badge>
