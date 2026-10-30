@@ -300,15 +300,17 @@ watch(executedList, () => {
 <template>
   <div class="terminal-page">
     <PageHeader :title="t('终端')">
-      <div class="terminal-actions">
-        <Button variant="ghost" size="sm" :disabled="executedList.length === 0" @click="copyAllOutput">
-          <component :is="copiedAll ? Check : Copy" :size="16" aria-hidden="true" />
-          {{ t(copiedAll ? "已复制全部输出" : "复制全部") }}
-        </Button>
-        <Button variant="ghost" size="sm" :disabled="executedList.length === 0" @click="clearScreen">
-          <RotateCcw :size="16" aria-hidden="true" />{{ t("清屏") }}
-        </Button>
-      </div>
+      <template v-if="executedList.length > 0" #actions>
+        <div class="terminal-actions">
+          <Button variant="ghost" size="sm" @click="copyAllOutput">
+            <component :is="copiedAll ? Check : Copy" :size="16" aria-hidden="true" />
+            {{ t(copiedAll ? "已复制全部输出" : "复制全部") }}
+          </Button>
+          <Button variant="ghost" size="sm" @click="clearScreen">
+            <RotateCcw :size="16" aria-hidden="true" />{{ t("清屏") }}
+          </Button>
+        </div>
+      </template>
     </PageHeader>
 
     <p v-if="clipboardError" role="alert" class="text-sm text-[var(--mn-danger)]">{{ t("复制失败，请选择输出内容后手动复制。") }}</p>
@@ -454,8 +456,8 @@ watch(executedList, () => {
   .terminal-output { padding: 4px 20px; height: clamp(220px, 34dvh, 340px); }
   .terminal-output--empty { height: auto; }
   .terminal-composer { padding: 20px 16px 8px; }
-  .terminal-empty { padding: 12px 0; gap: 8px; }
-  .terminal-empty > svg { display: none; }
+  .terminal-empty { padding: 8px 0; gap: 8px; }
+  .terminal-empty > svg, .terminal-empty h2 { display: none; }
   .terminal-input-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .terminal-command-field { gap: 8px; padding-inline: 12px; }
   .terminal-run { width: 100%; }

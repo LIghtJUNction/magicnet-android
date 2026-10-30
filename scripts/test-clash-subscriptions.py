@@ -155,6 +155,64 @@ magicnet_singbox_subscription_filter_file() {{ printf '/dev/null\\n'; }}
         files = [self.file(str(i) + '.json', json.dumps({'outbounds': [{'type': 'trojan', 'tag': f'node-{i}', 'server': f'{i}.invalid', 'server_port': 443, 'password': 'fixture'}]})) for i in range(3)]
         self.convert(files, converter, expected=3)
 
+    def same_name_websocket_sources(self):
+        sources = []
+        for index in (1, 2):
+            server = f'ws-{index}.example.invalid'
+            source = self.file(f'provider-{index}.txt',
+                f'vless://00000000-0000-4000-8000-000000000111@{server}:443'
+                '?type=ws&security=tls&sni=tls.example.invalid'
+                '&path=%2Fsubscription&host=cdn.example.invalid#HK\n')
+            node = {
+                'type': 'vless', 'tag': 'HK', 'server': server, 'server_port': 443,
+                'uuid': '00000000-0000-4000-8000-000000000111',
+                'tls': {'enabled': True, 'server_name': 'tls.example.invalid'},
+                'transport': {'type': 'ws', 'path': '/subscription',
+                              'headers': {'Host': 'cdn.example.invalid'}},
+            }
+            self.file(source.name + '.converted', json.dumps({'outbounds': [node]}))
+            sources.append(source)
+        return sources
+
+    def check_same_name_websocket_sources(self, sources, converter):
+        # Each source works independently. The real native fallback cannot
+        # preserve VLESS WS, so a rejected merge must not look successful by
+        # silently discarding the transport or the second provider.
+        for source in sources:
+            self.shell(f'magicnet_singbox_native_share_complete {source}', success=False)
+            self.convert([source], converter, expected=1)
+
+        identities = []
+        for ordered in (sources, list(reversed(sources))):
+            nodes = self.convert(ordered, converter, expected=2)
+            self.assertEqual(len(nodes), 2)
+            by_server = {node['server']: node for node in nodes.values()}
+            self.assertEqual(set(by_server), {'ws-1.example.invalid', 'ws-2.example.invalid'})
+            for node in by_server.values():
+                self.assertEqual(node['type'], 'vless')
+                self.assertEqual(node['server_port'], 443)
+                self.assertEqual(node['uuid'], '00000000-0000-4000-8000-000000000111')
+                self.assertTrue(node['tls']['enabled'])
+                self.assertEqual(node['tls']['server_name'], 'tls.example.invalid')
+                self.assertEqual(node['transport'], {
+                    'type': 'ws', 'path': '/subscription',
+                    'headers': {'Host': 'cdn.example.invalid'},
+                })
+            identities.append({server: node['tag'] for server, node in by_server.items()})
+        self.assertEqual(identities[0], identities[1])
+
+    def test_cross_source_same_names_preserve_converter_required_transports(self):
+        sources = self.same_name_websocket_sources()
+        converter = self.file('converter', '#!/bin/sh\n'
+            'while [ "$#" -gt 0 ]; do case "$1" in -file|-singbox) src="$2"; shift;; '
+            '-o) out="$2"; shift;; esac; shift; done\ncp "$src.converted" "$out"\n')
+        converter.chmod(0o700)
+        self.check_same_name_websocket_sources(sources, converter)
+
+    @unittest.skipUnless(CONVERTER, 'real converter is exercised by the evidence job')
+    def test_real_cross_source_same_names_preserve_converter_required_transports(self):
+        self.check_same_name_websocket_sources(self.same_name_websocket_sources(), CONVERTER)
+
     def test_empty_or_invalid_source_cannot_be_hidden_by_another_provider(self):
         converter = self.file('converter', '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in -singbox) src="$2"; shift;; -o) out="$2"; shift;; esac; shift; done\ncp "$src" "$out"\n')
         converter.chmod(0o700)

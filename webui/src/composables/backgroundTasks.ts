@@ -158,7 +158,7 @@ export function reconcileSubscriptionCompletion(
 }
 
 export function isSubscriptionBackgroundArgs(args: string): boolean {
-  return /(?:^|\s)sub\s+(?:apply-file|update|update-all)\b/.test(args);
+  return /(?:^|\s)(?:sub\s+(?:apply-file|update|update-all)|webui\s+payload\s+apply-subscription(?:-source)?)(?:\s|$)/.test(args);
 }
 
 export function backgroundTaskBlocksLaunch(
@@ -191,6 +191,7 @@ export function subscriptionLifecycleStatus(
 ): BackgroundTaskStatus | "empty" | "unknown" {
   if (subscriptionLifecycleRunning(state.backgroundTask, state.subscriptions.updateRunning)) return "running";
   if (state.backgroundTask.status === "timeout" && isSubscriptionBackgroundArgs(state.backgroundTask.args)) return "timeout";
+  if (state.backgroundTask.status === "error" && isSubscriptionBackgroundArgs(state.backgroundTask.args)) return "error";
   if (state.subscriptions.lastResult === "unknown" || ["unknown", "pending"].includes(state.subscriptions.updateLockOwner || "")) return "unknown";
   if (state.subscriptions.lastResult === "success") return "done";
   if (["failed", "interrupted"].includes(state.subscriptions.lastResult)) return "error";

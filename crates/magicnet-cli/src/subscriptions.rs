@@ -21,7 +21,7 @@ use crate::{
     write_text_file, App, MAX_PROC_STAT_BYTES,
 };
 
-const MAX_SINGBOX_SUBSCRIPTION_URLS: usize = 5;
+pub(crate) const MAX_SINGBOX_SUBSCRIPTION_URLS: usize = 5;
 const MAX_SUBSCRIPTION_USER_AGENT_BYTES: usize = 256;
 const MAX_SUBSCRIPTION_FILTERS: usize = 32;
 const MAX_SUBSCRIPTION_FILTER_BYTES: usize = 64;
@@ -747,10 +747,7 @@ pub fn sub_schedule(app: &App, args: &[String]) -> Result<(), String> {
 }
 
 fn update_singbox_subscription(app: &App) -> Result<(), String> {
-    let update = run_magicnet_function(
-        app,
-        ". \"$MODDIR/lib/magicnet_singbox_subscribe.sh\"; magicnet_singbox_update_subscription",
-    );
+    let update = crate::process::run_subscription_update(app);
     finish_subscription_update(app, update)
 }
 
