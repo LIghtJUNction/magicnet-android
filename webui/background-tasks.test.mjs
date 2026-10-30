@@ -10,11 +10,15 @@ import {
   backgroundLogPath,
   createBackgroundOperationId,
   isActiveSubscriptionBackgroundTask,
+  isSubscriptionBackgroundArgs,
   parseBackgroundCompletion,
   reconcileSubscriptionCompletion,
   subscriptionLifecycleRunning,
+  subscriptionLifecycleStatus,
 } from "./src/composables/backgroundTasks.ts";
 import { CLI, MODULE_DIR } from "./src/constants.ts";
+import { buildSubscriptionApplyLaunch } from "./src/components/pages/subscriptionPreview.ts";
+import { buildLocalSubscriptionApplyLaunch } from "./src/components/pages/localSubscriptionFile.ts";
 
 const useMagicNetSource = readFileSync(
   new URL("./src/composables/useMagicNet.ts", import.meta.url),
@@ -141,6 +145,46 @@ assert.equal(
   ),
   false,
 );
+
+// The launcher stores displayArgs in reactive task state. Classify the actual
+// private launch builders, not just their legacy lifecycleArgs used by polling.
+const privateBasename = "fixture-subscription-426.txt";
+for (const launch of [
+  buildSubscriptionApplyLaunch(privateBasename),
+  buildLocalSubscriptionApplyLaunch(privateBasename),
+]) {
+  assert.equal(launch.displayArgs.includes(privateBasename), false);
+  assert.equal(isSubscriptionBackgroundArgs(launch.displayArgs), true);
+  assert.equal(isSubscriptionBackgroundArgs(launch.lifecycleArgs), true);
+  assert.equal(subscriptionLifecycleRunning({ status: "running", args: launch.displayArgs }, false), true);
+  for (const [status, expected] of [["running", "running"], ["timeout", "timeout"], ["error", "error"]]) {
+    assert.equal(subscriptionLifecycleStatus({
+      backgroundTask: { status, args: launch.displayArgs },
+      subscriptions: { updateRunning: false, lastResult: "success", updateLockOwner: "none" },
+    }, true), expected, `${launch.displayArgs}: ${status} must not reuse a previous success`);
+  }
+  for (const [lastResult, owner, expected] of [
+    ["failed", "none", "error"], ["interrupted", "none", "error"],
+    ["unknown", "none", "unknown"], ["success", "unknown", "unknown"],
+    ["success", "pending", "unknown"], ["success", "none", "done"],
+  ]) {
+    assert.equal(subscriptionLifecycleStatus({
+      backgroundTask: { status: "done", args: launch.displayArgs },
+      subscriptions: { updateRunning: false, lastResult, updateLockOwner: owner },
+    }, true), expected);
+  }
+}
+for (const args of ["sub apply-file sing-box [redacted-payload]", "sub update sing-box", "sub update-all"]) {
+  assert.equal(isSubscriptionBackgroundArgs(args), true);
+}
+for (const args of ["service restart", "webui payload create subscription", "webui payload append subscription", "webui payload remove subscription", "webui payload apply-subscription-other"]) {
+  assert.equal(isSubscriptionBackgroundArgs(args), false);
+}
+assert.equal(subscriptionLifecycleStatus({
+  backgroundTask: { status: "error", args: "service restart" },
+  subscriptions: { updateRunning: false, lastResult: "success", updateLockOwner: "none" },
+}, true), "done", "an unrelated task must not change subscription status");
+
 assert.equal(backgroundTaskBlocksLaunch({ status: "idle" }), false);
 assert.equal(backgroundTaskBlocksLaunch({ status: "done" }), false);
 assert.equal(backgroundTaskBlocksLaunch({ status: "error" }), false);
