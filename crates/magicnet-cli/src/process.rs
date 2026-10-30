@@ -21,14 +21,20 @@ pub(crate) use service_launch::{launch_singbox, launch_singbox_worker};
 pub(crate) const SHORT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 180;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 900;
+// Five sources can each spend 120s fetching and 60s converting. Keep a
+// further 300s for native parsing, validation, activation and recovery.
+// This is still a finite operation deadline, not a per-source timeout.
+const SUBSCRIPTION_COMMAND_TIMEOUT_SECS: u64 =
+    subscriptions::MAX_SINGBOX_SUBSCRIPTION_URLS as u64 * (120 + 60) + 300;
 const PROC_SCAN_TIMEOUT: Duration = Duration::from_millis(750);
 const PROC_SCAN_MAX_CANDIDATES: usize = 4096;
 
-fn command_timeout_secs(value: Option<&str>) -> u64 {
+fn command_timeout(value: Option<&str>, default: Duration) -> Duration {
     value
         .and_then(|raw| raw.parse::<u64>().ok())
         .filter(|seconds| (1..=MAX_COMMAND_TIMEOUT_SECS).contains(seconds))
-        .unwrap_or(DEFAULT_COMMAND_TIMEOUT_SECS)
+        .map(Duration::from_secs)
+        .unwrap_or(default)
 }
 pub(crate) fn named_process_candidates(name: &str) -> Result<Vec<String>, String> {
     named_process_candidates_with_timeout(name, PROC_SCAN_TIMEOUT)
@@ -1018,14 +1024,28 @@ fn trusted_path() -> &'static str {
 }
 
 pub(crate) fn run_magicnet_function(app: &App, function_name: &str) -> Result<(), String> {
-    run_magicnet_function_inner(app, function_name, None)
+    run_magicnet_function_inner(
+        app,
+        function_name,
+        None,
+        Duration::from_secs(DEFAULT_COMMAND_TIMEOUT_SECS),
+    )
 }
 
 pub(crate) fn run_magicnet_function_status(
     app: &App,
     function_name: &str,
 ) -> Result<std::process::ExitStatus, String> {
-    run_magicnet_shell(app, function_name, None)
+    run_magicnet_shell(
+        app,
+        function_name,
+        None,
+        Duration::from_secs(DEFAULT_COMMAND_TIMEOUT_SECS),
+    )
+}
+
+pub(crate) fn run_subscription_update(app: &App) -> Result<(), String> {
+    run_subscription_update_inner(app, None)
 }
 
 /// Run the fixed subscription-update entrypoint with a private, already-open
@@ -1061,10 +1081,18 @@ fn run_subscription_update_from_inherited_fd_with_kind(
     if candidate_fd < 0 {
         return Err("invalid subscription candidate descriptor".to_string());
     }
+    run_subscription_update_inner(app, Some((candidate_env, candidate_fd)))
+}
+
+fn run_subscription_update_inner(
+    app: &App,
+    subscription_candidate: Option<(&'static str, RawFd)>,
+) -> Result<(), String> {
     run_magicnet_function_inner(
         app,
         ". \"$MODDIR/lib/magicnet_singbox_subscribe.sh\"; magicnet_singbox_update_subscription",
-        Some((candidate_env, candidate_fd)),
+        subscription_candidate,
+        Duration::from_secs(SUBSCRIPTION_COMMAND_TIMEOUT_SECS),
     )
 }
 
@@ -1072,8 +1100,9 @@ fn run_magicnet_function_inner(
     app: &App,
     function_name: &str,
     subscription_candidate: Option<(&'static str, RawFd)>,
+    default_timeout: Duration,
 ) -> Result<(), String> {
-    let status = run_magicnet_shell(app, function_name, subscription_candidate)?;
+    let status = run_magicnet_shell(app, function_name, subscription_candidate, default_timeout)?;
     if status.success() {
         Ok(())
     } else {
@@ -1093,10 +1122,12 @@ fn run_magicnet_shell(
     app: &App,
     function_name: &str,
     subscription_candidate: Option<(&'static str, RawFd)>,
+    default_timeout: Duration,
 ) -> Result<std::process::ExitStatus, String> {
-    let timeout = Duration::from_secs(command_timeout_secs(
+    let timeout = command_timeout(
         env::var("MAGICNET_COMMAND_TIMEOUT").ok().as_deref(),
-    ));
+        default_timeout,
+    );
     let mut command = magicnet_function_command(app, function_name);
     if let Some((candidate_env, candidate_fd)) = subscription_candidate {
         command.env(candidate_env, format!("/proc/self/fd/{candidate_fd}"));
@@ -2086,10 +2117,10 @@ mod path_tests {
 mod process_group_tests {
     use super::{
         clear_unsafe_module_root_environment, clear_unsafe_runtime_path_environment,
-        clear_unsafe_subscription_environment, command_timeout_secs, run_magicnet_function,
+        clear_unsafe_subscription_environment, command_timeout, run_magicnet_function,
         run_process_group, terminate_timed_out_child, trusted_shell, App, TimedChildWait,
-        DEFAULT_COMMAND_TIMEOUT_SECS, MAX_COMMAND_TIMEOUT_SECS, UNSAFE_MODULE_ROOT_ENV,
-        UNSAFE_RUNTIME_PATH_ENV, UNSAFE_SUBSCRIPTION_ENV,
+        DEFAULT_COMMAND_TIMEOUT_SECS, MAX_COMMAND_TIMEOUT_SECS, SUBSCRIPTION_COMMAND_TIMEOUT_SECS,
+        UNSAFE_MODULE_ROOT_ENV, UNSAFE_RUNTIME_PATH_ENV, UNSAFE_SUBSCRIPTION_ENV,
     };
     use std::fs;
     use std::process::Command;
@@ -2165,16 +2196,130 @@ mod process_group_tests {
 
     #[test]
     fn command_timeout_is_finite_and_rejects_zero_or_overflow() {
-        assert_eq!(command_timeout_secs(None), DEFAULT_COMMAND_TIMEOUT_SECS);
-        assert_eq!(command_timeout_secs(Some("1")), 1);
-        assert_eq!(command_timeout_secs(Some("900")), MAX_COMMAND_TIMEOUT_SECS);
-        for value in ["", "0", "-1", "901", "18446744073709551616", "junk"] {
+        for seconds in [DEFAULT_COMMAND_TIMEOUT_SECS, SUBSCRIPTION_COMMAND_TIMEOUT_SECS] {
+            let default = Duration::from_secs(seconds);
+            assert_eq!(command_timeout(None, default), default);
+            assert_eq!(command_timeout(Some("1"), default), Duration::from_secs(1));
             assert_eq!(
-                command_timeout_secs(Some(value)),
-                DEFAULT_COMMAND_TIMEOUT_SECS,
-                "unexpected timeout parse for {value:?}"
+                command_timeout(Some("900"), default),
+                Duration::from_secs(MAX_COMMAND_TIMEOUT_SECS)
             );
+            for value in ["", "0", "-1", "901", "18446744073709551616", "junk"] {
+                assert_eq!(
+                    command_timeout(Some(value), default),
+                    default,
+                    "unexpected timeout parse for {value:?}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn function_runner_honors_its_operation_default() -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "MAGICNET_TEST_OPERATION_TIMEOUT_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let mut command = Command::new(std::env::current_exe()?);
+            command
+                .args([
+                    "--exact",
+                    "process::process_group_tests::function_runner_honors_its_operation_default",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env_remove("MAGICNET_COMMAND_TIMEOUT");
+            let output = crate::run_bounded_command(command, Duration::from_secs(10), 16 * 1024)
+                .map_err(std::io::Error::other)?;
+            assert!(!output.timed_out);
+            assert!(
+                output.status.is_some_and(|status| status.success()),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(());
+        }
+
+        let app = crate::test_support::temp_app();
+        fs::create_dir_all(app.moddir.join("lib/kamfw"))?;
+        fs::write(app.moddir.join("lib/kamfw/.kamfwrc"), "import() { :; }\n")?;
+        fs::write(app.moddir.join("lib/magicnet.sh"), "")?;
+        let script = "sleep 0.3; printf complete > \"$MODDIR/completed\"";
+        let result =
+            super::run_magicnet_function_inner(&app, script, None, Duration::from_millis(100));
+        assert!(result.unwrap_err().contains("timed out after 100ms"));
+        assert!(!app.moddir.join("completed").exists());
+        super::run_magicnet_function_inner(&app, script, None, Duration::from_secs(2))
+            .map_err(std::io::Error::other)?;
+        assert_eq!(fs::read_to_string(app.moddir.join("completed"))?, "complete");
+        Ok(())
+    }
+
+    #[test]
+    fn subscription_entrypoints_keep_explicit_timeout_and_term_traps(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::fd::AsRawFd;
+
+        const CHILD: &str = "MAGICNET_TEST_SUBSCRIPTION_TIMEOUT_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let mut command = Command::new(std::env::current_exe()?);
+            command
+                .args([
+                    "--exact",
+                    "process::process_group_tests::subscription_entrypoints_keep_explicit_timeout_and_term_traps",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("MAGICNET_COMMAND_TIMEOUT", "1");
+            let output = crate::run_bounded_command(command, Duration::from_secs(10), 16 * 1024)
+                .map_err(std::io::Error::other)?;
+            assert!(!output.timed_out);
+            assert!(
+                output.status.is_some_and(|status| status.success()),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(());
+        }
+
+        let app = crate::test_support::temp_app();
+        fs::create_dir_all(app.moddir.join("lib/kamfw"))?;
+        fs::write(app.moddir.join("lib/kamfw/.kamfwrc"), "import() { :; }\n")?;
+        fs::write(app.moddir.join("lib/magicnet.sh"), "")?;
+        fs::write(
+            app.moddir.join("lib/magicnet_singbox_subscribe.sh"),
+            "magicnet_singbox_update_subscription() {\n\
+             trap 'printf interrupted > \"$MODDIR/interrupted\"; exit 143' TERM\n\
+             sleep 4 & wait\n\
+             printf complete > \"$MODDIR/completed\"\n\
+             }\n",
+        )?;
+        // Candidate transfer itself is covered by the subscription FD tests;
+        // this fixture only exercises timeout selection and signal delivery.
+        let candidate = fs::File::open("/dev/null")?;
+        for operation in ["refresh", "urls", "local"] {
+            let result = match operation {
+                "refresh" => super::run_subscription_update(&app),
+                "urls" => {
+                    super::run_subscription_update_from_inherited_fd(&app, candidate.as_raw_fd())
+                }
+                _ => super::run_subscription_source_update_from_inherited_fd(
+                    &app,
+                    candidate.as_raw_fd(),
+                ),
+            };
+            assert!(
+                result.unwrap_err().contains("timed out after 1000ms"),
+                "{operation}"
+            );
+            assert_eq!(
+                fs::read_to_string(app.moddir.join("interrupted"))?,
+                "interrupted"
+            );
+            assert!(!app.moddir.join("completed").exists());
+            fs::remove_file(app.moddir.join("interrupted"))?;
+        }
+        Ok(())
     }
 
     struct NeverReap {
