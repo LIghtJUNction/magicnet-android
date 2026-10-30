@@ -354,10 +354,12 @@ watch(executedList, () => {
         </div>
         <label class="terminal-input-label" for="terminal-command">{{ t("命令") }}</label>
         <div class="terminal-input-row">
-          <span class="terminal-input-prefix" aria-hidden="true">cli</span>
-          <div class="terminal-input-wrap">
-            <div class="terminal-ghost" aria-hidden="true"><span class="invisible">{{ inputCommand }}</span><span>{{ ghostText }}</span></div>
-            <input id="terminal-command" ref="inputRef" v-model="inputCommand" type="text" :placeholder="t('输入命令…')" spellcheck="false" autocomplete="off" autocapitalize="none" :disabled="executing || clearingHistory" @keydown="handleKeyDown" />
+          <div class="terminal-command-field">
+            <span class="terminal-input-prefix" aria-hidden="true">cli</span>
+            <div class="terminal-input-wrap">
+              <div class="terminal-ghost" aria-hidden="true"><span class="invisible">{{ inputCommand }}</span><span>{{ ghostText }}</span></div>
+              <input id="terminal-command" ref="inputRef" v-model="inputCommand" type="text" :placeholder="t('输入命令…')" spellcheck="false" autocomplete="off" autocapitalize="none" autocorrect="off" enterkeyhint="go" :disabled="executing || clearingHistory" @keydown="handleKeyDown" />
+            </div>
           </div>
           <Button class="terminal-run" :disabled="!inputCommand.trim() || executing || clearingHistory" @click="submitCommand">
             <Play :size="16" aria-hidden="true" />{{ t(executing ? "执行中…" : "执行") }}
@@ -414,8 +416,9 @@ watch(executedList, () => {
 .terminal-icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 48px; border-radius: 8px; }
 .terminal-composer { padding: 20px 24px 12px; border-top: 1px solid var(--mn-border); background: var(--mn-surface); }
 .terminal-input-label { display: block; margin-bottom: 8px; color: var(--mn-ink-muted); font-size: 13px; }
-.terminal-input-row { display: flex; align-items: center; gap: 12px; padding: 4px 4px 4px 14px; border: 1px solid var(--mn-border-strong); border-radius: 8px; background: var(--mn-surface-input); }
-.terminal-input-row:focus-within { border-color: var(--mn-focus); outline: 2px solid var(--mn-focus); outline-offset: 2px; }
+.terminal-input-row { display: flex; align-items: stretch; gap: 12px; }
+.terminal-command-field { display: flex; flex: 1; min-width: 0; align-items: center; gap: 12px; padding: 3px 14px; border: 1px solid var(--mn-border-strong); border-radius: 8px; background: var(--mn-surface-input); }
+.terminal-command-field:focus-within { border-color: var(--mn-focus); outline: 2px solid var(--mn-focus); outline-offset: 2px; }
 .terminal-input-prefix { color: var(--mn-ink-muted); font: 14px var(--font-mono); }
 .terminal-input-wrap { position: relative; flex: 1; min-width: 0; }
 .terminal-input-wrap input { position: relative; z-index: 1; width: 100%; min-height: 48px; border: 0; outline: none; background: transparent; color: var(--mn-ink); font: 16px/1.5 var(--font-mono); caret-color: var(--mn-primary); }
@@ -453,11 +456,22 @@ watch(executedList, () => {
   .terminal-composer { padding: 20px 16px 8px; }
   .terminal-empty { padding: 12px 0; gap: 8px; }
   .terminal-empty > svg { display: none; }
-  .terminal-input-row { gap: 8px; padding-left: 10px; }
+  .terminal-input-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .terminal-command-field { gap: 8px; padding-inline: 12px; }
+  .terminal-run { width: 100%; }
   .terminal-quick { grid-template-columns: 1fr; gap: 10px; }
   .terminal-footer { align-items: flex-start; }
   .terminal-entry-heading { display: block; }
   .terminal-entry-meta { margin-top: 2px; }
+}
+@media (max-width: 899px) and (max-height: 500px) {
+  .terminal-page { gap: 20px; }
+  .terminal-toolbar { padding: 12px 16px; }
+  .terminal-output:not(.terminal-output--empty) { height: clamp(120px, 28dvh, 180px); }
+  .terminal-output--empty { height: auto; }
+  .terminal-empty { padding: 12px 0; gap: 8px; }
+  .terminal-empty > svg { display: none; }
+  .terminal-composer { padding-top: 16px; }
 }
 @keyframes terminal-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .terminal-pending-mark { animation: none; } }

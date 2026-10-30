@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { CornerDownLeft, Search, Sparkles } from "lucide-vue-next";
-import { computed, nextTick, onMounted, ref, watch, type Component } from "vue";
+import { CornerDownLeft, Search, Sparkles, X } from "lucide-vue-next";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from "vue";
 import { t } from "@/i18n";
+import Button from "@/components/ui/Button.vue";
+import { useDialogViewport } from "@/composables/useDialogViewport";
 import { trapFocusWithin } from "@/lib/focus";
 import { rankPaletteEntries, type PaletteEntry } from "@/components/commandPalette";
 
@@ -18,6 +20,8 @@ const activeIndex = ref(0);
 const dialog = ref<HTMLElement | null>(null);
 const input = ref<HTMLInputElement | null>(null);
 const list = ref<HTMLElement | null>(null);
+const { viewportStyle } = useDialogViewport();
+let previousBodyOverflow = "";
 
 const results = computed(() => rankPaletteEntries(props.items, query.value, t));
 const activeItem = computed(() => results.value[activeIndex.value]);
@@ -77,7 +81,7 @@ function handleKeydown(event: KeyboardEvent): void {
     activeIndex.value = 0;
     return;
   }
-  if (event.key === "Enter" && !event.isComposing) {
+  if (event.key === "Enter" && event.target === input.value && !event.isComposing) {
     event.preventDefault();
     choose(activeItem.value);
     return;
@@ -86,12 +90,17 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  input.value?.focus();
+  previousBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+  input.value?.focus({ preventScroll: true });
+});
+onUnmounted(() => {
+  document.body.style.overflow = previousBodyOverflow;
 });
 </script>
 
 <template>
-  <div class="mn-sheet-layer mn-palette-layer">
+  <div class="mn-sheet-layer mn-palette-layer" :style="viewportStyle">
     <button class="mn-overlay" type="button" tabindex="-1" :aria-label="t('关闭快速跳转')" @click="emit('close')" />
     <div
       ref="dialog"
@@ -115,10 +124,15 @@ onMounted(() => {
           :aria-label="t('搜索页面和操作')"
           :placeholder="t('搜索页面和操作…')"
           autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
           spellcheck="false"
           enterkeyhint="go"
         />
         <kbd aria-hidden="true">Esc</kbd>
+        <Button variant="ghost" size="icon" :aria-label="t('关闭快速跳转')" @click="emit('close')">
+          <X :size="20" aria-hidden="true" />
+        </Button>
       </div>
 
       <div id="mn-palette-results" ref="list" class="mn-palette__results" role="listbox" :aria-label="t('搜索结果')">
@@ -163,17 +177,17 @@ onMounted(() => {
 
 .mn-palette {
   position: absolute;
-  top: max(12px, env(safe-area-inset-top));
-  right: 12px;
-  left: 12px;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: grid;
   max-width: 620px;
-  max-height: calc(100dvh - 24px - env(safe-area-inset-top));
+  max-height: calc(100% - max(12px, env(safe-area-inset-top)));
   grid-template-rows: auto minmax(0, 1fr) auto;
   margin-inline: auto;
   overflow: hidden;
-  border: 1px solid var(--mn-border);
-  border-radius: var(--mn-radius-lg);
+  border: 0;
+  border-radius: var(--mn-radius-xl) var(--mn-radius-xl) 0 0;
   background: var(--mn-surface-raised);
   box-shadow: var(--mn-shadow-float);
 }
@@ -183,9 +197,12 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   padding: 6px 12px 6px 16px;
-  border-bottom: 1px dashed var(--mn-border-strong);
+  border-bottom: 1px solid var(--mn-border);
   color: var(--mn-ink-muted);
 }
+
+.mn-palette__search > kbd { display: none; }
+.mn-palette__search > .mn-button { flex: none; }
 
 .mn-palette__search input {
   min-width: 0;
@@ -205,21 +222,19 @@ onMounted(() => {
 .mn-palette__results {
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 6px 8px 10px;
+  padding: 6px 8px max(16px, env(safe-area-inset-bottom));
 }
 
 .mn-palette__group {
-  margin: 10px 10px 4px;
+  margin: 16px 12px 6px;
   color: var(--mn-ink-faint);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 650;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
 }
 
 .mn-palette__option {
   display: flex;
-  min-height: 52px;
+  min-height: 60px;
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
@@ -238,7 +253,7 @@ onMounted(() => {
   height: 34px;
   flex: none;
   place-items: center;
-  border: 1px solid var(--mn-border);
+  border: 0;
   border-radius: 10px;
   background: var(--mn-surface-sunken);
   color: var(--mn-ink-muted);
@@ -258,11 +273,10 @@ onMounted(() => {
 }
 
 .mn-palette__label small {
-  overflow: hidden;
   color: var(--mn-ink-muted);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .mn-palette__enter {
@@ -298,15 +312,27 @@ onMounted(() => {
 
 @media (min-width: 640px) {
   .mn-palette {
-    top: 12vh;
+    top: min(12vh, 72px);
+    right: 12px;
+    bottom: auto;
+    left: 12px;
+    max-height: calc(100% - min(12vh, 72px) - 12px);
+    border-radius: var(--mn-radius-lg);
   }
+
+  .mn-palette__search > kbd { display: inline; }
 
   .mn-palette__foot {
     display: flex;
   }
 }
 
+@media (max-height: 500px) {
+  .mn-palette__foot { display: none; }
+}
+
 @media (forced-colors: active) {
+  .mn-palette { border: 1px solid CanvasText; }
   .mn-palette__option[aria-selected="true"] {
     outline: 2px solid Highlight;
   }

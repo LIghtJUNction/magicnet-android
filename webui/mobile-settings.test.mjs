@@ -60,14 +60,19 @@ test("run-page layout is scoped and short viewports retain scrolling menus", () 
   );
   assert.match(
     css,
-    /\.mn-utility-sheet\s*\{[^}]*max-height:[^}]*100dvh[^}]*overflow-y: auto/s,
+    /\.mn-utility-sheet\s*\{[^}]*max-height:[^}]*100%[^}]*overflow-y: auto/s,
   );
+  assert.match(app, /v-if="showUtilityMenu" class="mn-sheet-layer" :style="viewportStyle"/);
 });
 
-test("subscription navigation always opens subscriptions while other groups retain their last page", () => {
+test("switching workspace keeps its destination and tapping the current one opens its pages", () => {
   const selected = [];
   const scope = {
     setTab: (tab) => selected.push(tab),
+    activeWorkspace: { value: { key: "other" } },
+    mobilePagesTrigger: { value: null },
+    showMobilePages: { value: false },
+    HTMLElement: class HTMLElement {},
     lastTabByWorkspace: {
       value: {
         configure: "config",
@@ -79,12 +84,19 @@ test("subscription navigation always opens subscriptions while other groups reta
   };
   const source = app
     .match(
-      /function setWorkspace\(workspace: WorkspaceKey\): void \{[\s\S]*?\n\}/,
+      /function setWorkspace\([^)]*\): void \{[\s\S]*?\n\}/,
     )[0]
     .replace(": WorkspaceKey", "")
+    .replace(": MouseEvent", "")
     .replace(": void", "");
   runInNewContext(source, scope);
   for (const workspace of ["configure", "run", "route", "diagnose"])
     scope.setWorkspace(workspace);
+  assert.deepEqual(selected, ["subs", "about", "chain", "output"]);
+  const trigger = new scope.HTMLElement();
+  scope.activeWorkspace.value.key = "route";
+  scope.setWorkspace("route", { currentTarget: trigger });
+  assert.equal(scope.showMobilePages.value, true);
+  assert.equal(scope.mobilePagesTrigger.value, trigger);
   assert.deepEqual(selected, ["subs", "about", "chain", "output"]);
 });

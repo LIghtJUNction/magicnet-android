@@ -791,6 +791,13 @@ a {
   stroke-width: 2.1;
 }
 
+.mobile-nav .mn-nav-expand {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  opacity: 0.8;
+}
+
 .mn-nav-active {
   background: var(--mn-surface-sunken);
   color: var(--mn-ink);
@@ -818,7 +825,7 @@ a {
   right: 0;
   bottom: 0;
   left: 0;
-  max-height: calc(100dvh - env(safe-area-inset-top) - 24px);
+  max-height: calc(100% - env(safe-area-inset-top) - 24px);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 18px 22px calc(24px + env(safe-area-inset-bottom));
@@ -852,6 +859,14 @@ a {
   font-family: var(--font-sans);
   font-size: 1.375rem;
   font-weight: 500;
+}
+
+.mn-system-sheet > .mn-sheet-header {
+  position: sticky;
+  z-index: 1;
+  top: -18px;
+  padding-top: 8px;
+  background: var(--mn-surface-raised);
 }
 
 .mn-utility-grid {

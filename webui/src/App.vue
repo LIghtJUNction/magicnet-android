@@ -4,6 +4,7 @@ import {
   AppWindow,
   Bug,
   Coffee,
+  ChevronUp,
   DownloadCloud,
   FileCode2,
   Gauge,
@@ -45,6 +46,7 @@ import { useMagicNet } from "@/composables/useMagicNet";
 import { setPendingSubscriptionDraft } from "@/components/pages/subscriptionDraft";
 import { useTheme } from "@/composables/useTheme";
 import { useMobileKeyboard } from "@/composables/useMobileKeyboard";
+import { useDialogViewport } from "@/composables/useDialogViewport";
 import { restoreFocusAfterUpdate, trapFocusWithin } from "@/lib/focus";
 import { createRecoverablePage, prefetchPage } from "@/lib/recoverablePage";
 
@@ -71,6 +73,7 @@ type WorkspaceDefinition = {
 const ONBOARDING_STORAGE_KEY = "magicnet.webui.onboarding.v1";
 /** The palette is opened on demand; keep it off the first-load critical path. */
 const CommandPalette = defineAsyncComponent(() => import("@/components/CommandPalette.vue"));
+const MobileWorkspaceSheet = defineAsyncComponent(() => import("@/components/MobileWorkspaceSheet.vue"));
 
 const pageLoaders: Record<TabKey, () => Promise<{ default: Component }>> = {
   control: () => import("@/components/pages/ControlPage.vue"),
@@ -158,6 +161,7 @@ const {
 } = useMagicNet();
 const { preference: themePreference, label: themeLabel, cycleTheme } = useTheme();
 const { keyboardOpen } = useMobileKeyboard();
+const { viewportStyle } = useDialogViewport();
 
 function readTabFromLocation(): TabKey | null {
   if (typeof window === "undefined") return null;
@@ -182,6 +186,8 @@ const lastTabByWorkspace = ref<Record<WorkspaceKey, TabKey>>({
 });
 const showUtilityMenu = ref(false);
 const showPalette = ref(false);
+const showMobilePages = ref(false);
+const mobilePagesTrigger = ref<HTMLElement | null>(null);
 const paletteTrigger = ref<HTMLElement | null>(null);
 const showOnboarding = ref(false);
 const utilityDialog = ref<HTMLElement | null>(null);
@@ -332,11 +338,38 @@ function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
   });
 }
 
-function setWorkspace(workspace: WorkspaceKey): void {
+function setWorkspace(workspace: WorkspaceKey, event: MouseEvent): void {
+  if (activeWorkspace.value.key === workspace) {
+    mobilePagesTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    showMobilePages.value = true;
+    return;
+  }
   setTab(workspace === "configure" ? "subs" : lastTabByWorkspace.value[workspace]);
 }
 
+function closeMobilePages(): void {
+  showMobilePages.value = false;
+  const trigger = mobilePagesTrigger.value;
+  mobilePagesTrigger.value = null;
+  void nextTick(() => {
+    const isVisible = (element: HTMLElement | null): element is HTMLElement => Boolean(
+      element?.isConnected && element.getClientRects().length
+      && getComputedStyle(element).visibility === "visible",
+    );
+    const target = isVisible(trigger) ? trigger
+      : Array.from(document.querySelectorAll<HTMLElement>(`[data-tab="${activeTab.value}"]`)).find(isVisible)
+        ?? document.getElementById("mn-main");
+    target?.focus();
+  });
+}
+
+function selectMobilePage(page: string): void {
+  const tab = tabs.find((item) => item.key === page);
+  if (tab) setTab(tab.key);
+}
+
 function syncTabFromLocation(): void {
+  if (showMobilePages.value) closeMobilePages();
   const tab = readTabFromLocation();
   if (tab) setTab(tab, { updateLocation: false });
 }
@@ -448,7 +481,7 @@ function closePalette(): void {
 }
 
 function handlePaletteShortcut(event: KeyboardEvent): void {
-  if (showPalette.value || showOnboarding.value || state.issueReporter.open) return;
+  if (showPalette.value || showMobilePages.value || showOnboarding.value || state.issueReporter.open) return;
   if (!isPaletteShortcut(event)) return;
   event.preventDefault();
   openPalette();
@@ -797,19 +830,34 @@ onUnmounted(() => {
         :class="activeWorkspace.key === workspace.key ? 'mn-nav-active' : 'mn-nav-idle'"
         type="button"
         :aria-current="activeWorkspace.key === workspace.key ? 'page' : undefined"
-        @click="setWorkspace(workspace.key)"
+        :aria-haspopup="activeWorkspace.key === workspace.key ? 'dialog' : undefined"
+        :aria-expanded="activeWorkspace.key === workspace.key ? showMobilePages : undefined"
+        :title="activeWorkspace.key === workspace.key ? t('打开分区页面') : undefined"
+        @click="setWorkspace(workspace.key, $event)"
       >
         <component :is="workspace.icon" :size="19" aria-hidden="true" />
         <span>{{ t(workspace.mobileLabel ?? workspace.label) }}</span>
+        <ChevronUp v-if="activeWorkspace.key === workspace.key" class="mn-nav-expand" :size="12" aria-hidden="true" />
       </button>
     </nav>
 
     <Transition name="sheet">
-      <div v-if="showUtilityMenu" class="mn-sheet-layer">
+      <MobileWorkspaceSheet
+        v-if="showMobilePages"
+        :workspace="activeWorkspace.label"
+        :current-page="activeTab"
+        :pages="activeSectionTabs"
+        @close="closeMobilePages"
+        @select="selectMobilePage"
+      />
+    </Transition>
+
+    <Transition name="sheet">
+      <div v-if="showUtilityMenu" class="mn-sheet-layer" :style="viewportStyle">
         <button class="mn-overlay" type="button" :aria-label="t('关闭系统工具')" @click="closeUtilityMenu()" />
         <div
           ref="utilityDialog"
-          class="mn-utility-sheet"
+          class="mn-utility-sheet mn-system-sheet"
           role="dialog"
           aria-modal="true"
           :aria-label="t('系统工具')"

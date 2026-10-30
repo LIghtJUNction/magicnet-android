@@ -1,4 +1,6 @@
 export default {
+  "已显示 {visible} / {total} 个应用": ["Showing {visible} of {total} apps", "Показано приложений: {visible} из {total}"],
+  "显示更多应用（还有 {count} 个）": ["Show more apps ({count} remaining)", "Показать ещё приложения (осталось {count})"],
   "选择代理、直连或自动测速": ["Choose a proxy, direct connection or automatic selection", "Выберите прокси, прямое подключение или автоматический выбор"],
   "为各类流量选择已有出口，或测速后切换节点。": ["Choose an existing outbound for each traffic group, or test latency before switching nodes.", "Выберите существующий выход для каждой группы трафика или проверьте задержку перед сменой узла."],
   "主策略": ["Main policy", "Основная политика"],

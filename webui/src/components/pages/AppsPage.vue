@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from "@/i18n";
 import { CheckCheck, CheckCircle2, Copy, ListFilter, Plus, RefreshCw, RotateCcw, ShieldCheck, Trash2, X } from "lucide-vue-next";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import ConfirmPanel from "@/components/ui/ConfirmPanel.vue";
@@ -25,6 +25,7 @@ const appReportCopied = ref(false);
 const safeReportCopied = ref(false);
 const selectedPackages = ref<string[]>([]);
 const recommendedBypass = ref<string[]>([]);
+const packageLimit = ref(40);
 
 type PendingAppAction = {
   key: string;
@@ -42,19 +43,23 @@ const recycledBypass = computed(() => {
 
 const installedNames = computed(() => new Set(state.packages.map((item) => item.packageName)));
 
-const filteredPackages = computed(() => {
+const matchingPackages = computed(() => {
   const query = state.packageQuery.trim().toLowerCase();
-  const listed = state.packages.filter((item) => {
+  return state.packages.filter((item) => {
     if (!query) return true;
     return item.packageName.toLowerCase().includes(query) || item.appLabel.toLowerCase().includes(query);
   });
-  return listed.slice(0, 120);
 });
+const filteredPackages = computed(() => matchingPackages.value.slice(0, packageLimit.value));
 const visiblePackageNames = computed(() => filteredPackages.value.map((app) => app.packageName));
 const allVisibleSelected = computed(() => (
   visiblePackageNames.value.length > 0
   && visiblePackageNames.value.every((pkg) => selectedPackages.value.includes(pkg))
 ));
+
+watch([() => state.packageQuery, () => state.appPolicy.mode], () => {
+  packageLimit.value = 40;
+});
 
 const availableRecommendedBypass = computed(() => {
   const active = new Set([...state.appPolicy.proxy, ...state.appPolicy.direct, ...state.appPolicy.bypass]);
@@ -542,10 +547,11 @@ onMounted(() => {
 
     <div class="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
       <Card class="grid gap-3">
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <SearchField v-model="state.packageQuery" :placeholder="t('搜索已安装应用包名')" @keyup.enter="searchPackages" />
           <Button variant="secondary" :loading="isRunning('search-packages')" @click="searchPackages">{{ t('重新读取') }}</Button>
         </div>
+        <p class="text-xs text-[var(--mn-ink-muted)]" role="status">{{ t('已显示 {visible} / {total} 个应用', { visible: filteredPackages.length, total: matchingPackages.length }) }}</p>
         <div v-if="selectedPackages.length" class="flex min-w-0 flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" :disabled="!visiblePackageNames.length" @click="selectVisiblePackages">
             <CheckCheck :size="15" />{{ allVisibleSelected ? t('取消可见项') : t('选择可见项') }}
@@ -574,6 +580,9 @@ onMounted(() => {
           </div>
           <em v-if="!filteredPackages.length" class="mn-empty">{{ state.packageQuery.trim() ? t('没有匹配的应用。') : t('暂无应用，点“刷新应用”读取。') }}</em>
         </div>
+        <Button v-if="filteredPackages.length < matchingPackages.length" variant="ghost" class="w-full" @click="packageLimit += 40">
+          {{ t('显示更多应用（还有 {count} 个）', { count: matchingPackages.length - filteredPackages.length }) }}
+        </Button>
       </Card>
 
       <details class="mn-disclosure">

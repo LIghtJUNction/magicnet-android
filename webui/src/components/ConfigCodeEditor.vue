@@ -178,7 +178,7 @@ onBeforeUnmount(() => {
       <span v-else role="status">{{ t("未校验") }}</span>
     </div>
 
-    <div class="json-editor__shell" :style="{ minHeight }">
+    <div class="json-editor__shell" :style="{ '--editor-min-height': minHeight }">
       <nav class="json-editor__gutter" :aria-label="t('行号。点击可跳转到对应行')">
         <button
           v-for="line in visibleLines"
@@ -290,7 +290,7 @@ onBeforeUnmount(() => {
 
 .json-editor__shell {
   display: grid;
-  min-height: 30rem;
+  min-height: var(--editor-min-height, 30rem);
   grid-template-columns: 4.25rem minmax(0, 1fr);
 }
 
@@ -469,6 +469,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 639px) {
   .json-editor__shell {
+    min-height: clamp(12rem, 52dvh, var(--editor-min-height, 30rem));
     grid-template-columns: 3.4rem minmax(0, 1fr);
   }
 
@@ -479,7 +480,7 @@ onBeforeUnmount(() => {
   .json-editor__highlight,
   .json-editor__textarea {
     padding-inline: 0.75rem;
-    font-size: 12px;
+    font-size: 16px;
   }
 }
 

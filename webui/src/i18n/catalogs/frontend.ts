@@ -1,4 +1,6 @@
 export default {
+  "关闭页面导航": ["Close page navigation", "Закрыть навигацию по страницам"],
+  "打开分区页面": ["Open section pages", "Открыть страницы раздела"],
   "页面未能加载": ["Page could not load", "Не удалось загрузить страницу"],
   "可以重试或切换页面。其他页面的未保存内容会保留。": ["Retry or open another page. Unsaved changes on other pages are kept.", "Повторите попытку или откройте другую страницу. Несохранённые изменения на других страницах сохранятся."],
   "重新加载此页": ["Retry this page", "Повторить загрузку"],

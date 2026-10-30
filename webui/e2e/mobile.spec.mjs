@@ -5,6 +5,7 @@ const pages = [
   ["run", "control", null],
   ["run", "about", "流量路径"],
   ["route", "apps", "应用名单"],
+  ["route", "proxies", "节点与代理组"],
   ["route", "block", "拦截规则"],
   ["route", "chain", "链式代理"],
   ["configure", "subs", "订阅"],
@@ -37,7 +38,11 @@ async function navigate(page, workspace, tab, heading) {
   if (await desktopPage.isVisible()) {
     await desktopPage.click();
   } else {
-    await page.locator(`[data-workspace="${workspace}"]:visible`).click();
+    const workspaceButton = page.locator(`[data-workspace="${workspace}"]:visible`);
+    // Re-tapping the current workspace opens its page sheet on phones.
+    if (await workspaceButton.getAttribute("aria-current") !== "page") {
+      await workspaceButton.click();
+    }
     await page.locator(`.mn-section-tabs [data-tab="${tab}"]:visible`).click();
   }
   if (heading)
@@ -146,7 +151,7 @@ test("a fresh browser opens the overview instead of an unusable setup flow", asy
   }
 });
 
-test("all thirteen pages fit in both themes", async ({ page }, testInfo) => {
+test("all fourteen pages fit in both themes", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
