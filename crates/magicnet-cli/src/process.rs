@@ -1179,7 +1179,11 @@ fn run_process_group(
     // remain in the shared budget after these active permits are released.
     let _child_budget = crate::utils::reserve_child_probe()?;
     let _watchdog_budget = crate::utils::reserve_child_probe()?;
-    let mut watchdog = ParentDeathWatchdog::arm(timeout)?;
+    // A longer subscription deadline must not leave orphaned work alive for
+    // that whole budget after the CLI dies. Keep rollback grace independently
+    // bounded by the former command default, or a shorter explicit deadline.
+    let mut watchdog =
+        ParentDeathWatchdog::arm(timeout.min(Duration::from_secs(DEFAULT_COMMAND_TIMEOUT_SECS)))?;
     #[cfg(any(target_os = "android", target_os = "linux"))]
     let watchdog_worker_fd = watchdog.worker_pid_fd();
     #[cfg(any(target_os = "android", target_os = "linux"))]
@@ -2196,7 +2200,10 @@ mod process_group_tests {
 
     #[test]
     fn command_timeout_is_finite_and_rejects_zero_or_overflow() {
-        for seconds in [DEFAULT_COMMAND_TIMEOUT_SECS, SUBSCRIPTION_COMMAND_TIMEOUT_SECS] {
+        for seconds in [
+            DEFAULT_COMMAND_TIMEOUT_SECS,
+            SUBSCRIPTION_COMMAND_TIMEOUT_SECS,
+        ] {
             let default = Duration::from_secs(seconds);
             assert_eq!(command_timeout(None, default), default);
             assert_eq!(command_timeout(Some("1"), default), Duration::from_secs(1));
@@ -2250,7 +2257,10 @@ mod process_group_tests {
         assert!(!app.moddir.join("completed").exists());
         super::run_magicnet_function_inner(&app, script, None, Duration::from_secs(2))
             .map_err(std::io::Error::other)?;
-        assert_eq!(fs::read_to_string(app.moddir.join("completed"))?, "complete");
+        assert_eq!(
+            fs::read_to_string(app.moddir.join("completed"))?,
+            "complete"
+        );
         Ok(())
     }
 
