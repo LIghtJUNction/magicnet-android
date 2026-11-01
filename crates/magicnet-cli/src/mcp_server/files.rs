@@ -157,6 +157,9 @@ fn private_module_path(relative: &Path) -> bool {
                     "install-onboarding",
                     "module-update",
                     "wifi-policy",
+                    "hotspot",
+                    "app-policy",
+                    "network-access-recovery",
                 ]
                 .iter()
                 .any(|name| private_name_or_copy(&pair[1], name)))
@@ -178,6 +181,12 @@ fn private_module_path(relative: &Path) -> bool {
             "module-update.conf",
             "wifi-ssid.list",
             "wifi-bssid.list",
+            "app-proxy.list",
+            "app-direct.list",
+            "app-bypass.list",
+            "selector-selections.json",
+            "dns-leak-guard.ifaces",
+            "shared-interfaces.list",
         ]
         .iter()
         .any(|secret| private_name_or_copy(name, secret))
@@ -366,6 +375,17 @@ mod tests {
             ".state/module-update/release.json",
             ".state/wifi-policy/last-state.conf",
             ".state/wifi-policy.new.123/last-state.conf",
+            ".state/hotspot/return-path.state",
+            ".state/hotspot.new.123/return-path.state",
+            ".state/app-policy/exclude-uids.list",
+            ".state/network-access-recovery/journal",
+            ".state/dns-leak-guard.ifaces",
+            ".state/transparent-ebpf/shared-interfaces.list",
+            ".state/transparent-ebpf/shared-interfaces.list.bak",
+            ".config/magicnet/app-proxy.list",
+            ".config/magicnet/app-direct.list.bak",
+            ".config/magicnet/app-bypass.list",
+            ".config/magicnet/selector-selections.json",
             ".log/mcp-server.log",
             ".log/service.log",
             ".log/wifi-policy.log",
@@ -392,6 +412,9 @@ mod tests {
             ".state/transparent-transaction",
             ".state/override-materialization",
             ".state/wifi-policy",
+            ".state/hotspot",
+            ".state/app-policy",
+            ".state/network-access-recovery",
             ".log",
         ] {
             assert_eq!(

@@ -541,7 +541,13 @@ fn cli_args_reveal_secret(args: &[String]) -> bool {
     if !has_json
         && matches!(
             command.as_slice(),
-            ["wifi"] | ["wifi", "status" | "list" | "check" | "watch", ..] | ["sub", "status", ..]
+            ["wifi"]
+                | ["wifi", "status" | "list" | "check" | "watch", ..]
+                | ["sub", "status", ..]
+                | ["hotspot"]
+                | ["hotspot", "status", ..]
+                | ["app"]
+                | ["app", "list" | "packages" | "recommendations", ..]
         )
     {
         return true;
@@ -873,6 +879,9 @@ mod tests {
             ["health"].as_slice(),
             ["service", "status"].as_slice(),
             ["--json", "service", "status"].as_slice(),
+            ["--json", "hotspot", "status"].as_slice(),
+            ["hotspot", "status", "--json"].as_slice(),
+            ["--json", "app", "list"].as_slice(),
             ["node", "test", "diagnose"].as_slice(),
             ["api", "select", "proxy", "diagnose"].as_slice(),
         ] {
@@ -887,6 +896,12 @@ mod tests {
         for args in [
             ["--json", "app", "inspect"].as_slice(),
             ["app", "inspect", "--json"].as_slice(),
+            ["hotspot"].as_slice(),
+            ["hotspot", "status"].as_slice(),
+            ["app"].as_slice(),
+            ["app", "list"].as_slice(),
+            ["app", "packages"].as_slice(),
+            ["app", "recommendations"].as_slice(),
             ["diagnose"].as_slice(),
             ["diagnose", "unused"].as_slice(),
             ["diagnose", ""].as_slice(),

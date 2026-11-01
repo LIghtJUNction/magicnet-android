@@ -91,12 +91,24 @@ impl Fixture {
             include_str!("../../../src/MagicNet/lib/magicnet/singbox_lifecycle.sh"),
         )
         .unwrap();
-        fs::copy(
-            env!("CARGO_BIN_EXE_magicnet-cli"),
-            root.join("bin/magicnet-cli"),
-        )
-        .unwrap();
-        fs::hard_link(root.join("bin/magicnet-cli"), root.join("cli")).unwrap();
+        // Parallel fork/exec tests can inherit a copy's writable descriptor
+        // briefly and make Linux reject exec with ETXTBSY. Host fixtures use
+        // MODDIR, so execute the already-built, read-only binary through aliases.
+        #[cfg(target_os = "linux")]
+        for name in ["bin/magicnet-cli", "cli"] {
+            std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_magicnet-cli"), root.join(name))
+                .unwrap();
+        }
+        // Android derives the trusted module root from the executable itself.
+        #[cfg(target_os = "android")]
+        {
+            fs::copy(
+                env!("CARGO_BIN_EXE_magicnet-cli"),
+                root.join("bin/magicnet-cli"),
+            )
+            .unwrap();
+            fs::hard_link(root.join("bin/magicnet-cli"), root.join("cli")).unwrap();
+        }
         fs::write(
             root.join("lib/magicnet.sh"),
             r#"

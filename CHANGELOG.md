@@ -1,3 +1,17 @@
+# v1.8.2 (2026-11-01)
+
+- Bound complete multi-source subscription updates independently from ordinary
+  commands, while retaining per-source limits and parent-death cleanup grace.
+- Track private subscription apply tasks in the WebUI and cover same-name
+  WebSocket nodes across sources.
+- Close generic MCP file/CLI bypasses for hotspot journals, app identities,
+  selector choices and interface metadata; retain redacted named status tools.
+- Improve mobile navigation and editing, keeping empty terminal controls above
+  the dock. Update the pinned sing-box integration without changing tun/ebpf.
+
+See [release notes](docs/releases/v1.8.2.md) for installation and validation scope.
+Issue #426 remains open pending real-device evidence; no device was installed.
+
 # v1.5.22 (2026-10-08)
 
 - Defer automatic probes for generated idle URL-test groups until first traffic;

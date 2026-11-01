@@ -49,8 +49,10 @@ intent (`.config/magicnet/module-update.conf`), Wi-Fi SSID/BSSID lists
 (`.config/magicnet/wifi-ssid.list` / `wifi-bssid.list`), runtime logs and capture
 output under `.log`, and private runtime trees under `.state` (`sing-box`,
 `transparent-transaction`, `override-materialization`, installer config,
-onboarding scratch, `module-update` download state, and `wifi-policy`
-last-state copies). These trees hold subscription sources, node credentials,
+onboarding scratch, `module-update` download state, `wifi-policy`
+last-state copies, `hotspot`, `app-policy`, and `network-access-recovery`).
+Application package lists, `selector-selections.json`, `dns-leak-guard.ifaces`,
+and eBPF `shared-interfaces.list` (including staging/backup names) are also private. These trees hold subscription sources, node credentials,
 Tailscale identities, whole-config recovery copies, SSID/BSSID watch text,
 and eCapture payloads under names such as `old-url` or `input-source`.
 In-module symlink aliases receive the same checks. Public canonical state under
@@ -65,6 +67,8 @@ The generic `magicnet_cli` tool refuses the same private dumps: `mcp secret`,
 the default `get`), `sub filter` (including the default `list`), human `sub
 status` and `wifi` status / `list` / `check` / `watch` (omitted wifi action
 defaults to status; use `--json` for the redacted machine envelopes),
+human `hotspot` / `hotspot status` and `app` / `app list` / `app packages` /
+`app recommendations` (use redacted JSON status or explicit named private tools),
 `config-editor get` / `path` and repository getters, `backup` (including the
 default `export`), `override inspect`, `wifi inspect`, `network-access inspect`,
 raw `service` / `mcp` logs, human `diagnose` (unredacted sing-box log excerpts),
