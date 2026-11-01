@@ -461,7 +461,8 @@ magicnet_fswatch_start() {
 
 magicnet_wifi_policy_start() {
     sleep 2
-    printf '%s\n' "${MAGICNET_COMMAND_TIMEOUT-unset}" >"$MODDIR/daemon.completed"
+    printf '%s\n' "${MAGICNET_COMMAND_TIMEOUT-unset}" >"$MODDIR/daemon.completed.tmp" &&
+        mv "$MODDIR/daemon.completed.tmp" "$MODDIR/daemon.completed"
 }
 "#).unwrap();
     fixture.cli = Some(
