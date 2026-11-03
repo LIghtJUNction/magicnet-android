@@ -92,15 +92,25 @@ func prepareWorkspace(root string) (string, error) {
 // Remove the ownership marker last. A killed cleanup therefore leaves either
 // an identifiable workspace or an empty directory that is safe to remove.
 func cleanupWorkspace(stage string) error {
-	entries, err := os.ReadDir(stage)
+	directory, err := os.Open(stage)
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		if entry.Name() != workspaceOwner {
-			if err := os.RemoveAll(filepath.Join(stage, entry.Name())); err != nil {
-				return err
+	defer directory.Close()
+	for {
+		entries, readErr := directory.ReadDir(128)
+		if readErr != nil && readErr != io.EOF {
+			return readErr
+		}
+		for _, entry := range entries {
+			if entry.Name() != workspaceOwner {
+				if err := os.RemoveAll(filepath.Join(stage, entry.Name())); err != nil {
+					return err
+				}
 			}
+		}
+		if readErr == io.EOF {
+			break
 		}
 	}
 	if err := os.Remove(filepath.Join(stage, workspaceOwner)); err != nil && !os.IsNotExist(err) {

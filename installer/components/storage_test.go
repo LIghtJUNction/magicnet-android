@@ -364,3 +364,20 @@ func TestKilledDownloadReleasesLockAndReclaimsPartialOnRetry(t *testing.T) {
 	assertNoWorkspace(t, o.ModuleDir)
 	assertContent(t, filepath.Join(o.ModuleDir, "bin/sing-box"), strings.Repeat("engine", 1000))
 }
+
+func TestWorkspaceCleanupSpansDirectoryBatches(t *testing.T) {
+	root := t.TempDir()
+	stage, err := prepareWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 513; i++ {
+		if err := os.WriteFile(filepath.Join(stage, fmt.Sprintf("part-%04d", i)), []byte("temporary"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cleanupWorkspace(stage); err != nil {
+		t.Fatal(err)
+	}
+	assertNoWorkspace(t, root)
+}
