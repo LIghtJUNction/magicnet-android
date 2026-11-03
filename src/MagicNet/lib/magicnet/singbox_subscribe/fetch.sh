@@ -75,6 +75,8 @@ magicnet_singbox_use_cached_subscription() {
 # refreshes cannot be expanded through an environment override.
 MAGICNET_SUB_MAX_RESPONSE_BYTES=8388608
 MAGICNET_SUB_RESOLVE_TIMEOUT=10
+# Used once, only for a 403 under the default curl User-Agent (issue #434).
+MAGICNET_SUB_FALLBACK_USER_AGENT=clash.meta
 
 magicnet_singbox_subscription_hostname_valid() (
     _subscription_hostname="$1"
@@ -381,9 +383,23 @@ magicnet_singbox_public_ipv6() (
     return 0
 )
 
+# Print the address curl should pin. IPv4-mapped IPv6 (::ffff:a.b.c.d) is the
+# embedded IPv4 destination; old Android curl also rejects IPv6 --resolve.
+magicnet_singbox_subscription_pin_address() {
+    case "$1" in
+        ::[Ff][Ff][Ff][Ff]:*.*) printf '%s\n' "${1#::[Ff][Ff][Ff][Ff]:}" ;;
+        *:*) printf '[%s]\n' "$1" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
 magicnet_singbox_public_address() (
     _subscription_address="$1"
     case "$_subscription_address" in
+        ::[Ff][Ff][Ff][Ff]:*.*)
+            magicnet_singbox_public_ipv4 "${_subscription_address#::[Ff][Ff][Ff][Ff]:}"
+            return
+            ;;
         *.*)
             _subscription_tail=${_subscription_address##*:}
             magicnet_singbox_public_ipv4 "$_subscription_tail" || return 1
@@ -404,10 +420,7 @@ magicnet_singbox_subscription_resolve_public() {
         "${MODDIR}/cli" sub resolve-host "$_subscription_host" "$_subscription_port" 2>/dev/null |
         while IFS= read -r _subscription_address; do
             magicnet_singbox_public_address "$_subscription_address" || exit 1
-            case "$_subscription_address" in
-                *:*) _subscription_resolve_address="[$_subscription_address]" ;;
-                *) _subscription_resolve_address=$_subscription_address ;;
-            esac
+            _subscription_resolve_address=$(magicnet_singbox_subscription_pin_address "$_subscription_address")
             printf '%s|%s|%s\n' "$_subscription_host" "$_subscription_port" "$_subscription_resolve_address"
         done
 }
@@ -553,6 +566,7 @@ magicnet_singbox_try_fetch_subscription() (
     _fetch_hops=0
     _fetch_retries=0
     _fetch_complete=0
+    _fetch_ua_fallback=0
     trap 'exit 130' HUP INT TERM
     trap '
         rm -f "${_fetch_target}.response"
@@ -583,6 +597,22 @@ magicnet_singbox_try_fetch_subscription() (
                 continue
                 ;;
             22:408|22:429|22:500|22:502|22:503|22:504|6:*|7:*|18:*|28:*|52:*|55:*|56:*|92:*|124:*) ;;
+            22:403)
+                # Many providers and CDN bot filters reject curl's default
+                # User-Agent. Without a user-chosen value, retry this hop once
+                # with a client UA whose Clash response is parsed natively.
+                # The fallback is never persisted and never replaces a
+                # configured User-Agent.
+                if [ -z "${MAGICNET_SUB_USER_AGENT:-}" ] && [ "$_fetch_ua_fallback" -eq 0 ]; then
+                    _fetch_ua_fallback=1
+                    MAGICNET_SUB_USER_AGENT=$MAGICNET_SUB_FALLBACK_USER_AGENT
+                    warn "Subscription HTTP status: 403; retrying once with the $MAGICNET_SUB_FALLBACK_USER_AGENT User-Agent"
+                    continue
+                fi
+                warn "Subscription HTTP status: 403"
+                warn "Subscription server refused the request; if the provider requires a client identity, choose a User-Agent in subscription settings"
+                return 1
+                ;;
             127:*) return 127 ;;
             *)
                 # Only numeric codes are disclosed; URLs and response bodies

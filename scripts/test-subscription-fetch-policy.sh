@@ -37,10 +37,21 @@ case " $* " in
     ;;
 esac
 [ "${MAGICNET_FETCH_FAIL:-0}" = 1 ] && exit 1
+agent=
 while [ "$#" -gt 0 ]; do
-  case "$1" in -o) shift; body=$1 ;; --dump-header) shift; headers=$1 ;; esac
+  case "$1" in -o) shift; body=$1 ;; --dump-header) shift; headers=$1 ;; --user-agent) shift; agent=$1 ;; esac
   shift
 done
+case "${MAGICNET_FETCH_FORBID:-}" in
+  default) [ -n "$agent" ] || forbid=1 ;;
+  all) forbid=1 ;;
+esac
+if [ "${forbid:-0}" = 1 ]; then
+  printf 'HTTP/2 403\r\n\r\n' >"$headers"
+  : >"$body"
+  printf '403\n\n'
+  exit 22
+fi
 printf 'HTTP/2 200\r\n\r\n' >"$headers"
 printf '200\n\n'
 exec >"$body"
@@ -74,6 +85,8 @@ fi
 [ "${1:-}" = sub ] && [ "${2:-}" = resolve-host ] || exit 2
 case "${MAGICNET_RESOLVE_RESULT:-public}" in
   public) printf '%s\n' "1.1.1.1" "2606:4700:4700::1111" ;;
+  mapped) printf '%s\n' "::ffff:1.1.1.1" ;;
+  mapped-private) printf '%s\n' "::ffff:127.0.0.1" ;;
   private) printf '%s\n' "127.0.0.1" ;;
   empty) ;;
   fail) exit 1 ;;
@@ -199,6 +212,57 @@ PATH="$tmp/bin:$PATH" \
 grep -q 'curl .*--user-agent mihomo/1.19.0.*https://example.invalid/sub' "$tmp/log"
 test "$(cat "$tmp/custom-ua")" = ok
 rm -f "$tmp/subscription.user-agent"
+: >"$tmp/log"
+
+# Issue #434: a provider/CDN 403 for curl's default User-Agent retries once
+# with the Clash-compatible fallback; it never overrides a configured value.
+unset MAGICNET_SUB_USER_AGENT
+MAGICNET_FETCH_FORBID=default PATH="$tmp/bin:$PATH" \
+  magicnet_singbox_try_fetch_subscription https://example.invalid/sub "$tmp/ua-fallback" 2 7
+test "$(grep -c '^curl ' "$tmp/log")" -eq 2
+grep -q 'curl .*--user-agent clash.meta.*https://example.invalid/sub' "$tmp/log"
+grep -q '^warn Subscription HTTP status: 403; retrying once with the clash.meta User-Agent$' "$tmp/log"
+test "$(cat "$tmp/ua-fallback")" = ok
+: >"$tmp/log"
+if MAGICNET_FETCH_FORBID=all PATH="$tmp/bin:$PATH" \
+  magicnet_singbox_try_fetch_subscription https://example.invalid/sub "$tmp/ua-forbidden" 2 7; then
+  exit 1
+fi
+test "$(grep -c '^curl ' "$tmp/log")" -eq 2
+grep -q '^warn Subscription server refused the request' "$tmp/log"
+test ! -e "$tmp/ua-forbidden"
+: >"$tmp/log"
+printf '%s\n' 'v2rayNG' >"$tmp/subscription.user-agent"
+if MAGICNET_FETCH_FORBID=all PATH="$tmp/bin:$PATH" \
+  magicnet_singbox_fetch_one_subscription \
+  https://example.invalid/sub "$tmp/ua-configured" "" "" "" '#1'; then
+  exit 1
+fi
+test "$(grep -c '^curl ' "$tmp/log")" -eq 1
+if grep -q 'clash.meta' "$tmp/log"; then
+  exit 1
+fi
+rm -f "$tmp/subscription.user-agent"
+unset MAGICNET_SUB_USER_AGENT
+: >"$tmp/log"
+
+# IPv4-mapped DNS answers are validated and pinned as the embedded IPv4.
+magicnet_singbox_public_address '::ffff:1.1.1.1'
+test "$(magicnet_singbox_subscription_pin_address '::ffff:1.1.1.1')" = 1.1.1.1
+test "$(magicnet_singbox_subscription_pin_address '2606:4700:4700::1111')" = '[2606:4700:4700::1111]'
+MAGICNET_RESOLVE_RESULT=mapped PATH="$tmp/bin:$PATH" \
+  magicnet_singbox_try_fetch_subscription https://example.invalid/sub "$tmp/mapped" 2 7
+grep -Fq -- '--resolve example.invalid:443:1.1.1.1 ' "$tmp/log"
+if grep -q 'ffff' "$tmp/log"; then
+  exit 1
+fi
+test "$(cat "$tmp/mapped")" = ok
+: >"$tmp/log"
+if MAGICNET_RESOLVE_RESULT=mapped-private PATH="$tmp/bin:$PATH" \
+  magicnet_singbox_try_fetch_subscription https://example.invalid/sub "$tmp/mapped-private" 2 7; then
+  exit 1
+fi
+test ! -e "$tmp/mapped-private"
 : >"$tmp/log"
 
 # A failed publish must not fall through to normalizing the previous source

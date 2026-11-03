@@ -367,7 +367,9 @@ pub fn sub_resolve_host(args: &[String]) -> Result<(), String> {
     let resolved = (host, port)
         .to_socket_addrs()
         .map_err(|_| "Subscription hostname resolution failed".to_string())?
-        .map(|address| address.ip())
+        // IPv4-mapped AAAA answers are the embedded IPv4 destination. Print
+        // that IPv4 so the shell validator and curl --resolve pin it as IPv4.
+        .map(|address| address.ip().to_canonical())
         .collect::<HashSet<_>>();
     validate_resolved_subscription_addresses(&resolved)?;
 

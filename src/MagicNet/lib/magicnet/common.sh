@@ -314,10 +314,6 @@ magicnet_with_sub_config_lock() {
     return "$_sub_lock_rc"
 }
 
-magicnet_prepare_singbox_nodes() {
-    magicnet_with_sub_config_lock magicnet_prepare_singbox_nodes_unlocked
-}
-
 magicnet_singbox_running_has_nodes() {
     magicnet_singbox_standalone_config_ready ||
         magicnet_singbox_config_has_nodes ||

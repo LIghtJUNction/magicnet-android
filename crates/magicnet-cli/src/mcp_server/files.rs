@@ -187,6 +187,17 @@ fn private_module_path(relative: &Path) -> bool {
             "selector-selections.json",
             "dns-leak-guard.ifaces",
             "shared-interfaces.list",
+            // Browsing destinations and chained proxy endpoints.
+            "route-proxy-domain-suffix.list",
+            "route-direct-domain-suffix.list",
+            "route-block-domain-suffix.list",
+            "route-warp-domain-suffix.list",
+            "block-domain-suffix.list",
+            "block-allow-rules.list",
+            "community-ban-rules.list",
+            "community-ban-domain-suffix.list",
+            "block.conf",
+            "proxy-chain.json",
         ]
         .iter()
         .any(|secret| private_name_or_copy(name, secret))
@@ -308,6 +319,20 @@ mod tests {
             "12:34:56:78:9a:bc\n",
         )
         .unwrap();
+        for name in [
+            "route-proxy-domain-suffix.list",
+            "route-warp-domain-suffix.list",
+            "block-domain-suffix.list",
+            "community-ban-domain-suffix.list",
+            "block.conf",
+            "proxy-chain.json",
+        ] {
+            fs::write(
+                root.join(".config/magicnet").join(name),
+                "private.example\n",
+            )
+            .unwrap();
+        }
         fs::write(root.join("notes.txt"), "visible").unwrap();
         symlink(
             root.join(".config/magicnet/mcp.conf"),
@@ -325,6 +350,13 @@ mod tests {
             ".config/sing-box/subscription.url",
             ".config/sing-box/subscription.local",
             ".config/sing-box/tailscale-auth.json",
+            ".config/magicnet/route-proxy-domain-suffix.list",
+            ".config/magicnet/route-warp-domain-suffix.list",
+            ".config/magicnet/block-domain-suffix.list",
+            ".config/magicnet/community-ban-domain-suffix.list",
+            ".config/magicnet/block.conf",
+            ".config/magicnet/proxy-chain.json",
+            ".config/magicnet/block.conf.bak",
             "alias.conf",
         ] {
             assert_eq!(

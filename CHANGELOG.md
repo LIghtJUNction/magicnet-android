@@ -1,3 +1,16 @@
+# v1.8.4 (2026-11-03)
+
+- Retry a subscription fetch once with the `clash.meta` User-Agent when the
+  default curl identity receives HTTP 403 (#434); configured values are never
+  overridden or persisted.
+- Validate and pin IPv4-mapped DNS answers as their embedded IPv4 address.
+- Refuse generic MCP reads of routing/block domain lists, `block.conf` and
+  `proxy-chain.json`, and human `warp`/`node`/`route`/`block` listings; named
+  node/block tools remain explicit.
+- Remove the unused `magicnet_prepare_singbox_nodes` wrapper.
+
+See [release notes](docs/releases/v1.8.4.md). No device install was performed.
+
 # v1.8.2 (2026-11-01)
 
 - Bound complete multi-source subscription updates independently from ordinary

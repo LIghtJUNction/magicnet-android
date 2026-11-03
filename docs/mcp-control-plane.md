@@ -52,7 +52,7 @@ output under `.log`, and private runtime trees under `.state` (`sing-box`,
 onboarding scratch, `module-update` download state, `wifi-policy`
 last-state copies, `hotspot`, `app-policy`, and `network-access-recovery`).
 Application package lists, `selector-selections.json`, `dns-leak-guard.ifaces`,
-and eBPF `shared-interfaces.list` (including staging/backup names) are also private. These trees hold subscription sources, node credentials,
+and eBPF `shared-interfaces.list` (including staging/backup names), routing/block domain lists (`route-*-domain-suffix.list`, `block-domain-suffix.list`, `block-allow-rules.list`, `community-ban-*.list`), `block.conf` and `proxy-chain.json` (including staging/backup names) are also private. These trees hold subscription sources, node credentials,
 Tailscale identities, whole-config recovery copies, SSID/BSSID watch text,
 and eCapture payloads under names such as `old-url` or `input-source`.
 In-module symlink aliases receive the same checks. Public canonical state under
@@ -69,6 +69,10 @@ status` and `wifi` status / `list` / `check` / `watch` (omitted wifi action
 defaults to status; use `--json` for the redacted machine envelopes),
 human `hotspot` / `hotspot status` and `app` / `app list` / `app packages` /
 `app recommendations` (use redacted JSON status or explicit named private tools),
+human `warp` / `warp status`, `node` / `node list` / `node current`, and `route` /
+`block` (including the default `list`), which print WARP endpoints, node names or
+routing/block domains (named `magicnet_node_list`, `magicnet_node_current` and
+`magicnet_block_list` remain the explicit private paths),
 `config-editor get` / `path` and repository getters, `backup` (including the
 default `export`), `override inspect`, `wifi inspect`, `network-access inspect`,
 raw `service` / `mcp` logs, human `diagnose` (unredacted sing-box log excerpts),

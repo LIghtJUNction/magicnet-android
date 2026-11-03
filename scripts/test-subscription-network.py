@@ -26,6 +26,7 @@ BODY = b"proxies:\n  - {name: fixture, type: trojan, server: node.invalid, port:
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     counts = collections.Counter()
+    agents = []
 
     def log_message(self, *_):
         pass
@@ -33,6 +34,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         self.counts[path] += 1
+        self.agents.append(self.headers.get("User-Agent", ""))
         status, body, headers = 200, BODY, {}
         if path == "/gzip":
             body = gzip.compress(BODY)
@@ -47,6 +49,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "/redirect-userinfo": "https://user:fixture@subscription.example.invalid/private",
                 "/redirect-loop": "/redirect-loop",
             }[path]
+        elif path == "/ua-gate" and self.headers.get("User-Agent") != "clash.meta":
+            status, body = 403, b"curl is not allowed"
         elif path.startswith("/status-"):
             status = int(path.removeprefix("/status-"))
             body = b"error body must not become nodes"
@@ -117,8 +121,9 @@ class NetworkTests(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def fetch(self, path, *, success=True, budget=12, trust=True):
+    def fetch(self, path, *, success=True, budget=12, trust=True, agent=""):
         Handler.counts.clear()
+        Handler.agents.clear()
         target = self.root / "download"
         resolution_log = self.root / "resolutions"
         resolution_log.write_text("")
@@ -135,7 +140,7 @@ magicnet_singbox_subscription_resolve_public() {{
 }}
 magicnet_singbox_try_fetch_subscription {shlex.quote(f'https://{HOST}:{self.server.server_port}{path}?token=PRIVATE_FIXTURE')} {shlex.quote(str(target))} 2 {budget}
 '''
-        env = {**os.environ, "HOME": str(self.root), "CURL_HOME": str(self.root), "http_proxy": "http://127.0.0.1:1", "HTTPS_PROXY": "http://127.0.0.1:1", "ALL_PROXY": "http://127.0.0.1:1"}
+        env = {**os.environ, "MAGICNET_SUB_USER_AGENT": agent, "HOME": str(self.root), "CURL_HOME": str(self.root), "http_proxy": "http://127.0.0.1:1", "HTTPS_PROXY": "http://127.0.0.1:1", "ALL_PROXY": "http://127.0.0.1:1"}
         if trust:
             env["CURL_CA_BUNDLE"] = str(self.cert)
         else:
@@ -176,10 +181,23 @@ magicnet_singbox_try_fetch_subscription {shlex.quote(f'https://{HOST}:{self.serv
                 self.assertEqual(Handler.counts[path], attempts)
 
     def test_permanent_http_errors_are_not_retried(self):
-        for status in (401, 403, 404, 410):
+        for status in (401, 404, 410):
             with self.subTest(status=status):
                 self.fetch(f"/status-{status}", success=False)
                 self.assertEqual(sum(Handler.counts.values()), 1)
+
+    def test_default_user_agent_403_retries_once_with_client_identity(self):
+        # Issue #434: providers/CDNs may reject curl's default identity.
+        body, _, _ = self.fetch("/ua-gate")
+        self.assertEqual(body, BODY)
+        self.assertEqual(len(Handler.agents), 2)
+        self.assertTrue(Handler.agents[0].startswith("curl/"), Handler.agents)
+        self.assertEqual(Handler.agents[1], "clash.meta")
+        self.fetch("/status-403", success=False)
+        self.assertEqual(Handler.agents[1:], ["clash.meta"])
+        # A configured identity is the user's choice and is never replaced.
+        self.fetch("/status-403", success=False, agent="v2rayNG")
+        self.assertEqual(Handler.agents, ["v2rayNG"])
 
     def test_tls_validation_cannot_be_disabled_by_curlrc(self):
         self.fetch("/gzip", trust=False, success=False)

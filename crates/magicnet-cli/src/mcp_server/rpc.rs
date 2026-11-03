@@ -548,6 +548,14 @@ fn cli_args_reveal_secret(args: &[String]) -> bool {
                 | ["hotspot", "status", ..]
                 | ["app"]
                 | ["app", "list" | "packages" | "recommendations", ..]
+                // WARP endpoints, node/selector names and routing or block
+                // domain lists. Named node/block tools stay the explicit path.
+                | ["warp"]
+                | ["warp", "status", ..]
+                | ["node"]
+                | ["node", "list" | "current", ..]
+                | ["route" | "block"]
+                | ["route" | "block", "list", ..]
         )
     {
         return true;
@@ -960,6 +968,15 @@ mod tests {
             ["service", "logs"].as_slice(),
             ["mcp", "logs"].as_slice(),
             ["diagnose"].as_slice(),
+            ["warp"].as_slice(),
+            ["warp", "status"].as_slice(),
+            ["node"].as_slice(),
+            ["node", "list"].as_slice(),
+            ["node", "current"].as_slice(),
+            ["route"].as_slice(),
+            ["route", "list"].as_slice(),
+            ["block"].as_slice(),
+            ["block", "list"].as_slice(),
         ] {
             let owned = args
                 .iter()
@@ -979,6 +996,9 @@ mod tests {
             ["node", "test", "__edge"].as_slice(),
             ["api", "select", "proxy", "__edge"].as_slice(),
             ["wifi", "add-ssid", "__home"].as_slice(),
+            ["warp", "test"].as_slice(),
+            ["route", "apply"].as_slice(),
+            ["block", "update"].as_slice(),
         ] {
             let owned = args
                 .iter()
