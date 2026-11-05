@@ -390,6 +390,45 @@ mod tests {
         assert_eq!(c, old);
     }
     #[test]
+    fn bundled_reject_rules_precede_conflicting_user_routes_and_survive_undo() {
+        let old: Value = serde_json::from_str(include_str!(
+            "../../../src/MagicNet/.config/sing-box/config.json"
+        ))
+        .unwrap();
+        let rejects: Vec<_> = old["route"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|rule| rule["action"] == "reject")
+            .collect();
+        assert_eq!(rejects.len(), 2);
+        let overlay = json!({"schema":1,"outbounds":[],"rules":[
+            {"kind":"domain","value":"miui.com","outbound":"direct"},
+            {"kind":"domain","value":"wo.com.cn","outbound":"direct"},
+            {"kind":"app","value":"com.android.vending","outbound":"direct"}
+        ]});
+        let mut config = old.clone();
+        let owned = apply(&mut config, &overlay).unwrap();
+        let current = config["route"]["rules"].as_array().unwrap();
+        let compiled = owned["route_rules"].as_array().unwrap();
+        assert_eq!(compiled.len(), 3);
+        assert_eq!(
+            current
+                .iter()
+                .filter(|rule| rule["action"] == "reject")
+                .collect::<Vec<_>>(),
+            rejects
+        );
+        for reject in rejects {
+            let reject_index = current.iter().position(|rule| rule == reject).unwrap();
+            for added in compiled {
+                assert!(reject_index < current.iter().position(|rule| rule == added).unwrap());
+            }
+        }
+        undo(&mut config, &owned).unwrap();
+        assert_eq!(config, old);
+    }
+    #[test]
     fn collisions_cycles_and_missing_targets_are_rejected() {
         let mut o = overlay();
         o["outbounds"][0]["tag"] = json!("direct");

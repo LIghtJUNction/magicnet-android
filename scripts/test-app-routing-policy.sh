@@ -1332,4 +1332,34 @@ EOF
 
 assert_ebpf_app_policy_contract
 
+assert_bundled_reject_guards_survive_app_policy() (
+  MODDIR="$WORK/bundled-reject-policy/module"
+  export MODDIR
+  mkdir -p "$MODDIR/.config/magicnet" "$MODDIR/.config/sing-box" "$MODDIR/bin"
+  ln -sf "$JQ_BIN" "$MODDIR/bin/jq"
+  cp "$ROOT/src/MagicNet/.config/sing-box/config.json" "$MODDIR/.config/sing-box/config.json"
+  printf '%s\n' 'com.example.directforce' >"$MODDIR/.config/magicnet/app-direct.list"
+  printf '%s\n' 'com.example.proxy' >"$MODDIR/.config/magicnet/app-proxy.list"
+  "$JQ_BIN" '[.route.rules[] | select(.action == "reject" and has("domain"))]' \
+    "$MODDIR/.config/sing-box/config.json" >"$WORK/bundled-reject-guards.json"
+  "$JQ_BIN" -e 'length == 2' "$WORK/bundled-reject-guards.json" >/dev/null
+  for mode in blacklist whitelist; do
+    printf 'MAGICNET_APP_MODE=%s\n' "$mode" >"$MODDIR/.config/magicnet/app-mode.conf"
+    apply_policy
+    apply_policy
+    # Exercise the real policy rewrite twice: port scope and guard precedence
+    # must survive both app modes without duplication or widening.
+    # shellcheck disable=SC2016
+    "$JQ_BIN" -e --slurpfile expected "$WORK/bundled-reject-guards.json" '
+      ([.route.rules[] | select(.action == "reject" and has("domain"))] == $expected[0])
+      and ((.route.rules | to_entries) as $rules
+        | ([$rules[] | select(.value.action == "reject" and (.value | has("domain"))) | .key] | max) as $guard
+        | ([$rules[] | select(.value.clash_mode != null or .value.package_name != null) | .key] | min) as $policy
+        | $policy != null and $guard < $policy)
+    ' "$MODDIR/.config/sing-box/config.json" >/dev/null
+  done
+)
+
+assert_bundled_reject_guards_survive_app_policy
+
 printf '%s\n' 'app routing policy regression tests passed'

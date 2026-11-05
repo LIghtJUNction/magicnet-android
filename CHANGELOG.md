@@ -1,3 +1,17 @@
+# v1.8.5 (2026-11-05)
+
+- Reject the exact domains `flash.sec.miui.com`,
+  `fraud-detection.engine.miui.com`, `eps.caict.ac.cn`, and
+  `gateway-papa.cloud.weizhi.com` in the packaged default template.
+- Reject `dm.wo.com.cn` only on destination port 18080 for TCP and UDP.
+- Apply these rules before mode, app, and business routing while preserving
+  the existing DNS, sniff, ICMP, and `0.0.0.0` handling. Match exact hostnames;
+  keep existing routing for parent domains, subdomains, and other ports on
+  `dm.wo.com.cn`.
+
+See [release notes](docs/releases/v1.8.5.md) for validation requirements and
+matching scope. No device install or real-app traffic verification was performed.
+
 # v1.8.4 (2026-11-03)
 
 - Retry a subscription fetch once with the `clash.meta` User-Agent when the
