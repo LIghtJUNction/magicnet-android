@@ -28,6 +28,7 @@ const SUBSCRIPTION_COMMAND_TIMEOUT_SECS: u64 =
     subscriptions::MAX_SINGBOX_SUBSCRIPTION_URLS as u64 * (120 + 60) + 300;
 const PROC_SCAN_TIMEOUT: Duration = Duration::from_millis(750);
 const PROC_SCAN_MAX_CANDIDATES: usize = 4096;
+const MAINTENANCE_CANCEL_GRACE: Duration = Duration::from_secs(15);
 
 fn command_timeout(value: Option<&str>, default: Duration) -> Duration {
     value
@@ -265,32 +266,6 @@ fn proc_cmdline_has_script_bytes(bytes: &[u8], script: &[u8]) -> bool {
     matches!(shell, b"sh" | b"ash" | b"dash" | b"bash" | b"ksh" | b"mksh") && argv1 == script
 }
 
-pub(crate) fn pid_summary(name: &str) -> String {
-    let candidates = match named_process_candidates(name) {
-        Ok(candidates) => candidates,
-        Err(_) => return "unknown".to_string(),
-    };
-    let mut pids = Vec::new();
-    for pid in candidates {
-        let proc_dir = Path::new("/proc").join(&pid);
-        match proc_pid_is_live(&proc_dir) {
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(_) => return "unknown".to_string(),
-        }
-        match read_live_proc_text(&proc_dir, "comm", MAX_PROC_COMM_BYTES) {
-            Ok(Some(value)) if value.trim() == name => pids.push(pid),
-            Ok(_) => {}
-            Err(_) => return "unknown".to_string(),
-        }
-    }
-    if pids.is_empty() {
-        "stopped".to_string()
-    } else {
-        pids.join(",")
-    }
-}
-
 /// Return only sing-box processes launched from this module's managed
 /// binary/configuration. A process named `sing-box` is not sufficient proof
 /// of ownership: another VPN/core can legitimately use the same name and
@@ -332,6 +307,51 @@ pub(crate) fn owned_singbox_pids(app: &App) -> Result<Vec<String>, String> {
         }
     }
     Ok(pids)
+}
+
+/// Only an explicit service lifecycle action may interrupt this module's
+/// automatic connectivity worker. Bind complete argv and process generation
+/// before TERM; the worker keeps its lifecycle lock through child rollback.
+pub(crate) fn interrupt_connectivity_workers(app: &App) -> Result<bool, String> {
+    let mut candidates = named_process_candidates("magicnet-cli")?;
+    candidates.extend(named_process_candidates("cli")?);
+    candidates.sort_unstable();
+    candidates.dedup();
+    let cli = app.moddir.join("cli").to_string_lossy().into_owned();
+    let binary = app
+        .moddir
+        .join("bin/magicnet-cli")
+        .to_string_lossy()
+        .into_owned();
+    let mut interrupted = false;
+    for candidate in candidates {
+        let pid = candidate
+            .parse::<u32>()
+            .map_err(|_| "invalid maintenance PID")?;
+        let Some(identity) = live_process_identity(pid)? else {
+            continue;
+        };
+        if ![cli.as_str(), binary.as_str()]
+            .iter()
+            .any(|path| crate::cmdline_has_command(&identity.argv, path, &["connectivity", "tick"]))
+        {
+            continue;
+        }
+        let pin = pin_supervisor_process(pid);
+        match live_process_identity(pid)? {
+            None => continue,
+            Some(current) if current != identity => {
+                return Err("maintenance process generation changed before interruption".into());
+            }
+            Some(_) => {}
+        }
+        match signal_supervisor_process(pid, pin.as_ref(), false) {
+            Ok(()) => interrupted = true,
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {}
+            Err(_) => return Err("unable to interrupt connectivity maintenance".into()),
+        }
+    }
+    Ok(interrupted)
 }
 
 fn singbox_candidate_owned_with(
@@ -1032,6 +1052,23 @@ pub(crate) fn run_magicnet_function(app: &App, function_name: &str) -> Result<()
     )
 }
 
+/// Maintenance logs contain only normalized outcomes. The existing process
+/// group runner retains the finite deadline and transaction cleanup grace.
+pub(crate) fn run_magicnet_function_quiet(
+    app: &App,
+    function_name: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let mut command = magicnet_function_command(app, function_name);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let status = run_process_group(&mut command, timeout)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("maintenance action failed".into())
+    }
+}
+
 pub(crate) fn run_magicnet_function_status(
     app: &App,
     function_name: &str,
@@ -1172,6 +1209,9 @@ fn run_process_group(
     command: &mut Command,
     timeout: Duration,
 ) -> Result<std::process::ExitStatus, String> {
+    if crate::connectivity::cancelled() {
+        return Err("maintenance cancelled before spawn".into());
+    }
     if timeout.is_zero() {
         return Err("command deadline expired before spawn".to_string());
     }
@@ -1241,10 +1281,15 @@ fn run_process_group(
         {
             return Ok(status);
         }
-        if Instant::now() >= deadline {
+        let cancelled = crate::connectivity::cancelled();
+        if cancelled || Instant::now() >= deadline {
             terminate_timed_out_child(
                 &mut child,
-                Duration::from_millis(100),
+                if cancelled {
+                    MAINTENANCE_CANCEL_GRACE
+                } else {
+                    Duration::from_millis(100)
+                },
                 Duration::from_millis(100),
             );
             // All group signals precede the final reap. A D-state child is
@@ -1254,7 +1299,11 @@ fn run_process_group(
                 Err(err) if err.raw_os_error() == Some(libc::ECHILD) => {}
                 _ => defer_child_reap(child),
             }
-            return Err(format!("timed out after {}ms", timeout.as_millis()));
+            return Err(if cancelled {
+                "maintenance cancelled after bounded rollback".into()
+            } else {
+                format!("timed out after {}ms", timeout.as_millis())
+            });
         }
         thread::sleep(Duration::from_millis(40));
     }

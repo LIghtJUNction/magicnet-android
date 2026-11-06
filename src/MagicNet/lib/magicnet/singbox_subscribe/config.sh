@@ -1190,6 +1190,12 @@ magicnet_singbox_owned_ready() {
 }
 
 magicnet_singbox_supervisor_restore() {
+    # Subscription activation stops the kernel watchdog even when fswatch is
+    # disabled. Restore connectivity monitoring for the verified live core.
+    if command -v magicnet_connectivity_watchdog_start >/dev/null 2>&1 &&
+        command -v magicnet_kernel_running >/dev/null 2>&1 && magicnet_kernel_running; then
+        magicnet_connectivity_watchdog_start >/dev/null 2>&1 || return 1
+    fi
     _restore_fswatch_active="${1:-${_owned_fswatch_active:-0}}"
     [ "$_restore_fswatch_active" -eq 1 ] || {
         unset _restore_fswatch_active

@@ -286,6 +286,39 @@ magicnet_watchdog_stop() {
     return "$_watchdog_stop_rc"
 }
 
+# Reuse the kernel watchdog slot and its verified stop/orphan handling. The
+# shell sleeps between ticks; Rust enforces the persisted 5-minute probe and
+# exponential retry budget, so duplicate launchers cannot multiply requests.
+magicnet_connectivity_watchdog_start() (
+    magicnet_module_disabled && return 0
+    if magicnet_kernel_running; then _connectivity_rc=0; else _connectivity_rc=$?; fi
+    case "$_connectivity_rc" in 0) ;; 1) return 0 ;; *) return "$_connectivity_rc" ;; esac
+    _connectivity_dir="${KAM_HOME:-$MODDIR}/.state/watchdog"
+    mkdir -p "$_connectivity_dir" || return 1
+    exec 8>"$_connectivity_dir/magicnet-connectivity.lifecycle.lock" || return 1
+    _connectivity_busybox=$(magicnet_fswatch_busybox_bin 2>/dev/null || true)
+    if [ -n "$_connectivity_busybox" ]; then
+        if "$_connectivity_busybox" flock -n 8 8>&8; then _connectivity_rc=0; else _connectivity_rc=$?; fi
+    else
+        _connectivity_flock=$(magicnet_trusted_flock 2>/dev/null) || return 1
+        if "$_connectivity_flock" -n 8 8>&8; then _connectivity_rc=0; else _connectivity_rc=$?; fi
+    fi
+    case "$_connectivity_rc" in 0) ;; 1) return 0 ;; *) return 1 ;; esac
+    (
+        exec 8>&-
+        import watchdog
+        if watchdog status magicnet-kernel >/dev/null 2>&1; then return 0; else _connectivity_rc=$?; fi
+        [ "$_connectivity_rc" -ne 2 ] || return 2
+        magicnet_supervisor_kill_orphans watchdog || return $?
+        magicnet_trim_log_file "${MODDIR}/.log/connectivity.log" 65536 32768
+        KAM_WATCHDOG_LOG_FILE="${MODDIR}/.log/connectivity-watchdog.log" \
+            watchdog start --quiet magicnet-kernel 60 \
+            "[ ! -f \"${MODDIR}/disable\" ] && [ ! -f \"${MODDIR}/remove\" ] && \"${MODDIR}/cli\" connectivity tick >/dev/null 2>&1"
+    )
+    _connectivity_rc=$?
+    return "$_connectivity_rc"
+)
+
 magicnet_hotspot_watchdog_name() {
     printf '%s\n' "magicnet-hotspot-route"
 }
@@ -1398,8 +1431,9 @@ magicnet_supervisors_start() {
         magicnet_singbox_record_runtime_fingerprint ||
             magicnet_warn "Failed to record the settled sing-box configuration fingerprint."
     fi
-    for _mss_start_target in refresh wifi-policy hotspot-watchdog fswatch; do
+    for _mss_start_target in connectivity refresh wifi-policy hotspot-watchdog fswatch; do
         case "$_mss_start_target" in
+        connectivity) magicnet_connectivity_watchdog_start ;;
         refresh) magicnet_subscription_refresh_start ;;
         wifi-policy) magicnet_wifi_policy_start ;;
         hotspot-watchdog) magicnet_hotspot_watchdog_start ;;

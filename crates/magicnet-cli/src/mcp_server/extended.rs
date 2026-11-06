@@ -5,6 +5,11 @@ use serde_json::{json, Value};
 
 const RESOURCES: &[(&str, &str, &str)] = &[
     ("service", "Service readiness", "service"),
+    (
+        "connectivity",
+        "Cached Google connectivity and recovery",
+        "connectivity",
+    ),
     ("transparent", "Transparent dataplane", "transparent"),
     ("dns", "DNS policy", "dns"),
     ("network", "Network policy", "network"),

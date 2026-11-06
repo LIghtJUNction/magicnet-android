@@ -369,7 +369,10 @@ mod tests {
     #[test]
     fn stale_cache_does_not_override_current_scan() {
         let app = temp_app();
-        write_file(app.moddir.join(".cache/magicnet-node-list.cache"), "stale\n");
+        write_file(
+            app.moddir.join(".cache/magicnet-node-list.cache"),
+            "stale\n",
+        );
         write_file(
             app.moddir.join(".config/sing-box/config.json"),
             r#"{"outbounds":[{"tag":"current","type":"shadowsocks"}]}"#,

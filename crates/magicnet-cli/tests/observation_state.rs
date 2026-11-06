@@ -75,6 +75,8 @@ fn help_and_rejected_commands_do_not_create_state() {
         (vec!["not-a-magicnet-command"], false),
         (vec!["state", "not-an-operation"], false),
         (vec!["--json", "capabilities"], true),
+        (vec!["--json", "connectivity", "status"], true),
+        (vec!["--json", "connectivity", "tick"], false),
         (vec!["--json", "service", "start"], false),
     ] {
         let fixture = Fixture::new();

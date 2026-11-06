@@ -36,6 +36,7 @@ mod chain;
 mod commands;
 mod config_editor;
 mod connection_control;
+mod connectivity;
 mod diagnostics;
 mod diagnostics_dns;
 mod diagnostics_routing;
@@ -80,9 +81,9 @@ pub(crate) use base64::{decode_base64, encode_base64};
 use commands::dispatch;
 pub(crate) use mcp_server::{files, logs, rpc, run_cli, tools, Server};
 pub(crate) use process::{
-    owned_singbox_pids, pid_summary, run_magicnet_function,
-    run_subscription_source_update_from_inherited_fd, run_subscription_update_from_inherited_fd,
-    singbox_pid_summary, stop_owned_singbox, trusted_curl, SHORT_TIMEOUT,
+    owned_singbox_pids, run_magicnet_function, run_subscription_source_update_from_inherited_fd,
+    run_subscription_update_from_inherited_fd, singbox_pid_summary, stop_owned_singbox,
+    trusted_curl, SHORT_TIMEOUT,
 };
 pub(crate) use utils::{
     clean_module_lines, clear_node_cache, cmdline_has_command, cmdline_has_script,

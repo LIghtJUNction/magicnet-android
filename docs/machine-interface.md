@@ -1,5 +1,7 @@
 # Machine interface
 
+Low-frequency `connectivity.status` and the explicitly scoped `support.export` file writer follow [connectivity and diagnostic contracts](connectivity-diagnostics.md). `service.status.data.connectivity` carries the same cached observation. Read operations never probe the Internet; exports replace one local diagnostic file and do not change service or configuration state.
+
 MagicNet keeps two CLI surfaces on purpose:
 
 - Human CLI: concise text intended for Termux, recovery and manual debugging.
@@ -56,6 +58,8 @@ Current schema-1 status commands:
 
 ```text
 service.status
+connectivity.status
+support.export
 core.status
 supervisor.status
 transparent.status

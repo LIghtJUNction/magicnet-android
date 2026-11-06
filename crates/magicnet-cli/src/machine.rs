@@ -29,6 +29,8 @@ const WIFI_LAST_STATE: &str = ".state/wifi-policy/last-state.conf";
 const MACHINE_COMMANDS: &[&str] = &[
     "app.inspect",
     "service.status",
+    "connectivity.status",
+    "support.export",
     "core.status",
     "supervisor.status",
     "transparent.status",
@@ -90,6 +92,21 @@ pub(crate) fn dispatch(app: &App, args: &[String]) -> Option<Result<(), String>>
 
 fn machine_value(app: &App, command: &[&str]) -> Result<Value, MachineError> {
     match command {
+        ["connectivity", "status"] => Ok(envelope(
+            "connectivity.status",
+            crate::connectivity::status(app),
+        )),
+        ["support", "export"] => crate::diagnostics::export_bundle(app)
+            .map(|export| {
+                envelope(
+                    "support.export",
+                    json!({"path":export.path, "bytes":export.bytes}),
+                )
+            })
+            .map_err(|_| MachineError {
+                code: "support.export_failed",
+                message: "unable to export the diagnostic file",
+            }),
         ["app", "inspect"] => crate::app_catalog::inspect(app)
             .map(|data| envelope("app.inspect", data))
             .map_err(|code| MachineError {
@@ -263,6 +280,7 @@ fn capabilities_value() -> Value {
                 "readiness_signals",
                 "transparent_plane_readiness",
                 "dns_capture_preflight",
+                "low_frequency_connectivity",
                 "additive_routing_overlay"
             ],
             "private_commands": ["sub.inspect", "wifi.inspect", "override.inspect", "network-access.inspect", "app.inspect"],
@@ -270,7 +288,8 @@ fn capabilities_value() -> Value {
             "read_only": false,
             "mutation_commands": ["override.preview", "override.set", "override.reset", "override.apply",
                 "network-access.repair", "network-access.reapply", "network-access.rollback",
-                "module-update.check", "module-update.install"],
+                "module-update.check", "module-update.install", "support.export"],
+            "support_export": {"requires_write":true, "state_effect":"export-only", "fresh_network_probe":false},
             "module_update_source": "official-stable-github-release",
             "module_update_install": "detached-worker-staged-reboot-required",
             "network_access_confirmation": "candidate-and-confirm-flag",
@@ -329,7 +348,8 @@ fn service_status_value(app: &App) -> Value {
             },
             "subscription": {
                 "source": subscription_source,
-            }
+            },
+            "connectivity": crate::connectivity::status_with_core(app, &singbox),
         }),
     )
 }
@@ -980,6 +1000,27 @@ mod tests {
         assert!(commands
             .iter()
             .any(|command| command.as_str() == Some("wifi.status")));
+        assert!(commands
+            .iter()
+            .any(|command| command == "connectivity.status"));
+        assert!(commands.iter().any(|command| command == "support.export"));
+        assert!(!commands
+            .iter()
+            .any(|command| command == "connectivity.tick"));
+        assert_eq!(value["data"]["support_export"]["requires_write"], true);
+        assert_eq!(
+            value["data"]["support_export"]["state_effect"],
+            "export-only"
+        );
+        assert_eq!(
+            value["data"]["support_export"]["fresh_network_probe"],
+            false
+        );
+        let mutations = value["data"]["mutation_commands"].as_array().unwrap();
+        assert!(mutations.iter().any(|command| command == "support.export"));
+        assert!(!mutations
+            .iter()
+            .any(|command| command == "connectivity.status"));
     }
 
     #[test]
@@ -1036,6 +1077,14 @@ mod tests {
         assert_eq!(value["data"]["core"]["selected"], "sing-box");
         assert_eq!(value["data"]["transparent"]["mode"], "ebpf");
         assert_eq!(value["data"]["subscription"]["source"], "remote_url");
+        assert_eq!(
+            value["data"]["connectivity"]["target"],
+            crate::connectivity::TARGET
+        );
+        assert_eq!(value["data"]["connectivity"]["path"], "mixed_proxy");
+        assert!(value["data"]["connectivity"]["probe_count"].is_u64());
+        assert!(!root.join(".state/machines/connectivity.state").exists());
+        assert!(!root.join(".state/connectivity.lock").exists());
         assert!(!value.to_string().contains("example.invalid"));
         assert!(!value.to_string().contains("secret"));
 

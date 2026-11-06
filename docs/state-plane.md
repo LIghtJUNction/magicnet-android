@@ -1,5 +1,7 @@
 # MagicNet file-backed state plane
 
+The connectivity producer owns `.state/machines/connectivity.state`: bounded schema-1 phase/reason/counters, monotonic retry deadlines and recovery cooldowns, atomically published by the low-frequency watchdog. Generic reconciliation must not overwrite its retry budget. JSON status and support exports omit the internal boot token. See [connectivity and diagnostics](connectivity-diagnostics.md).
+
 MagicNet treats files as the durable device-state boundary. Runtime code may keep short-lived local variables while performing an operation, but a state that another process, a later invocation, WebUI, MCP, diagnostics, or crash recovery needs to observe must have one canonical file representation.
 
 ## Canonical state directory

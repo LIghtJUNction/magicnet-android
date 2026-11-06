@@ -170,19 +170,6 @@ pub(crate) fn mcp(app: &App, args: &[String]) -> Result<(), String> {
     }
 }
 
-pub(crate) fn status(app: &App) -> (String, String, String, String) {
-    let config = load(app);
-    let pid = live_pid(app)
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "stopped".to_string());
-    (
-        config.enabled_value().to_string(),
-        config.bind.to_string(),
-        config.port.to_string(),
-        pid,
-    )
-}
-
 pub(crate) fn health_status(app: &App) -> (bool, String) {
     let config = match load_checked(app) {
         Ok(config) => config,
@@ -209,10 +196,6 @@ fn pid_path(app: &App) -> PathBuf {
             .unwrap_or_else(|| app.moddir.clone())
     };
     root.join(".state/magicnet-mcp.pid")
-}
-
-fn load(app: &App) -> McpConfig {
-    load_checked(app).unwrap_or_default()
 }
 
 fn load_checked(app: &App) -> Result<McpConfig, String> {

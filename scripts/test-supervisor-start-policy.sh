@@ -20,6 +20,7 @@ export MODDIR
 
 (
 magicnet_fswatch_start() { return 1; }
+magicnet_connectivity_watchdog_start() { return 0; }
 magicnet_subscription_refresh_start() { return 0; }
 magicnet_wifi_policy_start() { return 0; }
 magicnet_hotspot_watchdog_start() { return 0; }
@@ -41,6 +42,7 @@ fi
 start_order="$fixture/supervisor-start-order.log"
 magicnet_kernel_running() { return 0; }
 magicnet_singbox_record_runtime_fingerprint() { printf '%s\n' fingerprint >>"$start_order"; }
+magicnet_connectivity_watchdog_start() { printf '%s\n' connectivity >>"$start_order"; }
 magicnet_subscription_refresh_start() { printf '%s\n' subscription >>"$start_order"; }
 magicnet_wifi_policy_start() { printf '%s\n' wifi >>"$start_order"; }
 magicnet_hotspot_watchdog_start() { printf '%s\n' hotspot >>"$start_order"; }
@@ -48,6 +50,7 @@ magicnet_fswatch_start() { printf '%s\n' fswatch >>"$start_order"; }
 magicnet_supervisors_start
 diff -u - "$start_order" <<'EOF'
 fingerprint
+connectivity
 subscription
 wifi
 hotspot

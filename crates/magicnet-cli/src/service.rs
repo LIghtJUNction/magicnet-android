@@ -43,6 +43,9 @@ const TRANSPARENT_EBPF_STATE_FILES: &[(&str, &str)] = &[
 const CONFIG_APPLY_LOCK: &str = ".state/config-apply.lock";
 const LIFECYCLE_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 const SERVICE_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+// Cooperative connectivity cancellation allows 15 seconds for subscription
+// rollback before the process group is reaped and this lock can be released.
+const MAINTENANCE_STOP_LOCK_TIMEOUT: Duration = Duration::from_secs(20);
 const CONFIG_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const MAX_SERVICE_LOG_READ_BYTES: u64 = 1024 * 1024;
 
@@ -236,21 +239,31 @@ pub(crate) fn start_service_locked(app: &App, _guard: &ConfigApplyGuard) -> Resu
 }
 
 fn stop_service(app: &App) -> Result<(), String> {
-    // A user-requested stop takes precedence over an fswatch apply.  Stop the
-    // producer and its current worker before waiting for the process lock;
-    // otherwise a lifecycle button can sit behind a full config restart.
-    quiesce_config_apply(app)?;
-    let _config_apply_guard = service_config_apply_lock(app)?;
+    // Explicit stop takes precedence over automatic connectivity recovery and
+    // fswatch apply. Stop producers, request cooperative rollback, then wait
+    // for the lifecycle lock before touching the serving core.
+    let interrupted = quiesce_config_apply(app)?;
+    let _config_apply_guard = lifecycle_lock_after_quiesce(app, interrupted)?;
     stop_all_direct(app, false)
 }
 
-fn quiesce_config_apply(app: &App) -> Result<(), String> {
+fn quiesce_config_apply(app: &App) -> Result<bool, String> {
+    stop_supervisor_pidfile(app, app.moddir.join(".state/watchdog/magicnet-kernel.pid"))?;
+    let interrupted = crate::process::interrupt_connectivity_workers(app)?;
     stop_supervisor_pidfile(app, app.moddir.join(".state/fswatch/magicnet-config.pid"))?;
     ignore_command(
         "pkill",
         &["-f", &format!("{}/cli.*config apply", app.moddir.display())],
     );
-    Ok(())
+    Ok(interrupted)
+}
+
+fn lifecycle_lock_after_quiesce(app: &App, interrupted: bool) -> Result<ConfigApplyGuard, String> {
+    if interrupted {
+        config_apply_lock_bounded(app, MAINTENANCE_STOP_LOCK_TIMEOUT)
+    } else {
+        service_config_apply_lock(app)
+    }
 }
 
 pub(crate) fn supervisor_cmd(app: &App, args: &[String]) -> Result<(), String> {
@@ -516,8 +529,8 @@ pub(crate) fn validate_restart_target(target: &str) -> Result<(), String> {
 fn restart(app: &App, target: &str) -> Result<(), String> {
     // Rejected targets must not stop the watcher or acquire a lifecycle lock.
     validate_restart_target(target)?;
-    quiesce_config_apply(app)?;
-    let _config_apply_guard = service_config_apply_lock(app)?;
+    let interrupted = quiesce_config_apply(app)?;
+    let _config_apply_guard = lifecycle_lock_after_quiesce(app, interrupted)?;
     restart_with_options_unlocked(app, target, false)
 }
 

@@ -51,13 +51,14 @@ const COMMANDS: &[CommandSpec] = commands! {
     "supervisor" => supervisor_cmd, "{status|start|stop|restart} [fswatch|wifi-policy|all]";
     "state" => state_command, "reconcile";
     "health" => |app, _| health(app), "";
+    "connectivity" => crate::connectivity::command, "{status|tick}";
     "pingtest" => |app, _| pingtest(app), "";
     "speedtest" => |app, _| speedtest(app), "";
     "topology" => |app, _| topology(app), "";
     "ecapture" => ecapture_cmd, "{status|version|help [tls|gotls|nspr|pcap]|tls [seconds] [pid|all] [uid|all]|gotls [seconds] [pid|all] [uid|all]|nspr [seconds] [pid|all] [uid|all]|pcap [seconds] <ifname> [pcap-filter ...]}";
     "sysroute" => |_, args| sysroute(&prefixed_args("sysroute", args)), "{list|snapshot|add-rule <priority> <table>|del-rule <priority>|add-route <table> <dest|default> <dev> [via]|del-route <table> <dest|default>}";
     "repair" => |app, _| repair(app), "";
-    "support" => support, "bundle";
+    "support" => support, "{bundle|export}";
     "setup" => |app, args| setup_subscription(app, args.first().map_or("", String::as_str)), "<subscription-url>";
     "config" => config_cmd, "apply";
     "override" => |_, _| Err("Use cli --json override {status|inspect|preview-file <payload>|set-file <payload>|reset-file <payload>|apply-file <payload>|apply}".to_string()), "{status|inspect|preview-file <payload>|set-file <payload>|reset-file <payload>|apply-file <payload>|apply} --json";
@@ -124,6 +125,8 @@ pub(crate) fn needs_state_reconcile(args: &[String]) -> bool {
         // This handler publishes only after acquiring the lock and attempting work.
         ("hotspot", "reconcile") => false,
         ("health" | "topology" | "pingtest" | "speedtest", _) => false,
+        // The producer owns its atomic domain publication; reads are inert.
+        ("connectivity", _) => false,
         ("service", "" | "status" | "logs") => false,
         ("service", "restart") => {
             crate::service::validate_restart_target(args.get(2).map_or("current", String::as_str))
@@ -146,7 +149,7 @@ pub(crate) fn needs_state_reconcile(args: &[String]) -> bool {
         ("api", "endpoint" | "groups" | "proxies" | "conns" | "stats" | "tailscale-status") => {
             false
         }
-        ("support", "bundle") => false,
+        ("support", "bundle" | "export") => false,
         ("sysroute", "list" | "snapshot") => false,
         ("config-editor", "get" | "path") => false,
         ("config-editor", "repo") => !matches!(action, "get" | "get-json"),

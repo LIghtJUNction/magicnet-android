@@ -12,8 +12,12 @@ use crate::diagnostics_routing::routing_policy_check;
 use crate::{
     clean_module_lines, cmdline_has_command, cmdline_has_script, command_text_timeout,
     ebpf_runtime::{inspect_ebpf_attachments, read_ebpf_active_report},
-    mcp, pid_summary, singbox_pid_summary, App,
+    mcp, singbox_pid_summary, App,
 };
+
+#[path = "diagnostics_export.rs"]
+mod export;
+pub(crate) use export::export_bundle;
 
 pub(crate) fn health(app: &App) -> Result<(), String> {
     for (key, ok, detail) in health_items(app) {
@@ -41,8 +45,19 @@ fn health_items(app: &App) -> Vec<(&'static str, bool, String)> {
     let (loop_guard_ok, loop_guard_detail) = traffic_loop_guard_check(app);
     let (api_ok, api_detail) = api_probe(app);
     let (mcp_ok, mcp_detail) = mcp::health_status(app);
+    let connectivity = crate::connectivity::status_with_core(app, &singbox);
+    let online = connectivity["status"] == "online";
+    let connectivity_detail = format!(
+        "{} status={} reason={} path=mixed_proxy checked_at={} retry_in_seconds={}",
+        if online { "verified" } else { "⚠️" },
+        connectivity["status"].as_str().unwrap_or("unknown"),
+        connectivity["reason"].as_str().unwrap_or("unknown"),
+        connectivity["checked_at"],
+        connectivity["retry_in_seconds"],
+    );
     vec![
         ("Core", running(&singbox), format!("sing-box={singbox}")),
+        ("Google.com", online, connectivity_detail),
         ("Dataplane", dataplane_ok, dataplane_detail),
         ("UDP/IPv6", network_ok, network_detail),
         (
@@ -222,83 +237,21 @@ pub(crate) fn sysroute(args: &[String]) -> Result<(), String> {
 }
 
 pub(crate) fn support(app: &App, args: &[String]) -> Result<(), String> {
-    if args.first().map(String::as_str).unwrap_or_default() != "bundle" {
-        return Err("Usage: cli support bundle".to_string());
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["bundle"] => print!("{}", support_bundle(app)),
+        ["export"] => println!("{}", export_bundle(app)?.path),
+        _ => return Err("Usage: cli support {bundle|export}".to_string()),
     }
-    print!("{}", support_bundle(app));
     Ok(())
 }
 
 fn support_bundle(app: &App) -> String {
-    let singbox = singbox_pid_summary(app);
-    let mode = transparent_mode(app);
-    let mode_label = mode
-        .as_ref()
-        .map(|selection| selection.mode.as_str())
-        .unwrap_or("invalid");
-    let mut output = String::from("MagicNet canonical support bundle\n");
-    append_support_section(
-        &mut output,
-        "subscription lifecycle",
-        &subscription_evidence(app),
-    );
-    append_support_section(
-        &mut output,
-        "service status",
-        &format!(
-            "module_enabled={}\ncore={}\nfswatch={}\ntransparent_mode={mode_label}",
-            !app.moddir.join("disable").exists(),
-            singbox,
-            pid_summary("fswatch")
-        ),
-    );
-    append_support_section(&mut output, "startup state", &startup_state_evidence(app));
-    let health = health_items(app)
-        .into_iter()
-        .map(|(key, ok, detail)| format!("{} {key}: {detail}", if ok { "ok" } else { "warn" }))
-        .collect::<Vec<_>>()
-        .join("\n");
-    append_support_section(&mut output, "health", &health);
-    append_support_section(
-        &mut output,
-        "core process and listeners",
-        &format!(
-            "core_process={singbox}\n{}",
-            read_only_command("ss", &["-lntup"])
-        ),
-    );
-    append_support_section(
-        &mut output,
-        "tun routes and ip rules",
-        &[
-            read_only_command("ip", &["-o", "link", "show"]),
-            read_only_command("ip", &["-o", "addr", "show"]),
-            read_only_command("ip", &["rule", "show"]),
-            read_only_command("ip", &["route", "show", "table", "all"]),
-        ]
-        .join("\n"),
-    );
-    append_support_section(
-        &mut output,
-        "proxy selector and connection chains",
-        &proxy_chain_evidence(app),
-    );
-    let (dns_ok, dns_detail) = dns_leak_check(app, &singbox, mode_label);
-    let (api_ok, api_detail) = api_probe(app);
-    let (mcp_enabled, mcp_bind, mcp_port, mcp_pid) = mcp::status(app);
-    append_support_section(
-        &mut output,
-        "dns api and mcp",
-        &format!(
-            "dns_ok={dns_ok} detail={dns_detail}\napi_ok={api_ok} detail={api_detail}\nmcp_enabled={mcp_enabled} bind={mcp_bind} port={mcp_port} pid={mcp_pid}"
-        ),
-    );
-    append_support_section(
-        &mut output,
-        "subscription refresh log counts",
-        &subscription_refresh_log_counts(app.log_dir.join("subscription-refresh.log")),
-    );
-    output
+    export::bundle(app)
 }
 
 const SUPPORT_CHAIN_TAGS: &[&str] = &[
@@ -343,12 +296,6 @@ const SUPPORT_CHAIN_TAGS: &[&str] = &[
     "direct",
     "block",
 ];
-
-fn proxy_chain_evidence(app: &App) -> String {
-    let proxies = crate::webui_api::curl_get_json(app, "/proxies").ok();
-    let connections = crate::webui_api::curl_get_json(app, "/connections").ok();
-    proxy_chain_evidence_from_values(proxies.as_ref(), connections.as_ref())
-}
 
 fn proxy_chain_evidence_from_values(
     proxies: Option<&Value>,
@@ -475,15 +422,15 @@ fn safe_proxy_kind(value: &str) -> &str {
 }
 
 fn startup_state_evidence(app: &App) -> String {
-    let path = app.moddir.join(".state/startup-error");
-    match fs::read_to_string(path) {
-        Ok(text) if !text.trim().is_empty() => {
+    match crate::utils::read_module_text_bounded(app, Path::new(".state/startup-error"), 16384) {
+        Ok(Some(text)) if !text.trim().is_empty() => {
             format!(
                 "blocked=true\nreason={}",
                 clean_lines_from_text(&text).join(" ")
             )
         }
-        _ => "blocked=false\nreason=none".to_string(),
+        Ok(_) => "blocked=false\nreason=none".to_string(),
+        Err(_) => "blocked=unknown\nreason=unreadable".to_string(),
     }
 }
 
@@ -495,32 +442,18 @@ fn clean_lines_from_text(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn append_support_section(output: &mut String, title: &str, evidence: &str) {
-    output.push_str(&format!("[{title}]\n"));
-    if evidence.trim().is_empty() {
-        output.push_str("unavailable\n");
-        return;
-    }
-    for line in evidence.lines().take(100) {
-        output.push_str(&redact(line));
-        output.push('\n');
-    }
-}
-
-fn read_only_command(program: &str, args: &[&str]) -> String {
-    read_only_command_with_timeout(program, args, Duration::from_secs(3))
-}
-
 #[derive(Debug)]
 struct ReadOnlyCommandResult {
     success: bool,
     text: String,
 }
 
+#[cfg(test)]
 fn read_only_command_with_timeout(program: &str, args: &[&str], timeout: Duration) -> String {
     read_only_command_result_with_timeout(program, args, timeout).text
 }
 
+#[cfg(test)]
 fn read_only_command_result_with_timeout(
     program: &str,
     args: &[&str],
@@ -604,8 +537,14 @@ fn subscription_evidence(app: &App) -> String {
         ("converter_format", "last_converter_format"),
         ("converter_result", "last_converter_result"),
     ];
-    let status = fs::read_to_string(app.moddir.join(".state/sing-box/subscription-status"))
-        .unwrap_or_default();
+    let status = crate::utils::read_module_text_bounded(
+        app,
+        Path::new(".state/sing-box/subscription-status"),
+        16384,
+    )
+    .ok()
+    .flatten()
+    .unwrap_or_default();
     let (source_mode, configured_count) =
         match crate::subscriptions::observe_source_configuration(app) {
             Ok(source) => (
@@ -638,6 +577,7 @@ fn subscription_evidence(app: &App) -> String {
     let (cache_count, provenance_count) = fs::read_dir(cache_dir)
         .map(|entries| {
             entries
+                .take(1024)
                 .flatten()
                 .fold((0usize, 0usize), |(cache, provenance), entry| {
                     let name = entry.file_name();
@@ -652,11 +592,13 @@ fn subscription_evidence(app: &App) -> String {
     lines.push(format!("cache_count={cache_count}"));
     lines.push(format!("cache_provenance_count={provenance_count}"));
     lines.push("cache_source=url_sha256_identity".to_string());
-    let interval = fs::read_to_string(
-        app.moddir
-            .join(".config/magicnet/subscription-refresh-hours"),
+    let interval = crate::utils::read_module_text_bounded(
+        app,
+        Path::new(".config/magicnet/subscription-refresh-hours"),
+        64,
     )
     .ok()
+    .flatten()
     .map(|value| value.trim().to_string())
     .filter(|value| matches!(value.as_str(), "12" | "24" | "48" | "72"))
     .unwrap_or_else(|| "off".to_string());

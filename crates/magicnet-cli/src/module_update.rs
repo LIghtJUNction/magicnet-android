@@ -753,11 +753,14 @@ pub(crate) fn worker(app: &App, args: &[String]) -> Result<()> {
     let pathmeta = fs::symlink_metadata(app.moddir.join(LOCK)).map_err(|_| "module-update.io")?;
     // SAFETY: fstat validates the inherited descriptor before taking ownership.
     let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
-    if unsafe { libc::fstat(CHILD_FD, &mut stat) } != 0
+    // libc scalar widths vary across Unix targets; keep the u64 comparison
+    // explicit even where a 64-bit host makes these conversions redundant.
+    #[allow(clippy::unnecessary_cast)]
+    let invalid_descriptor = unsafe { libc::fstat(CHILD_FD, &mut stat) } != 0
         || stat.st_dev as u64 != pathmeta.dev()
         || stat.st_ino as u64 != pathmeta.ino()
-        || stat.st_mode & libc::S_IFMT != libc::S_IFREG
-    {
+        || stat.st_mode & libc::S_IFMT != libc::S_IFREG;
+    if invalid_descriptor {
         return Err("module-update.invalid_request");
     }
     let held = unsafe { File::from_raw_fd(CHILD_FD) };
@@ -930,6 +933,8 @@ fn require_space(path: &Path, bytes: u64) -> Result<()> {
     if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
         return Err("module-update.io");
     }
+    // Promote before multiplication on targets with 32-bit statvfs members.
+    #[allow(clippy::unnecessary_cast)]
     let available = (stat.f_bavail as u64)
         .checked_mul(stat.f_frsize as u64)
         .ok_or("module-update.no_space")?;

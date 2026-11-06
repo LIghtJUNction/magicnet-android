@@ -56,6 +56,7 @@ removed_entries=(
     'webroot/node_modules/runtime/index.js'
 )
 preserved_entries=(
+    'module.prop'
     '.envrc'
     '.config/kamfw/.envrc'
     'lib/kamfw/.envrc'
@@ -73,6 +74,8 @@ preserved_entries=(
     'customize.sh'
     'service.sh'
     'webroot/index.html'
+    'bin/magicnet-cli'
+    'bin/sing-box'
     'bin/test'
     '.config/sing-box/rules/test.srs'
     'lib/kamfw/test-support.sh'
@@ -83,6 +86,8 @@ for entry in "${removed_entries[@]}" "${preserved_entries[@]}"; do
     printf 'fixture: %s\n' "$entry" > "$test_root/source/$entry"
 done
 mkdir -p "$test_root/source/lib/kamfw/empty/tests"
+printf 'id=MagicNet\nversion=v1.0.0\nversionCode=1\n' > "$test_root/source/module.prop"
+printf '#!/system/bin/sh\nimport rich\n' > "$test_root/source/customize.sh"
 # This exact shape used to trigger an archive-time kamfw source rewrite. The
 # sanitizer may remove unwanted entries, but must never patch dependency code.
 cat > "$test_root/source/lib/kamfw/__singbox__.sh" <<'FIXTURE'
@@ -140,6 +145,48 @@ done
 cp "$artifact" "$test_root/clean.zip"
 bash "$sanitize_hook"
 cmp "$artifact" "$test_root/clean.zip"
+
+# Exercise the release sequence on the sanitized ZIP. Binary/helper payloads
+# are inert fixtures: this checks the actual archive transforms, not Android.
+printf 'inert component helper fixture\n' > "$test_root/component-helper"
+python3 "$repo_root/scripts/package-components.py" "$artifact" \
+    --helper "$test_root/component-helper" --output "$test_root/components"
+python3 - "$test_root/source" "$test_root/components" "${preserved_entries[@]}" <<'PY'
+import json
+from pathlib import Path, PurePosixPath
+import sys
+import zipfile
+
+source, output = map(Path, sys.argv[1:3])
+development = {
+    'test', 'tests', '__tests__', 'fixture', 'fixtures', '__fixtures__',
+    '__snapshots__', 'bench', 'benches', 'benchmark', 'benchmarks',
+    'coverage', 'htmlcov', 'node_modules', '.git', '.github', '__pycache__',
+    '.pytest_cache', '.mypy_cache', '.ruff_cache',
+}
+manifest = json.loads((output / 'components.json').read_text())
+archives = list(output.glob('*.zip'))
+assert len(archives) == len(manifest['components']) + 4
+members = 0
+for path in archives:
+    with zipfile.ZipFile(path) as archive:
+        assert archive.testzip() is None, path
+        for info in archive.infolist():
+            parts = PurePosixPath(info.filename.rstrip('/')).parts
+            directories = parts if info.is_dir() else parts[:-1]
+            assert development.isdisjoint(directories), (path.name, info.filename)
+            members += 1
+with zipfile.ZipFile(output / 'MagicNet-full.zip') as full:
+    for name in sys.argv[3:]:
+        if name != 'customize.sh':  # The splitter inserts the component bootstrap.
+            assert full.read(name) == (source / name).read_bytes(), name
+    assert full.read('customize.sh').count(b'# Component bootstrap:') == 1
+for component in manifest['components']:
+    for item in component['files']:
+        assert development.isdisjoint(PurePosixPath(item['path']).parts[:-1]), item['path']
+print(f'Final archive inspection passed: {len(archives)} ZIPs, {members} entries')
+PY
+
 # Refuse to continue when zip cannot remove an unwanted entry.
 make_archive
 mkdir -p "$test_root/failing-bin"
