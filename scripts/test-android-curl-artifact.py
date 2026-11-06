@@ -149,6 +149,59 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'permissions'):
             ARTIFACT.verify_zip(self.archive(bad_mode='bin/curl'), 'arm64-v8a')
 
+    def test_kam_blanket_executable_modes_are_normalized_once(self):
+        path = self.archive()
+        with zipfile.ZipFile(path) as archive:
+            entries = [(copy.copy(info), archive.read(info)) for info in archive.infolist()]
+        with zipfile.ZipFile(path, 'w') as archive:
+            for info, content in entries:
+                info.external_attr = (stat.S_IFREG | 0o755) << 16
+                archive.writestr(info, content)
+            unrelated = zipfile.ZipInfo('lib/unrelated-file')
+            unrelated.external_attr = (stat.S_IFREG | 0o600) << 16
+            archive.writestr(unrelated, b'unrelated payload bytes')
+        with zipfile.ZipFile(path) as archive:
+            before = {info.filename: (archive.read(info), info.CRC, info.external_attr, info.date_time,
+                                      info.extra, info.comment) for info in archive.infolist()}
+        with self.assertRaisesRegex(ValueError, 'permissions'):
+            ARTIFACT.verify_zip(path, 'arm64-v8a')
+        self.assertEqual(set(ARTIFACT.normalize_modes(path)), set(ARTIFACT.PAYLOAD_FILES) - {'bin/curl'})
+        ARTIFACT.verify_zip(path, 'arm64-v8a')
+        with zipfile.ZipFile(path) as archive:
+            self.assertIsNone(archive.testzip())
+            for info in archive.infolist():
+                data, crc, mode, stamp, extra, comment = before[info.filename]
+                self.assertEqual((archive.read(info), info.CRC, info.date_time, info.extra, info.comment),
+                                 (data, crc, stamp, extra, comment))
+                if info.filename not in ARTIFACT.PAYLOAD_FILES:
+                    self.assertEqual(info.external_attr, mode)
+        normalized = path.read_bytes()
+        self.assertEqual(ARTIFACT.normalize_modes(path), [])
+        self.assertEqual(path.read_bytes(), normalized)
+
+    def test_normalization_never_turns_missing_duplicate_or_symlink_into_payload(self):
+        for kind in ('missing', 'duplicate', 'symlink'):
+            with self.subTest(kind=kind):
+                path = self.archive(missing='bin/curl' if kind == 'missing' else None)
+                if kind != 'missing':
+                    with zipfile.ZipFile(path) as archive:
+                        entries = [(copy.copy(info), archive.read(info)) for info in archive.infolist()]
+                    with zipfile.ZipFile(path, 'w') as archive:
+                        for info, content in entries:
+                            if kind == 'symlink' and info.filename == 'bin/curl':
+                                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                                content = b'/system/bin/curl'
+                            archive.writestr(info, content)
+                        if kind == 'duplicate':
+                            import warnings
+                            with warnings.catch_warnings():
+                                warnings.simplefilter('ignore', UserWarning)
+                                archive.writestr('bin/curl', b'duplicate')
+                original = path.read_bytes()
+                with self.assertRaises(ValueError):
+                    ARTIFACT.normalize_modes(path)
+                self.assertEqual(path.read_bytes(), original)
+
     def test_builder_rejects_unknown_abi_before_network_or_compilation(self):
         result = subprocess.run(['bash', str(ARTIFACT.BUILDER_PATH), 'riscv64', str(self.root / 'out')],
                                 text=True, capture_output=True, timeout=5)

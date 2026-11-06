@@ -1,5 +1,5 @@
 #!/bin/bash
-# Filter the archive once; preserve every retained runtime member verbatim.
+# Remove development data and normalize only the owned curl payload modes.
 set -euo pipefail
 # shellcheck source=hooks/lib/utils.sh
 . "$KAM_HOOKS_ROOT/lib/utils.sh"
@@ -32,4 +32,5 @@ if [ -n "$removed" ]; then
         exit 1
     fi
 fi
+python3 "$KAM_PROJECT_ROOT/scripts/android-curl-artifact.py" normalize-modes "$zip_path"
 "${KAM_PROJECT_ROOT}/scripts/package-smoke.sh" "$zip_path"

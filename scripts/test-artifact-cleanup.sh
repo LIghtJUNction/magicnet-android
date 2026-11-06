@@ -111,6 +111,9 @@ require_command() { command -v "$1" >/dev/null; }
 FIXTURE
 printf '#!/bin/bash\nexit 0\n' > "$KAM_PROJECT_ROOT/scripts/package-smoke.sh"
 chmod +x "$KAM_PROJECT_ROOT/scripts/package-smoke.sh"
+cp "$repo_root/scripts/android-curl-artifact.py" "$KAM_PROJECT_ROOT/scripts/android-curl-artifact.py"
+# Actual KAM exports these regular data files as 0755, regardless of source mode.
+chmod 0755 "$test_root/source/bin/curl" "$test_root/source/licenses/curl/"*
 artifact="$KAM_PROJECT_ROOT/dist/MagicNet.zip"
 sanitize_hooks=("$repo_root"/hooks/post-build/*.sanitize_zip.sh)
 test "${#sanitize_hooks[@]}" -eq 1
@@ -171,6 +174,9 @@ development = {
     '.pytest_cache', '.mypy_cache', '.ruff_cache',
 }
 manifest = json.loads((output / 'components.json').read_text())
+curl = next(component for component in manifest['components'] if component['id'] == 'bin-curl')
+for item in curl['files']:
+    assert item['mode'] == (0o755 if item['path'] == 'bin/curl' else 0o644), item
 archives = list(output.glob('*.zip'))
 assert len(archives) == len(manifest['components']) + 4
 members = 0

@@ -19,8 +19,17 @@ const reasonLabels: Record<string, string> = {
   no_default_route: "没有可用的网络出口", endpoint_specific: "其他探测可用，Google 暂不可达",
   proxy_refused: "代理连接失败", http_error: "目标返回异常状态", module_disabled: "模块已停用",
   upstream_unavailable: "代理上游不可达",
+  probe_unavailable: "探测工具不可用，请检查模块安装完整性",
+  probe_invalid: "探测工具返回了无效结果",
 };
 const reason = computed(() => reasonLabels[props.snapshot.reason] || "正在检查代理、网络出口和订阅状态。");
+const title = computed(() => {
+  if (props.snapshot.warning && ["probe_unavailable", "probe_invalid"].includes(props.snapshot.reason)) {
+    return "⚠️ 无法执行联网检查";
+  }
+  return props.snapshot.status === "pending" && props.snapshot.warning
+    ? "⚠️ 正在复查 Google 连接" : labels[props.snapshot.status];
+});
 const actionLabels: Record<string, string> = {
   repair: "已尝试修复路由与 DNS", refresh: "已尝试更新订阅",
   restart: "已尝试重启内核", deferred: "等待当前操作完成后重试",
@@ -31,7 +40,7 @@ const actionLabels: Record<string, string> = {
   <section class="grid gap-2 rounded-md px-4 py-3 text-sm" data-testid="connectivity-notice"
     :class="snapshot.warning ? statusToneClasses('warn') : 'text-[var(--mn-ink-soft)]'"
     :role="snapshot.warning ? 'alert' : 'status'" aria-live="polite">
-    <p class="font-medium">{{ snapshot.status === 'pending' && snapshot.warning ? t('⚠️ 正在复查 Google 连接') : t(labels[snapshot.status]) }}<span v-if="snapshot.status === 'online' && snapshot.latencyMs !== null" class="ml-2 font-normal tabular-nums">{{ snapshot.latencyMs }} ms</span></p>
+    <p class="font-medium">{{ t(title) }}<span v-if="snapshot.status === 'online' && snapshot.latencyMs !== null" class="ml-2 font-normal tabular-nums">{{ snapshot.latencyMs }} ms</span></p>
     <template v-if="snapshot.warning">
       <p>{{ t(reason) }}</p>
       <p v-if="snapshot.retryInSeconds !== null">{{ t('自动重试间隔逐步延长，约 {seconds} 秒后再次检查。', { seconds: snapshot.retryInSeconds }) }}</p>

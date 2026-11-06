@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -226,6 +227,58 @@ def verify_zip(path, abi):
         return metadata
 
 
+def normalize_modes(path):
+    """Fix KAM's blanket 0755 export only for the six owned curl files.
+
+    Use zipfile's reader/writer rather than a second ZIP parser. A temporary
+    archive keeps the original intact on CRC/read/write failure. Retained file
+    bytes, timestamps, comments, extra fields and unrelated mode/type bits stay
+    unchanged; compression may be regenerated once. A second pass is a no-op.
+    """
+    require(path.is_file() and not path.is_symlink(), 'curl normalization requires a regular ZIP')
+    temporary = None
+    try:
+        with zipfile.ZipFile(path) as source:
+            infos = source.infolist()
+            require(len(infos) == len({item.filename for item in infos}), 'duplicate ZIP member')
+            require(sum(item.file_size for item in infos) <= 1 << 30, 'module ZIP exceeds size budget')
+            by_name = {item.filename: item for item in infos}
+            changed = []
+            for name in PAYLOAD_FILES:
+                require(name in by_name, 'missing curl payload: ' + name)
+                info = by_name[name]
+                require(stat.S_ISREG(info.external_attr >> 16) and not info.flag_bits & 1,
+                        'curl normalization refuses non-regular/encrypted payload: ' + name)
+                expected = 0o755 if name == 'bin/curl' else 0o644
+                if stat.S_IMODE(info.external_attr >> 16) != expected:
+                    changed.append(name)
+            if not changed:
+                return []
+            descriptor, name = tempfile.mkstemp(prefix=path.name + '.curl-modes.', dir=path.parent)
+            os.close(descriptor)
+            temporary = Path(name)
+            with zipfile.ZipFile(temporary, 'w') as output:
+                output.comment = source.comment
+                for original in infos:
+                    entry = copy.copy(original)
+                    if entry.filename in changed:
+                        mode = 0o755 if entry.filename == 'bin/curl' else 0o644
+                        entry.external_attr = ((stat.S_IFREG | mode) << 16) | (entry.external_attr & 0xFFFF)
+                    with source.open(original) as reader, output.open(entry, 'w') as writer:
+                        copied = 0
+                        while chunk := reader.read(1024 * 1024):
+                            writer.write(chunk)
+                            copied += len(chunk)
+                        require(copied == original.file_size, 'ZIP member length differs: ' + original.filename)
+            temporary.chmod(stat.S_IMODE(path.stat().st_mode))
+        os.replace(temporary, path)
+        temporary = None
+        return changed
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -240,6 +293,8 @@ def main():
     check_zip = commands.add_parser('verify-zip')
     check_zip.add_argument('archive', type=Path)
     check_zip.add_argument('--abi', choices=('arm64-v8a', 'x86_64'), required=True)
+    normalize = commands.add_parser('normalize-modes')
+    normalize.add_argument('archive', type=Path)
     args = parser.parse_args()
     if args.command == 'lock-fields':
         inputs = lock()
@@ -253,9 +308,11 @@ def main():
         verify(args.folder / 'curl', json.loads((args.folder / 'build-provenance.json').read_text()),
                args.folder / 'licenses', args.abi, args.ndk_sha256)
         print('Verified production curl build identity; Android runtime capability remains untested.')
-    else:
+    elif args.command == 'verify-zip':
         verify_zip(args.archive, args.abi)
         print('Verified packaged curl ELF, source/CA identity, digest and license notices without executing it.')
+    else:
+        print(json.dumps({'normalized_curl_modes': normalize_modes(args.archive)}))
 
 
 if __name__ == '__main__':
