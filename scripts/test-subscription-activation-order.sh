@@ -19,13 +19,18 @@ for cache_name in cache.db cache.db-wal cache.db-shm cache.db-journal; do
 done
 
 magicnet_json_escape() { printf '%s' "$1"; }
+set_i18n() { :; }
 . "$ROOT/src/MagicNet/lib/magicnet/runtime_config.sh"
+. "$ROOT/src/MagicNet/lib/magicnet/supervisors.sh"
 . "$ROOT/src/MagicNet/lib/magicnet/singbox_subscribe/config.sh"
 . "$ROOT/src/MagicNet/lib/magicnet/singbox_subscribe/update.sh"
 
-# A subscription-owned restart records the prior fswatch state without
-# restoring it while the caller still owns the config transaction.
-magicnet_supervisors_stop() { printf 'supervisors-stop\n' >>"$events"; }
+# Stop only the fixture workers; run the actual aggregate start/stop functions.
+magicnet_watchdog_stop() { printf 'supervisors-stop\n' >>"$events"; return "${worker_stop_rc:-0}"; }
+magicnet_fswatch_stop() { :; }
+magicnet_wifi_policy_stop() { :; }
+magicnet_subscription_refresh_stop() { :; }
+magicnet_hotspot_route_cleanup() { printf 'hotspot-cleanup\n' >>"$events"; return "${hotspot_cleanup_rc:-0}"; }
 magicnet_disable_dns_capture() { printf 'dns-capture-disable\n' >>"$events"; }
 magicnet_disable_dns_leak_guard() { printf 'dns-leak-guard-disable\n' >>"$events"; }
 magicnet_after_kernel_start_unlocked() { printf 'post-start\n' >>"$events"; }
@@ -37,22 +42,50 @@ magicnet_singbox_ensure_start_owned() { :; }
 magicnet_singbox_api_listener_exists() { return 1; }
 ss() { :; }
 ip() { :; }
+warn() { :; }
+magicnet_warn() { :; }
+magicnet_detach_pid_from_app_cgroup() { :; }
+magicnet_singbox_record_runtime_fingerprint() { :; }
+magicnet_kernel_running() {
+  if test -n "${failure_state:-}"; then
+    test "$(cat "$failure_state")" = running
+  else
+    return "${kernel_state:-0}"
+  fi
+}
+magicnet_connectivity_watchdog_start() { printf 'connectivity-lock=%s\n' "$CONFIG_LOCK_HELD" >>"$events"; }
+magicnet_subscription_refresh_start() { printf 'refresh-lock=%s\n' "$CONFIG_LOCK_HELD" >>"$events"; }
+magicnet_wifi_policy_start() {
+  printf 'wifi-lock=%s\n' "$CONFIG_LOCK_HELD" >>"$events"
+  return "${wifi_start_rc:-0}"
+}
+magicnet_hotspot_watchdog_start() { printf 'hotspot-lock=%s\n' "$CONFIG_LOCK_HELD" >>"$events"; }
 magicnet_fswatch_start() { printf 'restore-lock=%s\n' "$CONFIG_LOCK_HELD" >>"$events"; }
 magicnet_fswatch_status() { return 0; }
 
+# A subscription-owned restart records the complete set without restoring
+# workers while the caller still owns the config transaction.
 export MAGICNET_SUB_FSWATCH_WAS_ACTIVE=1
 export MAGICNET_SUB_RESET_BOOTSTRAP_CACHE=1
-MAGICNET_SUB_DEFER_FSWATCH_RESTORE=1
+MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE=1
+MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=0
 MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
 magicnet_singbox_restart_owned "$MODDIR/.config/sing-box/config.json"
+test "${MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING:-0}" -eq 1
 test "$MAGICNET_SUB_FSWATCH_RESTORE_PENDING" -eq 1
-test "$(tr '\n' ' ' <"$events")" = 'supervisors-stop dns-capture-disable dns-leak-guard-disable post-start '
+test "$(tr '\n' ' ' <"$events")" = 'supervisors-stop hotspot-cleanup dns-capture-disable dns-leak-guard-disable post-start '
 for cache_name in cache.db cache.db-wal cache.db-shm cache.db-journal; do
   test ! -e "$MODDIR/.config/sing-box/$cache_name"
 done
+# A failed activation can call restart again during rollback after fswatch
+# has stopped. Preserve the original restore intent across both restarts.
+MAGICNET_SUB_FSWATCH_WAS_ACTIVE=0
+magicnet_singbox_restart_owned "$MODDIR/.config/sing-box/config.json"
+test "$MAGICNET_SUB_FSWATCH_RESTORE_PENDING" -eq 1
 : >"$events"
 unset MAGICNET_SUB_FSWATCH_WAS_ACTIVE MAGICNET_SUB_RESET_BOOTSTRAP_CACHE \
-  MAGICNET_SUB_DEFER_FSWATCH_RESTORE
+  MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING \
+  MAGICNET_SUB_FSWATCH_RESTORE_PENDING
 
 # A failed post-start phase must tear down the newly started generation. The
 # old generation is already gone at this point; leaving PID 222 alive would
@@ -97,7 +130,8 @@ unset failure_state failure_pid_file failure_restart_rc
 unset MAGICNET_SUB_STOP_TIMEOUT MAGICNET_SUB_KILL_TIMEOUT CONFIG_LOCK_HELD
 : >"$events"
 
-# The update wrapper restores fswatch after magicnet_with_config_lock returns.
+# The update wrapper restores all configured workers after the lock returns,
+# even if fswatch was disabled before activation.
 CONFIG_LOCK_HELD=0
 magicnet_singbox_update_lock_acquire() { :; }
 magicnet_singbox_update_lock_release() { :; }
@@ -114,15 +148,240 @@ magicnet_with_config_lock() {
   return "$rc"
 }
 magicnet_singbox_update_subscription_unlocked() {
-  test "$MAGICNET_SUB_DEFER_FSWATCH_RESTORE" -eq 1
+  test "$MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE" -eq 1
   printf 'transaction-lock=%s\n' "$CONFIG_LOCK_HELD" >>"$events"
-  MAGICNET_SUB_FSWATCH_RESTORE_PENDING=1
+  MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=1
+  MAGICNET_SUB_FSWATCH_RESTORE_PENDING="$restore_fswatch"
 }
 
-MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
-magicnet_singbox_update_subscription
-test "$(tr '\n' ' ' <"$events")" = 'transaction-lock=1 restore-lock=0 '
-test -z "${MAGICNET_SUB_DEFER_FSWATCH_RESTORE+x}"
-test -z "${MAGICNET_SUB_FSWATCH_RESTORE_PENDING+x}"
+for restore_fswatch in 0 1; do
+  for attempt in 1 2 3; do
+    : >"$events"
+    magicnet_singbox_update_subscription
+    expected='transaction-lock=1 connectivity-lock=0 refresh-lock=0 wifi-lock=0 hotspot-lock=0 '
+    if test "$restore_fswatch" -eq 1; then expected+='restore-lock=0 '; fi
+    test "$(tr '\n' ' ' <"$events")" = "$expected"
+    test -z "${MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE+x}"
+    test -z "${MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING+x}"
+    test -z "${MAGICNET_SUB_FSWATCH_RESTORE_PENDING+x}"
+  done
+done
+
+# Initial journal recovery and failure rollback also run under the config
+# lock. Their restore request must survive until the wrapper releases it.
+magicnet_singbox_transaction_reconcile() {
+  test "$CONFIG_LOCK_HELD" -eq 1
+  test "$MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE" -eq 1
+  printf 'reconcile-lock=%s\n' "$CONFIG_LOCK_HELD" >>"$events"
+  MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=1
+  MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
+  return "${recovery_result:-0}"
+}
+magicnet_singbox_update_subscription_unlocked() { return "$update_result"; }
+for update_result in 0 1; do
+  : >"$events"
+  actual=0
+  magicnet_singbox_update_subscription || actual=$?
+  test "$actual" -eq "$update_result"
+  expected='reconcile-lock=1 '
+  if test "$update_result" -ne 0; then expected+='reconcile-lock=1 '; fi
+  expected+='connectivity-lock=0 refresh-lock=0 wifi-lock=0 hotspot-lock=0 '
+  test "$(tr '\n' ' ' <"$events")" = "$expected"
+done
+: >"$events"
+recovery_result=1
+actual=0
+magicnet_singbox_update_subscription || actual=$?
+test "$actual" -eq 1
+test "$(tr '\n' ' ' <"$events")" = 'reconcile-lock=1 connectivity-lock=0 refresh-lock=0 wifi-lock=0 hotspot-lock=0 '
+test -z "${MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE+x}"
+test -z "${MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING+x}"
+unset recovery_result
+
+# Hotspot cleanup is separate from worker ownership and DNS cleanup. A stale
+# hotspot cleanup failure must not strand a ready core; strict failures still
+# prevent startup, and both DNS cleanups remain attempted.
+magicnet_singbox_owned_pids_to_file() { : >"$2"; return 1; }
+magicnet_singbox_ensure_start_owned() { printf 'core-start\n' >>"$events"; }
+magicnet_after_kernel_start_unlocked() { printf 'post-start\n' >>"$events"; }
+MAGICNET_SUB_FSWATCH_WAS_ACTIVE=0
+for hotspot_cleanup_rc in 1 2; do
+  : >"$events"
+  magicnet_singbox_restart_owned "$MODDIR/.config/sing-box/config.json"
+  grep -qx core-start "$events"
+  grep -qx post-start "$events"
+  grep -qx wifi-lock=0 "$events"
+  grep -qx hotspot-lock=0 "$events"
+done
+hotspot_cleanup_rc=0
+for worker_stop_rc in 1 2; do
+  : >"$events"
+  actual=0
+  magicnet_singbox_restart_owned "$MODDIR/.config/sing-box/config.json" || actual=$?
+  test "$actual" -eq "$worker_stop_rc"
+  grep -qx dns-capture-disable "$events"
+  grep -qx dns-leak-guard-disable "$events"
+  if grep -qx core-start "$events"; then exit 1; fi
+  if grep -qx hotspot-cleanup "$events"; then exit 1; fi
+done
+worker_stop_rc=0
+magicnet_disable_dns_capture() { printf 'dns-capture-disable\n' >>"$events"; return 1; }
+: >"$events"
+if magicnet_singbox_restart_owned "$MODDIR/.config/sing-box/config.json"; then exit 1; fi
+grep -qx dns-leak-guard-disable "$events"
+if grep -qx core-start "$events"; then exit 1; fi
+
+# A matching supervisor's indeterminate ownership remains a strict result,
+# including when the core is already ready and restoration is deferred.
+for wifi_start_rc in 1 2; do
+  : >"$events"
+  actual=0
+  magicnet_singbox_supervisor_restore 0 || actual=$?
+  test "$actual" -eq "$wifi_start_rc"
+done
+unset wifi_start_rc
+
+# A failed/unknown core must not gain maintenance workers that could revive it.
+for kernel_state in 1 2; do
+  : >"$events"
+  actual=0
+  magicnet_singbox_supervisor_restore 1 || actual=$?
+  if test "$kernel_state" -eq 1; then test "$actual" -eq 0; else test "$actual" -eq 2; fi
+  test ! -s "$events"
+done
+
+# Exercise the independent service-start recovery entry, not only sub.update.
+# Keep its real journal reconciliation, restart controller and config locking;
+# only replace core/network side effects and the host proc-reader adapter.
+(
+  info() { :; }
+  import() { :; }
+  . "$ROOT/src/MagicNet/lib/magicnet/common.sh"
+  . "$ROOT/src/MagicNet/lib/magicnet/singbox_subscribe/update.sh"
+  magicnet_proc_reader_test_hook() {
+    test "$1" = stat || return 2
+    local stat rest
+    local -a fields=()
+    stat=$(<"$2/$3/stat") || return 2
+    rest=${stat##*) }
+    read -r -a fields <<<"$rest"
+    test "${#fields[@]}" -ge 20 || return 2
+    printf '%s %s\n' "${fields[0]}" "${fields[19]}"
+  }
+  recovery_tx="$MODDIR/.state/sing-box/subscription-transaction"
+  recovery_events="$fixture/recovery-events"
+  kernel_state=0
+  magicnet_singbox_update_lock_active() { return 1; }
+  magicnet_singbox_recovery_config_valid() { jq -e '.fixture == "old"' "$1" >/dev/null; }
+  magicnet_singbox_ensure_start_owned() {
+    printf 'core-lock=%s\n' "${MAGICNET_CONFIG_LOCK_HELD:-0}" >>"$recovery_events"
+  }
+  magicnet_disable_dns_capture() { :; }
+  magicnet_disable_dns_leak_guard() { :; }
+  magicnet_after_kernel_start_unlocked() {
+    printf 'policy-lock=%s\n' "${MAGICNET_CONFIG_LOCK_HELD:-0}" >>"$recovery_events"
+  }
+  recovery_worker() {
+    printf '%s-lock=%s\n' "$1" "${MAGICNET_CONFIG_LOCK_HELD:-0}" >>"$recovery_events"
+    test "${MAGICNET_CONFIG_LOCK_HELD:-0}" -eq 0 &&
+      test ! -e "$MODDIR/.state/config.lock" || return 1
+    return "${recovery_worker_rc:-0}"
+  }
+  magicnet_connectivity_watchdog_start() { recovery_worker connectivity; }
+  magicnet_subscription_refresh_start() { recovery_worker refresh; }
+  magicnet_wifi_policy_start() { recovery_worker wifi; }
+  magicnet_hotspot_watchdog_start() { recovery_worker hotspot; }
+  magicnet_fswatch_start() { recovery_worker fswatch; }
+  prepare_recovery() {
+    mkdir -p "$recovery_tx"
+    printf '%s\n' '{"fixture":"old"}' >"$recovery_tx/old-config"
+    printf '%s\n' '{"fixture":"new"}' >"$MODDIR/.config/sing-box/config.json"
+    : >"$recovery_tx/had-config"
+    : >"$recovery_tx/was-running"
+    : >"$recovery_events"
+  }
+  rm() {
+    if test "${recovery_finish_rc:-0}" -ne 0 && test "$#" -eq 2 &&
+      test "$1" = -rf && test "$2" = "$recovery_tx"; then
+      return "$recovery_finish_rc"
+    fi
+    command rm "$@"
+  }
+
+  for restore_fswatch in 0 1; do
+    prepare_recovery
+    MAGICNET_SUB_FSWATCH_WAS_ACTIVE="$restore_fswatch"
+    if ! magicnet_recover_interrupted_subscription; then
+      cat "$recovery_events" >&2
+      printf 'service recovery failed to restore supervisors outside config lock\n' >&2
+      exit 1
+    fi
+    expected='core-lock=1 policy-lock=1 connectivity-lock=0 refresh-lock=0 wifi-lock=0 hotspot-lock=0 '
+    if test "$restore_fswatch" -eq 1; then expected+='fswatch-lock=0 '; fi
+    test "$(tr '\n' ' ' <"$recovery_events")" = "$expected"
+    test ! -e "$recovery_tx"
+    test ! -e "$MODDIR/.state/config.lock"
+  done
+
+  # A post-unlock restoration failure must propagate instead of reporting
+  # successful lifecycle recovery. The completed config rollback stays valid.
+  for recovery_worker_rc in 1 2; do
+    prepare_recovery
+    actual=0
+    magicnet_recover_interrupted_subscription || actual=$?
+    test "$actual" -eq "$recovery_worker_rc"
+    test ! -e "$MODDIR/.state/config.lock"
+    test "$(jq -r .fixture "$MODDIR/.config/sing-box/config.json")" = old
+  done
+  unset recovery_worker_rc
+
+  # Preserve a journal-cleanup failure even if post-unlock restore also
+  # reports unknown ownership; a later helper must not mask the first error.
+  prepare_recovery
+  recovery_finish_rc=1
+  recovery_worker_rc=2
+  actual=0
+  magicnet_recover_interrupted_subscription || actual=$?
+  test "$actual" -eq 1
+  test -e "$recovery_tx/old-config"
+  test ! -e "$MODDIR/.state/config.lock"
+  unset recovery_finish_rc recovery_worker_rc
+
+  # A nested caller still owns its lock after with_config_lock returns. Do
+  # not start pending workers or release the caller's lock in this case.
+  prepare_recovery
+  magicnet_config_lock_acquire
+  MAGICNET_CONFIG_LOCK_HELD=1
+  actual=0
+  magicnet_recover_interrupted_subscription || actual=$?
+  test "$actual" -eq 2
+  test ! -s "$recovery_events"
+  test -e "$recovery_tx/old-config"
+  test "$(jq -r .fixture "$MODDIR/.config/sing-box/config.json")" = new
+  test -e "$MODDIR/.state/config.lock/pid"
+  MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=1
+  actual=0
+  magicnet_singbox_restore_pending_supervisors || actual=$?
+  test "$actual" -eq 2
+  test ! -s "$recovery_events"
+  magicnet_config_lock_release
+  unset MAGICNET_CONFIG_LOCK_HELD
+
+  # The subshell cannot transfer new pending workers to an outer updater.
+  # Preserve its existing restore intent and journal without taking it over.
+  prepare_recovery
+  MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE=1
+  MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=1
+  MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
+  actual=0
+  magicnet_recover_interrupted_subscription || actual=$?
+  test "$actual" -eq 2
+  test ! -s "$recovery_events"
+  test -e "$recovery_tx/old-config"
+  test "$(jq -r .fixture "$MODDIR/.config/sing-box/config.json")" = new
+  test "$MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE" -eq 1
+  test "$MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING" -eq 1
+  test "$MAGICNET_SUB_FSWATCH_RESTORE_PENDING" -eq 0
+)
 
 printf 'subscription activation order test passed\n'

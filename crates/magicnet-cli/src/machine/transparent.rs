@@ -51,14 +51,14 @@ impl Status {
 }
 
 pub(super) fn snapshot(app: &App, process_state: &str, configured_mode: &str) -> Status {
-    snapshot_with_probe(app, process_state, configured_mode, tun_interface_ready)
+    snapshot_with_probe(app, process_state, configured_mode, tun_dataplane_ready)
 }
 
 fn snapshot_with_probe(
     app: &App,
     process_state: &str,
     configured_mode: &str,
-    tun_probe: impl FnOnce(Option<&Value>) -> bool,
+    tun_probe: impl FnOnce(Option<&Value>) -> Option<bool>,
 ) -> Status {
     let config = read_regular_text(&app.moddir.join(CONFIG), 4 * 1024 * 1024)
         .and_then(|text| serde_json::from_str::<Value>(&text).ok());
@@ -67,9 +67,15 @@ fn snapshot_with_probe(
         .and_then(|value| value.get("inbounds"))
         .and_then(Value::as_array)
         .and_then(|inbounds| {
-            inbounds
+            let mut managed = inbounds
                 .iter()
-                .find(|inbound| inbound.get("tag").and_then(Value::as_str) == Some("tun-in"))
+                .filter(|inbound| inbound.get("tag").and_then(Value::as_str) == Some("tun-in"));
+            let inbound = managed.next()?;
+            if managed.next().is_some() {
+                None
+            } else {
+                Some(inbound)
+            }
         });
     let effective_type = match inbound
         .and_then(|value| value.get("type"))
@@ -95,7 +101,7 @@ fn snapshot_with_probe(
 
     if effective_type != "ebpf" {
         let ready = match process_state {
-            "running" => Some(tun_probe(inbound)),
+            "running" => tun_probe(inbound),
             "stopped" => Some(false),
             _ => None,
         };
@@ -247,13 +253,31 @@ fn ebpf_readiness(
     }
 }
 
-fn tun_interface_ready(inbound: Option<&Value>) -> bool {
-    let interface = inbound
-        .and_then(|value| value.get("interface_name"))
-        .and_then(Value::as_str)
-        .filter(|value| valid_interface_name(value))
-        .unwrap_or("magicnet0");
-    Path::new("/sys/class/net").join(interface).exists()
+fn tun_dataplane_ready(inbound: Option<&Value>) -> Option<bool> {
+    tun_dataplane_ready_with_probe(
+        inbound,
+        || Path::new("/sys/class/net/magicnet0").try_exists().ok(),
+        |inbound| crate::diagnostics::tun::auto_route_check(inbound).0,
+    )
+}
+
+fn tun_dataplane_ready_with_probe(
+    inbound: Option<&Value>,
+    interface_probe: impl FnOnce() -> Option<bool>,
+    route_probe: impl FnOnce(&Value) -> Option<bool>,
+) -> Option<bool> {
+    let inbound = inbound?;
+    if inbound.get("type").and_then(Value::as_str) != Some("tun") {
+        return None;
+    }
+    let interface = inbound.get("interface_name").and_then(Value::as_str)?;
+    if interface != "magicnet0" {
+        return Some(false);
+    }
+    match interface_probe() {
+        Some(true) => route_probe(inbound),
+        ready => ready,
+    }
 }
 
 fn valid_interface_name(value: &str) -> bool {
@@ -345,7 +369,7 @@ mod tests {
         for state in ["running", "stopped", "unknown"] {
             let status = super::snapshot_with_probe(&app, state, "tun", |inbound| {
                 assert_eq!(inbound.unwrap()["interface_name"], "lo");
-                true
+                Some(true)
             });
             assert_eq!(status.local_ready, None, "{state}");
             assert_eq!(status.shared_ready, None, "{state}");
@@ -364,7 +388,7 @@ mod tests {
     fn tun_readiness_requires_interface_evidence_only_for_a_running_core() {
         let fixture = crate::test_support::temp_app();
         let app = crate::App::for_test(fixture.moddir.clone());
-        let status = super::snapshot_with_probe(&app, "running", "tun", |_| false);
+        let status = super::snapshot_with_probe(&app, "running", "tun", |_| Some(false));
         assert_eq!(status.dataplane_ready, Some(false));
         for (state, ready) in [("stopped", Some(false)), ("unknown", None)] {
             let status = super::snapshot_with_probe(&app, state, "tun", |_| {
@@ -372,6 +396,105 @@ mod tests {
             });
             assert_eq!(status.dataplane_ready, ready);
         }
+    }
+
+    #[test]
+    fn tun_machine_readiness_uses_the_same_live_routing_evidence_as_health() {
+        let app = crate::test_support::temp_app();
+        std::fs::create_dir_all(app.moddir.join(".config/sing-box")).unwrap();
+        std::fs::write(
+            app.moddir.join(".config/sing-box/config.json"),
+            json!({"inbounds": [{
+                "tag": "tun-in", "type": "tun", "interface_name": "magicnet0",
+                "address": ["172.19.0.1/30"], "auto_route": true, "auto_redirect": true
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+        let rules = "0: from all lookup 255\n9000: from all fwmark 0x200000/0xe00000 goto 9002\n9001: from all fwmark 0x400000/0xe00000 lookup 2022\n9002: from all nop\n32768: not from all fwmark 0x200000/0xe00000 lookup 2022\n";
+        for (rules, routes, expected) in [
+            (Ok(rules), "default dev magicnet0\n", Some(true)),
+            (
+                Ok("0: from all lookup 255\n"),
+                "default dev magicnet0\n",
+                Some(false),
+            ),
+            (
+                Ok("8999: from all iif wlan2 lookup 2022\n"),
+                "default dev magicnet0\n",
+                Some(false),
+            ),
+            (
+                Ok(rules),
+                "172.19.0.0/30 dev magicnet0 proto kernel scope link src 172.19.0.1\n",
+                Some(false),
+            ),
+            (Err("command-failed"), "default dev magicnet0\n", None),
+            (Err("output-truncated"), "default dev magicnet0\n", None),
+        ] {
+            let status = super::snapshot_with_probe(&app, "running", "tun", |inbound| {
+                super::tun_dataplane_ready_with_probe(
+                    inbound,
+                    || Some(true),
+                    |inbound| {
+                        crate::diagnostics::tun::auto_route_check_with(inbound, true, |args| {
+                            if args.contains(&"rule") {
+                                rules.map(|rules| {
+                                    if args.contains(&"table") {
+                                        rules
+                                            .lines()
+                                            .filter(|line| line.ends_with("lookup 2022"))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    } else {
+                                        rules.into()
+                                    }
+                                })
+                            } else {
+                                Ok(routes.into())
+                            }
+                        })
+                        .0
+                    },
+                )
+            });
+            assert_eq!(status.dataplane_ready, expected);
+            assert_eq!(status.as_value()["dataplane_ready"], json!(expected));
+            assert_eq!(status.local_ready, None);
+            assert_eq!(status.shared_ready, None);
+        }
+    }
+
+    #[test]
+    fn tun_unknown_config_or_interface_cannot_be_promoted_to_ready() {
+        let inbound = json!({"type": "tun", "interface_name": "magicnet0"});
+        for interface_ready in [Some(false), None] {
+            assert_eq!(
+                super::tun_dataplane_ready_with_probe(
+                    Some(&inbound),
+                    || interface_ready,
+                    |_| panic!("interface not ready")
+                ),
+                interface_ready
+            );
+        }
+        assert_eq!(
+            super::tun_dataplane_ready_with_probe(
+                None,
+                || panic!("config unknown"),
+                |_| panic!("config unknown")
+            ),
+            None
+        );
+        let wrong_interface = json!({"type": "tun", "interface_name": "lo"});
+        assert_eq!(
+            super::tun_dataplane_ready_with_probe(
+                Some(&wrong_interface),
+                || panic!("noncanonical interface"),
+                |_| panic!("noncanonical interface")
+            ),
+            Some(false)
+        );
     }
 
     #[test]

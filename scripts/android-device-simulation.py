@@ -411,7 +411,8 @@ def module_curl_controls(device, out: Path, evidence: dict, identity: dict,
             'magicnet_installed_curl_proof', ROOT / 'scripts/android-public-curl-proof.py')
         proof = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(proof)
-        runtime = proof.verify(device)
+        evidence['local_tls_diagnostics'] = {}
+        runtime = proof.verify(device, diagnostics=evidence['local_tls_diagnostics'])
         require(runtime['versions'] == identity['versions'] | {'libcurl': identity['versions']['curl']},
                 'installed curl runtime version differs from production build')
         require(runtime['embedded_ca_sha256'] == identity['ca_sha256'],
@@ -736,6 +737,7 @@ class Device:
         self.root_checks = []
         self.reboot_checks = []
         self.stop_checks = []
+        self.readiness_timed_out = False
         self.reboot_log_offset = 0
         self.boot_log = ROOT / 'artifacts/android-kernelsu/emulator.log'
 
@@ -1051,6 +1053,7 @@ class Device:
         evidence['status'] = 'passed'
 
     def ready(self, timeout: float = 90):
+        self.readiness_timed_out = False
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
@@ -1061,6 +1064,7 @@ class Device:
             if cp.returncode == 0 and is_ready(cp.stdout):
                 return
             time.sleep(min(2, max(0, deadline - time.monotonic())))
+        self.readiness_timed_out = True
         raise RuntimeError('core process/API/TUN did not become ready')
 
     def stop_service(self):
@@ -1390,11 +1394,71 @@ def device_resources(device: Device) -> dict:
             'observed_memtotal_kib': int(matches[0]), 'memory_source': '/proc/meminfo'}
 
 
+def readiness_support(device: Device, out: Path, deadline: float):
+    """Retain the existing redacted support bundle without re-evaluating readiness."""
+    evidence = {'schema': 1, 'trigger': 'readiness_timeout', 'status': 'failed',
+                'stage': 'support_export', 'budget_seconds': 25, 'commands': []}
+
+    def command(operation, text, timeout):
+        evidence['stage'] = operation
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'collection_deadline')
+        observed = {'operation': operation, 'exit_code': None}
+        evidence['commands'].append(observed)
+        result = device.kshell(text, timeout=min(timeout, remaining), check=False)
+        observed['exit_code'] = bounded_exit_code(result.returncode)
+        require(type(result.returncode) is int and result.returncode == 0, 'command_failed')
+        return result.stdout
+
+    try:
+        destination = out / 'readiness-support.txt'
+        destination.unlink(missing_ok=True)
+        receipt = command('support_export', MOD + '/cli --json support export', 20)
+        require(isinstance(receipt, str) and len(receipt.encode('utf-8')) <= 65536,
+                'export_receipt_invalid')
+        exported = decode_status(receipt, 'support.export')
+        size = exported.get('bytes')
+        require(exported.get('path') == SUPPORT_EXPORT and type(size) is int
+                and 0 < size <= SUPPORT_LIMIT, 'export_receipt_invalid')
+        # Bound transfer on the device, including an extra byte to detect an
+        # oversized/replaced export. Never retain an unvalidated partial file.
+        text = command('export_read', f'test -f {SUPPORT_EXPORT} && test ! -L {SUPPORT_EXPORT} && '
+                       f'{BB} head -c {SUPPORT_LIMIT + 1} {SUPPORT_EXPORT}', 4)
+        require(isinstance(text, str) and len(text) <= SUPPORT_LIMIT, 'export_size_invalid')
+        data = text.encode('utf-8')
+        require(len(data) == size, 'export_size_invalid')
+        required = ('service status', 'health', 'routes: ipv4 rules', 'routes: ipv6 rules',
+                    'routes: ipv4 routes', 'routes: ipv6 routes', 'collection summary')
+        require(text.startswith('MagicNet canonical support bundle\nschema=1\nformat=diagnostic-text-v1\n')
+                and '\nprivacy=redacted\n' in text and '\nexternal_network_probes=not_run\n' in text
+                and '\nstate_mutations=none\n' in text and text.endswith('end_of_report=true\n')
+                and all(text.count(f'\n[{name}]\n') == 1 for name in required),
+                'export_content_invalid')
+        # Failed/unknown/timed-out sections are useful evidence. Do not invoke
+        # diagnostic_content(), whose success-path contract requires readiness.
+        destination.write_bytes(data)
+        evidence.update(status='captured', stage='complete', artifact=destination.name,
+                        bytes=len(data), sha256=digest(destination))
+    except Exception as error:
+        # ADB failures can embed a command, serial or private output. Keep only
+        # our fixed collection codes and never replace the original test failure.
+        allowed = {'collection_deadline', 'command_failed', 'export_receipt_invalid',
+                   'export_size_invalid', 'export_content_invalid'}
+        code = str(error) if isinstance(error, RuntimeError) else ''
+        evidence['failure_code'] = code if code in allowed else 'collection_failed'
+    (out / 'readiness-support.json').write_text(json.dumps(evidence, indent=2) + '\n')
+
+
 def diagnostics(device: Device, out: Path):
     if not device.verified:
         return
     # Diagnostics must not turn a failing test green or exhaust the job timeout.
+    # A readiness failure occurs before the normal installed-controls export.
+    # Prioritize its existing bounded/redacted health and routing observations.
+    timed_out = getattr(device, 'readiness_timed_out', False) is True
     deadline = time.monotonic() + 25
+    if timed_out:
+        readiness_support(device, out, deadline)
     # Only statuses leave the device; no configuration or command output is retained.
     predicates = {}
     for name, pattern in CONFIG_PATTERNS.items():

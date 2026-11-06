@@ -391,12 +391,15 @@ cc -o "$tmp/foreign/sing-box" "$tmp/sing-box.c"
 old_core=$!
 magicnet_singbox_pids() { kill -0 "$old_core" 2>/dev/null && printf '%s\n' "$old_core"; }
 magicnet_singbox_is_running() { kill -0 "$old_core" 2>/dev/null; }
-magicnet_supervisors_stop() { printf 'stop\n' >>"$order_log"; }
+magicnet_supervisors_stop_workers() { printf 'stop\n' >>"$order_log"; }
+magicnet_hotspot_route_cleanup() { :; }
 magicnet_disable_dns_capture() { :; }
 magicnet_disable_dns_leak_guard() { :; }
 magicnet_after_kernel_start_unlocked() { :; }
 magicnet_fswatch_start() { printf 'start\n' >>"$order_log"; }
 magicnet_fswatch_status() { return 0; }
+magicnet_kernel_running() { return 0; }
+magicnet_supervisors_start() { magicnet_fswatch_start; }
 magicnet_singbox_listener_owned() { kill -0 "$1" 2>/dev/null; }
 magicnet_singbox_subscription_config_file() { printf '%s\n' "$tmp/config.json"; }
 : >"$tmp/config.json"
@@ -478,7 +481,7 @@ test "$(tr '\n' ' ' <"$order_log")" = 'stop start '
   "$tmp/foreign/sing-box" run -c "$tmp/foreign.json" -D "$tmp/foreign" &
   foreign=$!
   magicnet_singbox_pids() { printf '%s\n' "$foreign"; }
-  magicnet_supervisors_stop() { :; }
+  magicnet_supervisors_stop_workers() { :; }
   magicnet_fswatch_status() { return 0; }
   magicnet_fswatch_start() { :; }
   ss() { printf 'LISTEN 0 4096 127.0.0.1:19090 0.0.0.0:* users:(("foreign",pid=%s,fd=1))\n' "$foreign"; }
@@ -491,7 +494,7 @@ test "$(tr '\n' ' ' <"$order_log")" = 'stop start '
     printf '999999\n' >"$2"
     return 0
   }
-  magicnet_supervisors_stop() { :; }
+  magicnet_supervisors_stop_workers() { :; }
   magicnet_fswatch_status() { return 1; }
   kill() { :; }
   MAGICNET_SUB_STOP_TIMEOUT=0 MAGICNET_SUB_KILL_TIMEOUT=0 \
@@ -502,7 +505,7 @@ test "$(tr '\n' ' ' <"$order_log")" = 'stop start '
     : >"$2"
     return 1
   }
-  magicnet_supervisors_stop() { :; }
+  magicnet_supervisors_stop_workers() { :; }
   magicnet_fswatch_status() { return 0; }
   magicnet_fswatch_start() { return 1; }
   ss() { :; }

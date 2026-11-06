@@ -56,6 +56,15 @@ wifi
 hotspot
 fswatch
 EOF
+: >"$start_order"
+magicnet_supervisors_start 0
+diff -u - "$start_order" <<'EOF'
+fingerprint
+connectivity
+subscription
+wifi
+hotspot
+EOF
 )
 
 mkdir -p "$MODDIR/.log"

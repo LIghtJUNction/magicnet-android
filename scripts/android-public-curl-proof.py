@@ -7,6 +7,7 @@ execution validates its logic only; it is not Android execution evidence.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import gzip
 import hashlib
 import http.server
@@ -31,6 +32,8 @@ WRONG_HOSTNAME = 'wrong.magicnet-curl-proof.test'
 TOTAL_SECONDS = 60
 CLEANUP_SECONDS = 8
 MAX_OUTPUT = 65536
+CERT_BACKDATE_SECONDS = 300
+CERT_LIFETIME_SECONDS = 86400
 EMBEDDED_CA_SIZE = 188900
 EMBEDDED_CA_SHA256 = 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505'
 # Fixed names only. Match trusted curl's proxy/loader/shell-hook clearing and
@@ -67,6 +70,41 @@ def checked(cp, *, code, expected=0, max_output=MAX_OUTPUT):
             and len(cp.stdout.encode('utf-8')) <= max_output
             and len(cp.stderr.encode('utf-8')) <= MAX_OUTPUT, 'curl_output_unknown')
     return cp.stdout
+
+
+def clock_observation(device, budget):
+    before = int(time.time())
+    timeout = budget.remaining(2)
+    guest = None
+    try:
+        cp = device.kshell('/system/bin/date -u +%s', timeout=timeout, check=False)
+        if (type(cp.returncode) is int and cp.returncode == 0 and isinstance(cp.stdout, str)
+                and re.fullmatch(r'[0-9]{1,12}\n?', cp.stdout)
+                and int(cp.stdout) <= 253402300799):
+            guest = int(cp.stdout)
+    except Exception:
+        pass  # Optional observation must not replace the TLS result or expose raw errors.
+    return {'host_before_utc_seconds': before, 'host_after_utc_seconds': int(time.time()),
+            'guest_utc_seconds': guest, 'guest_clock_status': 'observed' if guest is not None else 'unknown'}
+
+
+def curl_observation(cp):
+    code = cp.returncode if type(cp.returncode) is int and -255 <= cp.returncode <= 255 else None
+    stderr = cp.stderr if isinstance(cp.stderr, str) and len(cp.stderr) <= MAX_OUTPUT else ''
+    category = {0: 'none', 5: 'name_resolution', 6: 'name_resolution', 7: 'connect_failed',
+                28: 'timeout', 35: 'tls_handshake', 60: 'certificate_verify', 77: 'ca_file'}.get(code, 'unknown')
+    if code == 60:
+        for text, token in (('certificate is not yet valid', 'certificate_not_yet_valid'),
+                            ('certificate has expired', 'certificate_expired'),
+                            ('no alternative certificate subject name', 'hostname_mismatch'),
+                            ('self-signed certificate', 'untrusted_certificate'),
+                            ('unable to get local issuer certificate', 'untrusted_certificate')):
+            if text in stderr.lower():
+                category = token
+                break
+    # Only bounded scalar observations leave this function; never serialize curl's text.
+    return {'exit_code': code, 'reported_error': category,
+            'stderr_present': bool(cp.stderr) if isinstance(cp.stderr, str) else None}
 
 
 def clean_command(args):
@@ -154,12 +192,29 @@ def certificate(work, budget):
     openssl = shutil.which('openssl')
     require(openssl is not None, 'curl_host_tls_unavailable')
     cert, key = work / 'public-test-ca.pem', work / 'private-server-key.pem'
+    request, config = work / 'request.pem', work / 'ca.conf'
     key.touch(mode=0o600, exist_ok=False)
-    args = [openssl, 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
-            '-nodes', '-days', '1', '-sha256', '-subj', '/CN=' + HOSTNAME,
-            '-addext', 'subjectAltName=DNS:' + HOSTNAME,
-            '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', str(key), '-out', str(cert)]
+    args = [openssl, 'req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+            '-nodes', '-sha256', '-subj', '/CN=' + HOSTNAME,
+            '-keyout', str(key), '-out', str(request)]
     checked(subprocess.run(args, capture_output=True, text=True, timeout=budget.remaining(8)),
+            code='curl_host_tls_unavailable')
+    # OpenSSL 3.0's ca command can bound notBefore explicitly. The ephemeral
+    # certificate tolerates a small guest-clock lag without changing either
+    # clock or disabling certificate/hostname verification.
+    config.write_text('[ca]\ndefault_ca = proof\n[proof]\ndatabase = index.txt\nserial = serial.txt\nnew_certs_dir = .\n'
+                      'default_md = sha256\npolicy = subject\nx509_extensions = extensions\n'
+                      '[subject]\ncommonName = supplied\n[extensions]\n'
+                      'basicConstraints = critical,CA:TRUE\nsubjectAltName = DNS:' + HOSTNAME + '\n')
+    (work / 'index.txt').touch(exist_ok=False)
+    (work / 'serial.txt').write_text('01\n')
+    issued_at = int(time.time())
+    dates = [datetime.fromtimestamp(value, timezone.utc).strftime('%Y%m%d%H%M%SZ')
+             for value in (issued_at - CERT_BACKDATE_SECONDS, issued_at + CERT_LIFETIME_SECONDS)]
+    checked(subprocess.run([openssl, 'ca', '-selfsign', '-batch', '-notext', '-rand_serial',
+                            '-config', str(config), '-keyfile', str(key), '-in', str(request),
+                            '-out', str(cert), '-startdate', dates[0], '-enddate', dates[1]],
+                           cwd=work, capture_output=True, text=True, timeout=budget.remaining(8)),
             code='curl_host_tls_unavailable')
     require(key.is_file() and cert.is_file() and key.stat().st_mode & 0o777 == 0o600
             and 0 < cert.stat().st_size <= 16384, 'curl_host_tls_unknown')
@@ -167,6 +222,18 @@ def certificate(work, budget):
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(cert), str(key))
     return cert, context
+
+
+def certificate_observation(cert, budget):
+    text = checked(subprocess.run([shutil.which('openssl'), 'x509', '-in', str(cert), '-noout', '-dates'],
+                                  capture_output=True, text=True, timeout=budget.remaining(3)),
+                   code='curl_host_tls_unknown', max_output=256)
+    lines = text.splitlines()
+    require(len(lines) == 2 and lines[0].startswith('notBefore=') and lines[1].startswith('notAfter='),
+            'curl_host_tls_unknown')
+    before, after = [int(ssl.cert_time_to_seconds(line.split('=', 1)[1])) for line in lines]
+    require(after - before == CERT_BACKDATE_SECONDS + CERT_LIFETIME_SECONDS, 'curl_host_tls_unknown')
+    return {'not_before_utc_seconds': before, 'not_after_utc_seconds': after}
 
 
 class LocalServer(http.server.HTTPServer):
@@ -214,8 +281,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def verify(device):
+def verify(device, diagnostics=None):
     require(getattr(device, 'verified', None) is True, 'curl_device_unverified')
+    if diagnostics is None:
+        diagnostics = {}
+    diagnostics.update({'schema': 1, 'status': 'failed', 'controls': []})
     budget = Budget()
     server = thread = None
     ca_attempted = reverse_attempted = reverse_owned = False
@@ -226,8 +296,10 @@ def verify(device):
     counts = []
     try:
         versions = capabilities(device, budget)
+        diagnostics['clock'] = clock_observation(device, budget)
         with tempfile.TemporaryDirectory(prefix='magicnet-curl-proof-') as directory:
             cert, context = certificate(Path(directory), budget)
+            diagnostics['certificate'] = certificate_observation(cert, budget)
             body = ('magicnet-local-tls-' + secrets.token_hex(32) + '\n').encode('ascii')
             expected_hash = hashlib.sha256(body).hexdigest()
             server = LocalServer(context, body)
@@ -262,13 +334,19 @@ def verify(device):
                 (HOSTNAME, False, 60, 'curl_default_trust_reject_failed'),
             ):
                 before = server.count()
+                observed = {'control': ('positive' if expected_rc == 0 else
+                                        'hostname_reject' if trusted else 'default_trust_reject'),
+                            'expected_exit_code': expected_rc, 'exit_code': None,
+                            'reported_error': 'unknown', 'server_gets': None}
+                diagnostics['controls'].append(observed)
                 args = common + ['--resolve', f'{hostname}:{port}:127.0.0.1']
                 if trusted:
                     args += ['--cacert', remote_ca]
                 args += ['--url', f'https://{hostname}:{port}/proof']
                 cp = device.kshell(clean_command(args), timeout=budget.remaining(9), check=False)
-                output = checked(cp, code=code, expected=expected_rc)
                 delta = server.count() - before
+                observed.update(curl_observation(cp), server_gets=delta)
+                output = checked(cp, code=code, expected=expected_rc)
                 require(delta == (1 if expected_rc == 0 else 0), code)
                 if expected_rc == 0:
                     require(hashlib.sha256(output.encode('utf-8')).hexdigest() == expected_hash,
@@ -331,6 +409,7 @@ def verify(device):
             failure = RuntimeError('curl_deadline')
         if not cleaned:
             failure = RuntimeError('curl_cleanup_failed')
+        diagnostics['cleanup'] = cleaned
     if failure is not None:
         # Device exceptions can contain commands or raw output. Keep fixed codes only.
         code = str(failure)
@@ -343,8 +422,10 @@ def verify(device):
                    'curl_reverse_unknown', 'curl_reverse_collision',
                    'curl_hostname_reject_failed', 'curl_default_trust_reject_failed',
                    'curl_gzip_body_mismatch', 'curl_cleanup_failed', 'curl_proof_unknown'}
-        raise RuntimeError(code if code in allowed else 'curl_proof_unknown') from None
+        diagnostics['failure_code'] = code if code in allowed else 'curl_proof_unknown'
+        raise RuntimeError(diagnostics['failure_code']) from None
     require(counts == [1, 0, 0], 'curl_proof_unknown')
+    diagnostics['status'] = 'verified'
     return {'schema': 1, 'status': 'verified', 'https': True, 'ssl': True, 'resolve': True,
             'gzip': True, 'tls_positive': True, 'hostname_reject': True,
             'default_trust_reject': True, 'cleanup': True,

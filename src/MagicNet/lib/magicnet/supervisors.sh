@@ -12,20 +12,40 @@ magicnet_supervisor_target_pid_matches() (
 magicnet_supervisor_orphan_pids() (
     _mso_target="$1"
     _mso_keep_pid="${2:-}"
+    _mso_cli=''
+    _mso_alt_cli=''
     case "$_mso_target" in
-    fswatch) _mso_pid_file="${KAM_HOME:-$MODDIR}/.state/fswatch/$(magicnet_fswatch_name).pid" ;;
-    watchdog) _mso_pid_file="${KAM_HOME:-$MODDIR}/.state/watchdog/magicnet-kernel.pid" ;;
+    fswatch)
+        _mso_pid_file="${KAM_HOME:-$MODDIR}/.state/fswatch/$(magicnet_fswatch_name).pid"
+        _mso_cli="${KAM_HOME:-$MODDIR}/cli config apply"
+        ;;
+    watchdog)
+        _mso_pid_file="${KAM_HOME:-$MODDIR}/.state/watchdog/magicnet-kernel.pid"
+        _mso_cli="${KAM_HOME:-$MODDIR}/cli service ensure"
+        ;;
     hotspot-watchdog) _mso_pid_file="${KAM_HOME:-$MODDIR}/.state/watchdog/$(magicnet_hotspot_watchdog_name).pid" ;;
-    wifi-policy) _mso_pid_file="$(magicnet_wifi_policy_pid_file)" ;;
+    wifi-policy)
+        _mso_pid_file="$(magicnet_wifi_policy_pid_file)"
+        _mso_cli="${MODDIR}/cli wifi watch"
+        _mso_alt_cli="${MODDIR}/bin/magicnet-cli wifi watch"
+        ;;
     *) return 1 ;;
     esac
+    _mso_loop="${_mso_pid_file%.pid}.loop.sh"
+    [ "$_mso_target" != wifi-policy ] || _mso_loop=''
 
     # A failed ps may still emit a partial list. It cannot prove that no
     # managed process remains, nor authorize cleanup of only the visible set.
     _mso_ps=$(ps -A -o pid=,args= 2>/dev/null) || return 2
     if [ -n "$_mso_ps" ]; then
+        # Only inspect this supervisor's loop or worker command. A concurrent
+        # module CLI/core can have an unreadable cmdline without making this
+        # unrelated supervisor's ownership unknown. This is only a prefilter:
+        # exact /proc argv validation below still authorizes every signal.
         _mso_candidates=$(printf '%s\n' "$_mso_ps" |
-            awk -v root="$MODDIR" 'index($0, root) { print $1 }')
+            awk -v loop="$_mso_loop" -v cli="$_mso_cli" -v alt_cli="$_mso_alt_cli" '
+                (loop != "" && index($0, loop)) || (cli != "" && index($0, cli)) ||
+                (alt_cli != "" && index($0, alt_cli)) { print $1 }')
     else
         _mso_candidates=$(for _mso_proc in /proc/[0-9]*; do
             [ -d "$_mso_proc" ] && printf '%s\n' "${_mso_proc##*/}"
@@ -1419,6 +1439,10 @@ magicnet_supervisors_start_detached() {
 }
 
 magicnet_supervisors_start() {
+    # Subscription activation preserves an intentionally inactive fswatch,
+    # while restoring every other configured maintenance supervisor.
+    _mss_fswatch="${1:-1}"
+    case "$_mss_fswatch" in 0 | 1) ;; *) return 2 ;; esac
     magicnet_detach_pid_from_app_cgroup "$$" ||
         magicnet_warn "Failed to detach the supervisor launcher from the caller cgroup."
     _mss_rc=0
@@ -1431,6 +1455,7 @@ magicnet_supervisors_start() {
     fi
     for _mss_start in magicnet_connectivity_watchdog_start magicnet_subscription_refresh_start \
         magicnet_wifi_policy_start magicnet_hotspot_watchdog_start magicnet_fswatch_start; do
+        [ "$_mss_start" != magicnet_fswatch_start ] || [ "$_mss_fswatch" -eq 1 ] || continue
         if "$_mss_start"; then _mss_target_rc=0; else _mss_target_rc=$?; fi
         [ "$_mss_target_rc" -ne 2 ] || _mss_rc=2
         if [ "$_mss_target_rc" -ne 0 ] && [ "$_mss_start" != magicnet_fswatch_start ] && [ "$_mss_rc" -eq 0 ]; then
@@ -1440,7 +1465,7 @@ magicnet_supervisors_start() {
     return "$_mss_rc"
 }
 
-magicnet_supervisors_stop() {
+magicnet_supervisors_stop_workers() {
     _mss_stop_rc=0
     for _mss_stop in magicnet_watchdog_stop magicnet_fswatch_stop \
         magicnet_wifi_policy_stop magicnet_subscription_refresh_stop; do
@@ -1453,8 +1478,12 @@ magicnet_supervisors_stop() {
         *) [ "$_mss_stop_rc" -ne 0 ] || _mss_stop_rc=1 ;;
         esac
     done
-    if [ "$_mss_stop_rc" -eq 0 ]; then
-        magicnet_hotspot_route_cleanup || _mss_stop_rc=$?
-    fi
     return "$_mss_stop_rc"
+}
+
+magicnet_supervisors_stop() {
+    # General stop callers still require both verified worker shutdown and
+    # route cleanup. Subscription restart handles these phases separately.
+    magicnet_supervisors_stop_workers || return $?
+    magicnet_hotspot_route_cleanup
 }
