@@ -95,44 +95,34 @@ pub(crate) fn mcp(app: &App, args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
-        "enable" => {
+        action @ ("enable" | "disable" | "set" | "secret" | "rotate-secret") => {
             let mut config = load_checked(app)?;
-            config.enabled = true;
-            apply_endpoint_args(&mut config, args)?;
-            ensure_secret(&mut config)?;
-            write_conf(app, &config)?;
-            start(app)
-        }
-        "disable" => {
-            let mut config = load_checked(app)?;
-            config.enabled = false;
-            write_conf(app, &config)?;
-            stop(app)
-        }
-        "set" => {
-            let mut config = load_checked(app)?;
-            apply_endpoint_args(&mut config, args)?;
-            ensure_secret(&mut config)?;
-            write_conf(app, &config)?;
-            println!("[info] MCP endpoint set: {}", config.url());
-            Ok(())
-        }
-        "secret" => {
-            let mut config = load_checked(app)?;
-            ensure_secret(&mut config)?;
-            write_conf(app, &config)?;
-            println!("{}", config.secret);
-            Ok(())
-        }
-        "rotate-secret" => {
-            let mut config = load_checked(app)?;
-            config.secret = generate_secret()?;
-            write_conf(app, &config)?;
-            if live_pid(app).is_some() {
-                let _ = stop(app);
-                start(app)?;
+            match action {
+                "enable" | "set" => {
+                    if action == "enable" { config.enabled = true; }
+                    apply_endpoint_args(&mut config, args)?;
+                    ensure_secret(&mut config)?;
+                }
+                "disable" => config.enabled = false,
+                "secret" => ensure_secret(&mut config)?,
+                "rotate-secret" => config.secret = generate_secret()?,
+                _ => unreachable!(),
             }
-            println!("[info] MCP secret rotated");
+            write_conf(app, &config)?;
+            match action {
+                "enable" => return start(app),
+                "disable" => return stop(app),
+                "set" => println!("[info] MCP endpoint set: {}", config.url()),
+                "secret" => println!("{}", config.secret),
+                "rotate-secret" => {
+                    if live_pid(app).is_some() {
+                        let _ = stop(app);
+                        start(app)?;
+                    }
+                    println!("[info] MCP secret rotated");
+                }
+                _ => unreachable!(),
+            }
             Ok(())
         }
         "start-if-enabled" => {

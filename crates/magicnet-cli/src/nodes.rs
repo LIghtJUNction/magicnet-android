@@ -160,28 +160,16 @@ fn scan_singbox_tags(app: &App, limit: usize, names: &mut Vec<String>) {
         if let Ok(json) = serde_json::from_str::<Value>(&text) {
             if let Some(outbounds) = json.get("outbounds").and_then(Value::as_array) {
                 let proxy_members = proxy_member_tags(outbounds);
-                if !proxy_members.is_empty() {
-                    for outbound in outbounds {
-                        let Some(name) = outbound.get("tag").and_then(Value::as_str) else {
-                            continue;
-                        };
-                        if proxy_members.contains(name) && is_real_outbound(outbound) {
-                            push_node(name, limit, names);
-                            if names.len() >= limit {
-                                return;
-                            }
-                        }
-                    }
-                } else {
-                    for outbound in outbounds {
-                        let Some(name) = outbound.get("tag").and_then(Value::as_str) else {
-                            continue;
-                        };
-                        if is_real_outbound(outbound) {
-                            push_node(name, limit, names);
-                            if names.len() >= limit {
-                                return;
-                            }
+                for outbound in outbounds {
+                    let Some(name) = outbound.get("tag").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if is_real_outbound(outbound)
+                        && (proxy_members.is_empty() || proxy_members.contains(name))
+                    {
+                        push_node(name, limit, names);
+                        if names.len() >= limit {
+                            return;
                         }
                     }
                 }
@@ -226,22 +214,13 @@ fn refresh_node_cache(cache: &Path, names: &[String]) {
     let _ = fs::write(cache, text);
 }
 
-fn proxy_member_tags(outbounds: &[Value]) -> HashSet<String> {
-    let mut members = HashSet::new();
-    for outbound in outbounds {
-        if outbound.get("tag").and_then(Value::as_str) != Some("proxy") {
-            continue;
-        }
-        let Some(proxy_outbounds) = outbound.get("outbounds").and_then(Value::as_array) else {
-            continue;
-        };
-        for member in proxy_outbounds {
-            if let Some(tag) = member.as_str() {
-                members.insert(tag.to_string());
-            }
-        }
-    }
-    members
+fn proxy_member_tags(outbounds: &[Value]) -> HashSet<&str> {
+    outbounds
+        .iter()
+        .filter(|item| item["tag"] == "proxy")
+        .flat_map(|item| item["outbounds"].as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .collect()
 }
 
 fn is_real_outbound(outbound: &Value) -> bool {

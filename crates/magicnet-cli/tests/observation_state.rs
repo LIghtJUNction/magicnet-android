@@ -95,11 +95,16 @@ fn help_and_rejected_commands_do_not_create_state() {
 }
 
 #[test]
-fn json_flags_always_route_internal_update_worker_to_the_machine_dispatcher() {
+fn json_flags_always_route_internal_helpers_to_the_machine_dispatcher() {
     for args in [
         vec!["--json", "__module-update-worker", "request_1234"],
         vec!["__module-update-worker", "request_1234", "--json"],
         vec!["__module-update-worker", "--json"],
+        vec!["__proc-cmdline", "/proc/self/cmdline", "--json"],
+        vec!["__proc-comm", "/proc/self/comm", "--json"],
+        vec!["__proc-stat", "/proc/self/stat", "--json"],
+        vec!["__proc-pids", "magicnet-cli", "--json"],
+        vec!["__proc-script-pids", "/proc", "/nonexistent", "--json"],
     ] {
         let fixture = Fixture::new();
         let output = fixture.run(&args);

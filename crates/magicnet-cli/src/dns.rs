@@ -71,27 +71,21 @@ fn dns_test_curl_args(url: &str) -> Vec<&str> {
 fn dns_status(app: &App) {
     let profile = dns_profile(app);
     println!("profile={profile}");
-    match profile.as_str() {
-        "cloudflare-udp" => {
-            println!("primary=1.1.1.1");
-            println!("secondary=1.0.0.1");
-            println!("transport=udp");
-        }
-        "cloudflare-dot" => {
-            println!("primary=tls://1.1.1.1");
-            println!("secondary=tls://1.0.0.1");
-            println!("transport=dot");
-        }
-        "cloudflare-doh" => {
-            println!("primary=https://cloudflare-dns.com/dns-query");
-            println!("secondary=https://1.0.0.1/dns-query");
-            println!("transport=doh");
-        }
-        _ => {
-            println!("primary=bootstrap-local-dns");
-            println!("transport=default");
-        }
+    let (primary, secondary, transport) = match profile.as_str() {
+        "cloudflare-udp" => ("1.1.1.1", Some("1.0.0.1"), "udp"),
+        "cloudflare-dot" => ("tls://1.1.1.1", Some("tls://1.0.0.1"), "dot"),
+        "cloudflare-doh" => (
+            "https://cloudflare-dns.com/dns-query",
+            Some("https://1.0.0.1/dns-query"),
+            "doh",
+        ),
+        _ => ("bootstrap-local-dns", None, "default"),
+    };
+    println!("primary={primary}");
+    if let Some(secondary) = secondary {
+        println!("secondary={secondary}");
     }
+    println!("transport={transport}");
 }
 
 fn dns_set(app: &App, profile: &str) -> Result<(), String> {

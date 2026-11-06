@@ -37,7 +37,6 @@ for _magicnet_lib in \
     chain \
     runtime_config \
     supervisors \
-    singbox_lifecycle \
     core \
     lifecycle \
     action_menu \

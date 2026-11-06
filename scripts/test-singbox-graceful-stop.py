@@ -2,12 +2,13 @@
 """Run the shipped shell shutdown with simulated process/time side effects.
 
 This verifies lifecycle ordering, not Android firewall or network connectivity.
-Set MAGICNET_TEST_SINGBOX_COMPAT=0 for a negative control against pinned kamfw.
-The loader and upstream helper are read from the checkout, not reimplemented.
+The shared loader and lifecycle helper are read from the checkout, not
+reimplemented. MAGICNET_TEST_KAMFW_DIR can select an unpublished dependency.
 """
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -16,15 +17,13 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-KAMFW = ROOT / "src/MagicNet/lib/kamfw"
-COMPAT = ROOT / "src/MagicNet/lib/magicnet/singbox_lifecycle.sh"
+KAMFW = Path(os.environ.get("MAGICNET_TEST_KAMFW_DIR", str(ROOT / "src/MagicNet/lib/kamfw")))
 PRIMITIVES = ROOT / "src/MagicNet/lib/magicnet/primitives.sh"
-USE_COMPAT = os.environ.get("MAGICNET_TEST_SINGBOX_COMPAT", "1") != "0"
 # Execute the pinned loader verbatim without .kamfwrc's Android initialization.
 # Stubs below cover only rich/self and translations, never __singbox__ import.
 rc_source = (KAMFW / ".kamfwrc").read_text()
-LOADER = rc_source.split("_kamfw_load () {", 1)[1].split("\n_kamfw_list () {", 1)[0]
-LOADER = "_kamfw_load () {" + LOADER
+LOADER = re.search(r"^_kamfw_load\s*\(\)\s*\{.*?(?=^_kamfw_list\s*\()", rc_source,
+                   flags=re.MULTILINE | re.DOTALL).group()
 ENTRY = ROOT / "src/MagicNet/lib/magicnet.sh"
 SHELLS = [["sh"], ["bash"]]
 if shutil.which("busybox"):
@@ -64,10 +63,11 @@ set_i18n() { :; }
 i18n() { printf '%s\n' "$1"; }
 print() { :; }
 . __PRIMITIVES__
-__LOAD_HELPER__
-# Production lifecycle/status callers import this again. It must not silently
-# restore the pinned one-second implementation after loading the overlay.
 import __singbox__
+# Production lifecycle/status callers import this again. It must not silently
+# replace or double-initialize the already loaded shared implementation.
+import __singbox__
+case " $KAM_MODULES " in *" __singbox__ "*) ;; *) exit 1 ;; esac
 event() { printf '%s\n' "$*" >>"$MODDIR/events"; }
 info() { :; }
 warn() { event "warn:$*"; }
@@ -178,8 +178,6 @@ __ASSERTIONS__
                     script = script.replace("__SCENARIO__", shlex.quote(scenario))
                     script = script.replace("__LOADER__", LOADER)
                     script = script.replace("__PRIMITIVES__", shlex.quote(str(PRIMITIVES)))
-                    load_helper = (". " + shlex.quote(str(COMPAT))) if USE_COMPAT else "import __singbox__"
-                    script = script.replace("__LOAD_HELPER__", load_helper)
                     script = script.replace("__COMMAND__", "singbox_start" if start else "singbox_stop")
                     script = script.replace("__ASSERTIONS__", assertions)
                     result = subprocess.run(shell + ["-c", script], capture_output=True,
@@ -189,10 +187,11 @@ __ASSERTIONS__
                     if "parent-exit" in assertions:
                         self.assertTrue((mod / "parent-exit").is_file())
 
-    def test_overlay_is_in_the_production_entrypoint(self):
+    def test_production_uses_the_shared_lifecycle(self):
         entry = ENTRY.read_text()
-        self.assertIn("    singbox_lifecycle " + chr(92) + chr(10), entry)
-        self.assertLess(entry.index("    common "), entry.index("    singbox_lifecycle "))
+        self.assertNotIn("singbox_lifecycle", entry)
+        self.assertIn("import __singbox__", (ENTRY.parent / "magicnet/core.sh").read_text())
+        self.assertFalse((ENTRY.parent / "magicnet/singbox_lifecycle.sh").exists())
 
     def test_three_second_teardown_finishes_without_sigkill(self):
         self.run_case("slow", r'''

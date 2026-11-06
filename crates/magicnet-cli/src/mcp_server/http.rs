@@ -207,26 +207,18 @@ fn parse_request_head(headers: &str) -> Result<usize, RequestError> {
 }
 
 fn parse_request_line(line: &str) -> Result<(&str, &str, &str), RequestError> {
-    if line.contains('\r') || line.contains('\n') {
-        return Err(RequestError::BadRequest("malformed request line"));
-    }
     let mut fields = line.split(' ');
-    let method = fields
-        .next()
-        .filter(|field| !field.is_empty())
-        .ok_or(RequestError::BadRequest("malformed request line"))?;
-    let path = fields
-        .next()
-        .filter(|field| !field.is_empty())
-        .ok_or(RequestError::BadRequest("malformed request line"))?;
-    let version = fields
-        .next()
-        .filter(|field| !field.is_empty())
-        .ok_or(RequestError::BadRequest("malformed request line"))?;
-    if fields.next().is_some() {
-        return Err(RequestError::BadRequest("malformed request line"));
+    match (fields.next(), fields.next(), fields.next(), fields.next()) {
+        (Some(method), Some(path), Some(version), None)
+            if !method.is_empty()
+                && !path.is_empty()
+                && !version.is_empty()
+                && !line.contains(['\r', '\n']) =>
+        {
+            Ok((method, path, version))
+        }
+        _ => Err(RequestError::BadRequest("malformed request line")),
     }
-    Ok((method, path, version))
 }
 
 fn valid_header_name(name: &str) -> bool {

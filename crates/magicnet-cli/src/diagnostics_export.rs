@@ -295,32 +295,48 @@ impl Collector {
     }
 
     fn append(&mut self, title: &str, text: &str) {
-        let safe = text
-            .lines()
-            .map(|line| self.privacy.line(line))
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.append_safe(title, &safe);
+        let mut redacted = text.lines().map(|line| self.privacy.line(line)).peekable();
+        // Preserve the old join/lines treatment of a final empty redacted line.
+        let lines = std::iter::from_fn(|| {
+            let line = redacted.next()?;
+            (!line.is_empty() || redacted.peek().is_some()).then_some(line)
+        });
+        Self::append_lines(&mut self.report, &mut self.truncated_sections, title, lines);
     }
 
     fn append_safe(&mut self, title: &str, text: &str) {
-        self.report.push_str(&format!("\n[{title}]\n"));
-        let start = self.report.len();
-        if text.is_empty() {
-            self.report
-                .push_str("status=unavailable reason=no_evidence\n");
-        }
-        for line in text.lines() {
-            if self.report.len() - start + line.len() > SECTION_LIMIT
-                || self.report.len() + line.len() > REPORT_LIMIT - 8192
+        Self::append_lines(
+            &mut self.report,
+            &mut self.truncated_sections,
+            title,
+            text.lines(),
+        );
+    }
+
+    fn append_lines<S: AsRef<str>>(
+        report: &mut String,
+        truncated: &mut usize,
+        title: &str,
+        lines: impl Iterator<Item = S>,
+    ) {
+        report.push_str("\n[");
+        report.push_str(title);
+        report.push_str("]\n");
+        let start = report.len();
+        for line in lines {
+            let line = line.as_ref();
+            if report.len() - start + line.len() > SECTION_LIMIT
+                || report.len() + line.len() > REPORT_LIMIT - 8192
             {
-                self.report
-                    .push_str("status=truncated reason=report_output_limit\n");
-                self.truncated_sections += 1;
+                report.push_str("status=truncated reason=report_output_limit\n");
+                *truncated += 1;
                 break;
             }
-            self.report.push_str(line);
-            self.report.push('\n');
+            report.push_str(line);
+            report.push('\n');
+        }
+        if report.len() == start {
+            report.push_str("status=unavailable reason=no_evidence\n");
         }
     }
 
@@ -797,13 +813,12 @@ impl Privacy {
             }
         }
         let mut hide_next = false;
-        let safe = safe
-            .split_whitespace()
-            .map(|token| {
-                if hide_next {
-                    hide_next = false;
-                    return "<private-uid-or-comment>";
-                }
+        let mut filtered = String::with_capacity(safe.len());
+        for token in safe.split_whitespace() {
+            let value = if hide_next {
+                hide_next = false;
+                "<private-uid-or-comment>"
+            } else {
                 hide_next = matches!(
                     token,
                     "uidrange" | "uid" | "uid-owner" | "--uid-owner" | "--gid-owner" | "--comment"
@@ -816,10 +831,13 @@ impl Privacy {
                 } else {
                     token
                 }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        super::redact(&safe)
+            };
+            if !filtered.is_empty() {
+                filtered.push(' ');
+            }
+            filtered.push_str(value);
+        }
+        super::redact(&filtered)
     }
 
     fn symbol(&mut self, value: &str) -> String {

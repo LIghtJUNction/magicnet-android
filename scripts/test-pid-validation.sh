@@ -16,6 +16,7 @@ for shell in "${shells[@]}"; do
     export MODDIR
     mkdir -p "$MODDIR/lib" "$MODDIR/.state/sing-box"
     ln -s "$ROOT/src/MagicNet/lib/magicnet" "$MODDIR/lib/magicnet"
+    ln -s "${MAGICNET_TEST_KAMFW_DIR:-$ROOT/src/MagicNet/lib/kamfw}" "$MODDIR/lib/kamfw"
     shell_command=("$shell")
     if [[ "$shell" == busybox ]]; then shell_command+=(sh); fi
     "${shell_command[@]}" -s <<'SHELL'
@@ -28,7 +29,7 @@ error() { :; }
 . "$MODDIR/lib/magicnet/common.sh"
 . "$MODDIR/lib/magicnet/singbox_subscribe/update.sh"
 . "$MODDIR/lib/magicnet/singbox_subscribe/config.sh"
-. "$MODDIR/lib/magicnet/singbox_lifecycle.sh"
+. "$MODDIR/lib/kamfw/__singbox__.sh"
 
 assert_rc() {
     test_expected=$1

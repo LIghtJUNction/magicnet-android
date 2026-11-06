@@ -899,7 +899,7 @@ fn subscription_filters(app: &App) -> Vec<String> {
 
 pub(crate) fn normalize_subscription_filter_text(value: &str) -> Result<String, String> {
     let mut seen = HashSet::new();
-    let mut filters = Vec::new();
+    let mut output = String::new();
     for raw in value.lines() {
         let filter = raw.trim();
         if filter.is_empty() {
@@ -915,19 +915,16 @@ pub(crate) fn normalize_subscription_filter_text(value: &str) -> Result<String, 
         }
         let folded = filter.to_lowercase();
         if seen.insert(folded) {
-            filters.push(filter.to_string());
+            output.push_str(filter);
+            output.push('\n');
         }
-        if filters.len() > MAX_SUBSCRIPTION_FILTERS {
+        if seen.len() > MAX_SUBSCRIPTION_FILTERS {
             return Err(format!(
                 "subscription filter list supports at most {MAX_SUBSCRIPTION_FILTERS} entries"
             ));
         }
     }
-    if filters.is_empty() {
-        Ok(String::new())
-    } else {
-        Ok(format!("{}\n", filters.join("\n")))
-    }
+    Ok(output)
 }
 
 pub(crate) fn validate_subscription_user_agent(value: &str) -> Result<(), String> {

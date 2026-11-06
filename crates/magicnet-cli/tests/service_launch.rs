@@ -55,7 +55,18 @@ impl Fixture {
         }
         fs::write(root.join("module.prop"), "id=MagicNet\n").unwrap();
         fs::write(root.join(".config/sing-box/config.json"), "{}\n").unwrap();
-        fs::write(root.join("lib/kamfw/.kamfwrc"), "import() { :; }\n").unwrap();
+        // Use the shipped module loader without Android environment setup.
+        // Only unrelated dependencies are inert; lifecycle comes from kamfw.
+        let rc = include_str!("../../../src/MagicNet/lib/kamfw/.kamfwrc");
+        let start = rc.find("\n_kamfw_load").unwrap() + 1;
+        let end = start + rc[start..].find("\n_kamfw_list").unwrap();
+        fs::write(
+            root.join("lib/kamfw/.kamfwrc"),
+            format!("KAMFW_DIR=\"$MODDIR/lib/kamfw\"\nKAM_MODULES=''\n{}\nimport() {{ _kamfw_load \"$@\"; }}\n", &rc[start..end]),
+        ).unwrap();
+        for name in ["rich", "self", "__runtime__"] {
+            fs::write(root.join(format!("lib/kamfw/{name}.sh")), ":\n").unwrap();
+        }
         fs::write(
             root.join("lib/primitives.sh"),
             include_str!("../../../src/MagicNet/lib/magicnet/primitives.sh"),
@@ -87,8 +98,8 @@ impl Fixture {
         )
         .unwrap();
         fs::write(
-            root.join("lib/lifecycle.sh"),
-            include_str!("../../../src/MagicNet/lib/magicnet/singbox_lifecycle.sh"),
+            root.join("lib/kamfw/__singbox__.sh"),
+            include_str!("../../../src/MagicNet/lib/kamfw/__singbox__.sh"),
         )
         .unwrap();
         // Parallel fork/exec tests can inherit a copy's writable descriptor
@@ -120,7 +131,7 @@ error() { printf '%s\n' "$*" >&2; }
 i18n() { printf '%s\n' "$1"; }
 print() { :; }
 . "$MODDIR/lib/primitives.sh"
-. "$MODDIR/lib/lifecycle.sh"
+import __singbox__
 magicnet_proc_query_temp_create() { mktemp "$MODDIR/pids.XXXXXX"; }
 singbox_pids_to_file() {
     : >"$1"

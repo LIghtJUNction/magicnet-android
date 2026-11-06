@@ -105,174 +105,57 @@ fn call_tool(tool: &str, args: &Value, server: &Server) -> String {
         "magicnet_override_set" => super::extended::override_tool(server, "set", args),
         "magicnet_override_reset" => super::extended::override_tool(server, "reset", args),
         "magicnet_override_apply" => super::extended::override_tool(server, "apply", args),
-        "magicnet_network_set" => run_cli_owned(
+        "magicnet_network_set" => run_cli_fields(
             server,
-            vec![
-                "network".into(),
-                "set".into(),
-                args["ipv6_mode"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["ipv6_mode"].to_string()),
-                args["mtu"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["mtu"].to_string()),
-                args["udp_timeout"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["udp_timeout"].to_string()),
-            ],
+            args,
+            &["network", "set"],
+            &["ipv6_mode", "mtu", "udp_timeout"],
         ),
-        "magicnet_dns_set" => run_cli_owned(
-            server,
-            vec![
-                "dns".into(),
-                "set".into(),
-                args["profile"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["profile"].to_string()),
-            ],
-        ),
-        "magicnet_dns_test" => run_cli_owned(
-            server,
-            vec![
-                "dns".into(),
-                "test".into(),
-                args["domain"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["domain"].to_string()),
-            ],
-        ),
-        "magicnet_node_test" => run_cli_owned(
-            server,
-            vec![
-                "node".into(),
-                "test".into(),
-                args["name"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["name"].to_string()),
-            ],
-        ),
-        "magicnet_selector_select" => run_cli_owned(
-            server,
-            vec![
-                "api".into(),
-                "select".into(),
-                args["group"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["group"].to_string()),
-                args["node"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["node"].to_string()),
-            ],
-        ),
-        "magicnet_connection_close" => run_cli_owned(
-            server,
-            vec![
-                "api".into(),
-                "close".into(),
-                args["id"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["id"].to_string()),
-            ],
-        ),
-        "magicnet_subscription_schedule" => run_cli_owned(
-            server,
-            vec![
-                "sub".into(),
-                "schedule".into(),
-                "set".into(),
-                args["hours"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["hours"].to_string()),
-            ],
-        ),
-        "magicnet_route_domain" => run_cli_owned(
-            server,
-            vec![
-                "route".into(),
-                args["action"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["action"].to_string()),
-                args["target"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["target"].to_string()),
-                args["domain"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["domain"].to_string()),
-            ],
-        ),
-        "magicnet_supervisor_control" => run_cli_owned(
-            server,
-            vec![
-                "supervisor".into(),
-                args["action"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["action"].to_string()),
-                args["target"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| args["target"].to_string()),
-            ],
-        ),
+        "magicnet_dns_set" => run_cli_fields(server, args, &["dns", "set"], &["profile"]),
+        "magicnet_dns_test" => run_cli_fields(server, args, &["dns", "test"], &["domain"]),
+        "magicnet_node_test" => run_cli_fields(server, args, &["node", "test"], &["name"]),
+        "magicnet_selector_select" => {
+            run_cli_fields(server, args, &["api", "select"], &["group", "node"])
+        }
+        "magicnet_connection_close" => run_cli_fields(server, args, &["api", "close"], &["id"]),
+        "magicnet_subscription_schedule" => {
+            run_cli_fields(server, args, &["sub", "schedule", "set"], &["hours"])
+        }
+        "magicnet_route_domain" => {
+            run_cli_fields(server, args, &["route"], &["action", "target", "domain"])
+        }
+        "magicnet_supervisor_control" => {
+            run_cli_fields(server, args, &["supervisor"], &["action", "target"])
+        }
         "magicnet_status" => run_cli(server, &["--json", "service", "status"]),
         "magicnet_cli" => cli_args(server, args),
         "magicnet_service_control" => service_control(server, args),
-        "magicnet_core_select" => run_cli_owned(
-            server,
-            vec![
-                "core".into(),
-                "select".into(),
-                arg(args, "core").unwrap_or_else(|| "sing-box".to_string()),
-            ],
-        ),
+        "magicnet_core_select" => {
+            run_cli_defaults(server, args, &["core", "select"], &[("core", "sing-box")])
+        }
         "magicnet_config_apply" => run_cli(server, &["config", "apply"]),
-        "magicnet_config_get" => run_cli_owned(
+        "magicnet_config_get" => run_cli_defaults(
             server,
-            vec![
-                "config-editor".into(),
-                "get".into(),
-                arg(args, "target").unwrap_or_else(|| "sing-box".to_string()),
-            ],
+            args,
+            &["config-editor", "get"],
+            &[("target", "sing-box")],
         ),
         "magicnet_config_validate" => config_validate(server, args),
-        "magicnet_config_sync_template" => run_cli_owned(
+        "magicnet_config_sync_template" => run_cli_defaults(
             server,
-            vec![
-                "config-editor".into(),
-                "sync-template".into(),
-                arg(args, "target").unwrap_or_else(|| "sing-box".to_string()),
-            ],
+            args,
+            &["config-editor", "sync-template"],
+            &[("target", "sing-box")],
         ),
-        "magicnet_config_save_base64" => run_cli_owned(
+        "magicnet_config_save_base64" => run_cli_defaults(
             server,
-            vec![
-                "config-editor".into(),
-                "save".into(),
-                arg(args, "target").unwrap_or_else(|| "sing-box".to_string()),
-                arg(args, "content_base64").unwrap_or_default(),
-            ],
+            args,
+            &["config-editor", "save"],
+            &[("target", "sing-box"), ("content_base64", "")],
         ),
-        "magicnet_transparent_set" => run_cli_owned(
-            server,
-            vec![
-                "transparent".into(),
-                "set".into(),
-                arg(args, "mode").unwrap_or_default(),
-            ],
-        ),
+        "magicnet_transparent_set" => {
+            run_cli_defaults(server, args, &["transparent", "set"], &[("mode", "")])
+        }
         "magicnet_transparent_apply" => run_cli(server, &["transparent", "apply"]),
         "magicnet_health" => run_cli(server, &["health"]),
         "magicnet_block_list" => run_cli(server, &["block", "list"]),
@@ -300,91 +183,66 @@ fn call_tool(tool: &str, args: &Value, server: &Server) -> String {
             ],
         ),
         "magicnet_block_update" => run_cli(server, &["block", "update"]),
-        "magicnet_block_add_domain" => block_domain(server, args, "add-domain"),
-        "magicnet_block_remove_domain" => block_domain(server, args, "remove-domain"),
-        "magicnet_block_allow_rule" => block_rule(server, args, "allow-rule"),
-        "magicnet_block_unallow_rule" => block_rule(server, args, "unallow-rule"),
+        "magicnet_block_add_domain" => {
+            run_cli_defaults(server, args, &["block", "add-domain"], &[("suffix", "")])
+        }
+        "magicnet_block_remove_domain" => {
+            run_cli_defaults(server, args, &["block", "remove-domain"], &[("suffix", "")])
+        }
+        "magicnet_block_allow_rule" => {
+            run_cli_defaults(server, args, &["block", "allow-rule"], &[("rule", "")])
+        }
+        "magicnet_block_unallow_rule" => {
+            run_cli_defaults(server, args, &["block", "unallow-rule"], &[("rule", "")])
+        }
         "magicnet_block_diff" => run_cli(server, &["block", "diff"]),
         "magicnet_block_apply" => run_cli(server, &["block", "apply"]),
         "magicnet_subscription_list" => run_cli(server, &["sub", "list"]),
         "magicnet_subscription_set" => subscription_set(server, args),
         "magicnet_subscription_set_singbox_lines" => subscription_set_singbox_lines(server, args),
-        "magicnet_subscription_update" => run_cli_owned(
-            server,
-            vec![
-                "sub".into(),
-                "update".into(),
-                arg(args, "target").unwrap_or_else(|| "all".to_string()),
-            ],
-        ),
+        "magicnet_subscription_update" => {
+            run_cli_defaults(server, args, &["sub", "update"], &[("target", "all")])
+        }
         "magicnet_subscription_update_all" => run_cli(server, &["sub", "update-all"]),
         "magicnet_backup_export" => backup_export(server, args),
-        "magicnet_backup_restore_base64" => run_cli_owned(
+        "magicnet_backup_restore_base64" => run_cli_defaults(
             server,
-            vec![
-                "backup".into(),
-                "restore".into(),
-                arg(args, "password").unwrap_or_else(|| "-".to_string()),
-                arg(args, "content_base64").unwrap_or_default(),
-            ],
+            args,
+            &["backup", "restore"],
+            &[("password", "-"), ("content_base64", "")],
         ),
         "magicnet_pingtest" => run_cli(server, &["pingtest"]),
         "magicnet_speedtest" => run_cli(server, &["speedtest"]),
         "magicnet_topology" => run_cli(server, &["topology"]),
         "magicnet_sysroute_snapshot" => run_cli(server, &["sysroute", "snapshot"]),
         "magicnet_ecapture_status" => run_cli(server, &["ecapture", "status"]),
-        "magicnet_ecapture_help" => run_cli_owned(
-            server,
-            vec![
-                "ecapture".into(),
-                "help".into(),
-                arg(args, "command").unwrap_or_else(|| "tls".to_string()),
-            ],
-        ),
+        "magicnet_ecapture_help" => {
+            run_cli_defaults(server, args, &["ecapture", "help"], &[("command", "tls")])
+        }
         "magicnet_ecapture_tls" => ecapture_text(server, args, "tls"),
         "magicnet_ecapture_gotls" => ecapture_text(server, args, "gotls"),
         "magicnet_ecapture_pcap" => ecapture_pcap(server, args),
         "magicnet_support_bundle" => run_cli(server, &["support", "bundle"]),
         "magicnet_app_list" => run_cli(server, &["app", "list"]),
-        "magicnet_app_packages" => run_cli_owned(
-            server,
-            vec![
-                "app".into(),
-                "packages".into(),
-                arg(args, "query").unwrap_or_default(),
-            ],
-        ),
-        "magicnet_app_mode" => run_cli_owned(
-            server,
-            vec![
-                "app".into(),
-                "mode".into(),
-                arg(args, "mode").unwrap_or_else(|| "blacklist".to_string()),
-            ],
-        ),
+        "magicnet_app_packages" => {
+            run_cli_defaults(server, args, &["app", "packages"], &[("query", "")])
+        }
+        "magicnet_app_mode" => {
+            run_cli_defaults(server, args, &["app", "mode"], &[("mode", "blacklist")])
+        }
         "magicnet_app_add" => app_package(server, args, "add"),
         "magicnet_app_add_many" => app_add_many(server, args),
         "magicnet_app_remove" => app_package(server, args, "remove"),
         "magicnet_app_apply" => run_cli(server, &["app", "apply"]),
         "magicnet_mcp_control" => mcp_control(server, args),
-        "magicnet_api" => run_cli_owned(
-            server,
-            vec![
-                "api".into(),
-                arg(args, "action").unwrap_or_else(|| "groups".to_string()),
-            ],
-        ),
+        "magicnet_api" => run_cli_defaults(server, args, &["api"], &[("action", "groups")]),
         "magicnet_webui_status" => run_cli(server, &["webui", "status"]),
         "magicnet_webui_verify" => run_cli(server, &["webui", "verify"]),
-        "magicnet_webui_install_local" => run_cli_owned(
+        "magicnet_webui_install_local" => run_cli_defaults(
             server,
-            vec![
-                "webui".into(),
-                "install-local".into(),
-                arg(args, "url").unwrap_or_default(),
-                arg(args, "sha256").unwrap_or_default(),
-                arg(args, "name").unwrap_or_else(|| "custom".to_string()),
-            ],
+            args,
+            &["webui", "install-local"],
+            &[("url", ""), ("sha256", ""), ("name", "custom")],
         ),
         "magicnet_log_list" => log_list(server),
         "magicnet_log_read" => log_read(
@@ -402,11 +260,48 @@ fn call_tool(tool: &str, args: &Value, server: &Server) -> String {
     }
 }
 
+// The bridge has two explicit conversions: typed scalar fields preserve the
+// original JSON spelling, while optional string fields use their CLI default.
+fn run_cli_fields(server: &Server, args: &Value, prefix: &[&str], keys: &[&str]) -> String {
+    let values = prefix
+        .iter()
+        .map(|item| (*item).to_string())
+        .chain(keys.iter().map(|key| {
+            args[key]
+                .as_str()
+                .map_or_else(|| args[key].to_string(), str::to_owned)
+        }))
+        .collect();
+    run_cli_owned(server, values)
+}
+
+fn run_cli_defaults(
+    server: &Server,
+    args: &Value,
+    prefix: &[&str],
+    fields: &[(&str, &str)],
+) -> String {
+    let values = prefix
+        .iter()
+        .map(|item| (*item).to_string())
+        .chain(
+            fields
+                .iter()
+                .map(|(key, default)| args[key].as_str().unwrap_or(default).to_string()),
+        )
+        .collect();
+    run_cli_owned(server, values)
+}
+
 pub(crate) fn run_cli(server: &Server, args: &[&str]) -> String {
     run_cli_with_timeout(server, args, CLI_TIMEOUT)
 }
 
-fn run_cli_with_timeout(server: &Server, args: &[&str], timeout: Duration) -> String {
+fn run_cli_with_timeout<S: AsRef<std::ffi::OsStr>>(
+    server: &Server,
+    args: &[S],
+    timeout: Duration,
+) -> String {
     let mut command = Command::new(&server.cli);
     command.args(args);
     crate::process::sanitize_cli_child_environment(&mut command);
@@ -491,8 +386,7 @@ fn bounded_duration(args: &Value) -> usize {
 }
 
 fn run_cli_owned(server: &Server, args: Vec<String>) -> String {
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_cli(server, &refs)
+    run_cli_with_timeout(server, &args, CLI_TIMEOUT)
 }
 
 fn cli_args(server: &Server, args: &Value) -> String {
@@ -636,28 +530,6 @@ fn config_validate(server: &Server, args: &Value) -> String {
             ],
         ),
     }
-}
-
-fn block_domain(server: &Server, args: &Value, action: &str) -> String {
-    run_cli_owned(
-        server,
-        vec![
-            "block".into(),
-            action.into(),
-            arg(args, "suffix").unwrap_or_default(),
-        ],
-    )
-}
-
-fn block_rule(server: &Server, args: &Value, action: &str) -> String {
-    run_cli_owned(
-        server,
-        vec![
-            "block".into(),
-            action.into(),
-            arg(args, "rule").unwrap_or_default(),
-        ],
-    )
 }
 
 fn app_package(server: &Server, args: &Value, action: &str) -> String {

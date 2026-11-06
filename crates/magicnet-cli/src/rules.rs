@@ -91,12 +91,10 @@ pub(crate) fn app_cmd(app: &App, args: &[String]) -> Result<(), String> {
 fn app_list(app: &App) -> Result<(), String> {
     let mode = app_mode_value(app)?.unwrap_or_else(|| "blacklist".to_string());
     println!("mode={mode}");
-    println!("proxy apps:");
-    print_app_list_lines(&app_list_lines(app, "proxy")?);
-    println!("direct apps:");
-    print_app_list_lines(&app_list_lines(app, "direct")?);
-    println!("bypass apps:");
-    print_app_list_lines(&app_list_lines(app, "bypass")?);
+    for target in APP_POLICY_TARGETS {
+        println!("{target} apps:");
+        print_app_list_lines(&app_list_lines(app, target)?);
+    }
     Ok(())
 }
 
@@ -129,10 +127,7 @@ fn app_add(app: &App, args: &[String]) -> Result<(), String> {
     }
     let target_index = app_policy_target_index(target)?;
     let mut lists = app_policy_lists(app)?;
-    for lines in &mut lists {
-        lines.retain(|line| line != package);
-    }
-    lists[target_index].push(package.to_string());
+    assign_packages(&mut lists, target_index, &args[1..2]);
     write_app_policy_lists_transactionally(app, &lists)?;
     app_apply_and_restart(app)?;
     println!("[info] Added {package} to {target} app list");
@@ -145,28 +140,39 @@ fn app_add_many(app: &App, args: &[String]) -> Result<(), String> {
         return Err("Usage: cli app add-many <proxy|direct|bypass> <package...>".to_string());
     }
     let target_index = app_policy_target_index(target)?;
-    let packages = args.iter().skip(2).map(String::as_str).collect::<Vec<_>>();
-    for &package in &packages {
+    let packages = &args[2..];
+    for package in packages {
         if !valid_package_name(package) {
             return Err(format!("invalid package name: {package}"));
         }
     }
     let mut lists = app_policy_lists(app)?;
-    let mut added = 0usize;
-    for &package in &packages {
-        let already_targeted = lists[target_index].iter().any(|line| line == package);
-        for lines in &mut lists {
-            lines.retain(|line| line != package);
-        }
-        if !already_targeted {
-            added += 1;
-        }
-        lists[target_index].push(package.to_string());
-    }
+    let added = assign_packages(&mut lists, target_index, packages);
     write_app_policy_lists_transactionally(app, &lists)?;
     app_apply_and_restart(app)?;
     println!("[info] Added {added} packages to {target} app list");
     Ok(())
+}
+
+/// Move a batch once through the three lists. Repeated input retains the same
+/// last-occurrence order as sequential additions, without rescanning every list.
+fn assign_packages(lists: &mut [Vec<String>; 3], target: usize, packages: &[String]) -> usize {
+    let requested: HashSet<&str> = packages.iter().map(String::as_str).collect();
+    let added = {
+        let existing: HashSet<&str> = lists[target].iter().map(String::as_str).collect();
+        requested.difference(&existing).count()
+    };
+    for lines in lists.iter_mut() {
+        lines.retain(|package| !requested.contains(package.as_str()));
+    }
+    let mut seen = HashSet::new();
+    let ordered: Vec<_> = packages
+        .iter()
+        .rev()
+        .filter(|package| seen.insert(package.as_str()))
+        .collect();
+    lists[target].extend(ordered.into_iter().rev().cloned());
+    added
 }
 
 fn app_remove(app: &App, args: &[String]) -> Result<(), String> {
@@ -316,17 +322,21 @@ fn write_unique_lines(app: &App, path: PathBuf, lines: &[String]) -> Result<(), 
 
 fn unique_lines_text(lines: &[String]) -> String {
     let mut seen = HashSet::new();
-    let mut out = Vec::new();
+    let mut text = String::new();
     for line in lines
         .iter()
         .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
+        .filter(|line| !line.is_empty())
     {
-        if seen.insert(line.to_string()) {
-            out.push(line.to_string());
+        if seen.insert(line) {
+            text.push_str(line);
+            text.push('\n');
         }
     }
-    format!("{}\n", out.join("\n"))
+    if text.is_empty() {
+        text.push('\n');
+    }
+    text
 }
 
 pub(super) fn conf_dir(app: &App) -> PathBuf {

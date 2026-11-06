@@ -79,31 +79,29 @@ struct PolicyDecision {
 }
 
 pub(crate) fn wifi_cmd(app: &App, args: &[String]) -> Result<(), String> {
-    match args.first().map(String::as_str).unwrap_or("status") {
+    let command = args.first().map_or("status", String::as_str);
+    match command {
         "status" | "list" => print_status(app),
-        "enable" => set_enabled(app, true),
-        "disable" => set_enabled(app, false),
+        "enable" | "disable" => set_enabled(app, command == "enable"),
         "mode" => set_policy_mode(app, args.get(1).map(String::as_str).unwrap_or_default()),
         "interval" => set_interval(app, args.get(1).map(String::as_str).unwrap_or_default()),
-        "add-ssid" => update_list(app, ListKind::Ssid, &args[1..].join(" "), ListAction::Add),
-        "remove-ssid" => update_list(
-            app,
-            ListKind::Ssid,
-            &args[1..].join(" "),
-            ListAction::Remove,
-        ),
-        "add-bssid" => update_list(
-            app,
-            ListKind::Bssid,
-            args.get(1).map(String::as_str).unwrap_or_default(),
-            ListAction::Add,
-        ),
-        "remove-bssid" => update_list(
-            app,
-            ListKind::Bssid,
-            args.get(1).map(String::as_str).unwrap_or_default(),
-            ListAction::Remove,
-        ),
+        "add-ssid" | "remove-ssid" | "add-bssid" | "remove-bssid" => {
+            let action = if command.starts_with("add-") {
+                ListAction::Add
+            } else {
+                ListAction::Remove
+            };
+            if command.ends_with("-ssid") {
+                update_list(app, ListKind::Ssid, &args[1..].join(" "), action)
+            } else {
+                update_list(
+                    app,
+                    ListKind::Bssid,
+                    args.get(1).map_or("", String::as_str),
+                    action,
+                )
+            }
+        }
         "check" => {
             apply_once(app, true)?;
             Ok(())
@@ -240,11 +238,11 @@ fn update_list(app: &App, kind: ListKind, value: &str, action: ListAction) -> Re
             values.remove(&value);
         }
     }
-    let text = if values.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", values.into_iter().collect::<Vec<_>>().join("\n"))
-    };
+    let mut text = String::new();
+    for entry in values {
+        text.push_str(&entry);
+        text.push('\n');
+    }
     if text.len() as u64 > MAX_POLICY_LIST_BYTES {
         return Err("configuration exceeds the read limit".to_string());
     }
@@ -547,8 +545,8 @@ fn extract_ssid(text: &str) -> Option<String> {
                 continue;
             }
             let value = parse_field_value(&trimmed[index + marker.len()..]);
-            if valid_ssid(&value) {
-                return Some(value);
+            if valid_ssid(value) {
+                return Some(value.to_string());
             }
         }
     }
@@ -561,7 +559,7 @@ fn extract_bssid(text: &str) -> Option<String> {
         if trimmed.contains("WifiInfo") {
             if let Some(index) = line.find("BSSID:") {
                 let value = parse_field_value(&line[index + "BSSID:".len()..]);
-                if let Some(value) = normalize_bssid(&value) {
+                if let Some(value) = normalize_bssid(value) {
                     if value != "02:00:00:00:00:00" && value != "00:00:00:00:00:00" {
                         return Some(value);
                     }
@@ -577,23 +575,21 @@ fn extract_bssid(text: &str) -> Option<String> {
     None
 }
 
-fn parse_field_value(rest: &str) -> String {
+fn parse_field_value(rest: &str) -> &str {
     let clean = rest.trim_start();
     if let Some(quoted) = clean.strip_prefix('"') {
-        return quoted
+        quoted
             .split_once('"')
-            .map(|(value, _)| value)
-            .unwrap_or(quoted)
+            .map_or(quoted, |(value, _)| value)
             .trim()
-            .to_string();
+    } else {
+        clean
+            .split(',')
+            .next()
+            .unwrap_or(clean)
+            .trim()
+            .trim_matches('"')
     }
-    clean
-        .split(',')
-        .next()
-        .unwrap_or(clean)
-        .trim()
-        .trim_matches('"')
-        .to_string()
 }
 
 fn valid_ssid(value: &str) -> bool {
@@ -606,21 +602,30 @@ fn valid_ssid(value: &str) -> bool {
 }
 
 fn normalize_bssid(value: &str) -> Option<String> {
-    let clean = value
-        .trim()
-        .trim_matches(|ch: char| matches!(ch, '"' | ',' | '(' | ')'))
-        .replace('-', ":")
-        .to_ascii_lowercase();
-    let parts = clean.split(':').collect::<Vec<_>>();
-    if parts.len() == 6
-        && parts
-            .iter()
-            .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    let clean = value.trim().trim_matches(['"', ',', '(', ')']);
+    if clean.len() != 17
+        || !clean.bytes().enumerate().all(|(index, byte)| {
+            if index % 3 == 2 {
+                matches!(byte, b':' | b'-')
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
     {
-        Some(clean)
-    } else {
-        None
+        return None;
     }
+    Some(
+        clean
+            .bytes()
+            .map(|byte| {
+                if byte == b'-' {
+                    ':'
+                } else {
+                    byte.to_ascii_lowercase() as char
+                }
+            })
+            .collect(),
+    )
 }
 
 fn write_last_state(
@@ -629,26 +634,15 @@ fn write_last_state(
     decision: &PolicyDecision,
     current_mode: &str,
 ) -> Result<(), String> {
-    let values = [
-        (
-            "connected",
-            if network.connected { "1" } else { "0" }.to_string(),
-        ),
-        ("ssid", network.ssid.clone().unwrap_or_default()),
-        ("bssid", network.bssid.clone().unwrap_or_default()),
-        (
-            "matched",
-            if decision.matched { "1" } else { "0" }.to_string(),
-        ),
-        ("desired_mode", decision.desired_mode.to_string()),
-        ("current_mode", current_mode.to_string()),
-    ];
-    let expected = values
-        .iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
+    let expected = format!(
+        "connected={}\nssid={}\nbssid={}\nmatched={}\ndesired_mode={}\ncurrent_mode={}\n",
+        network.connected as u8,
+        network.ssid.as_deref().unwrap_or_default(),
+        network.bssid.as_deref().unwrap_or_default(),
+        decision.matched as u8,
+        decision.desired_mode,
+        current_mode,
+    );
     if fs::read_to_string(app.moddir.join(WIFI_LAST_STATE))
         .ok()
         .as_deref()
@@ -656,7 +650,7 @@ fn write_last_state(
     {
         return Ok(());
     }
-    write_kv(app, Path::new(WIFI_LAST_STATE), &values)
+    write_text_file(app, Path::new(WIFI_LAST_STATE), &expected)
 }
 
 /// Private, explicit editor view. Generic wifi.status remains redacted.
