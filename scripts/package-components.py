@@ -89,20 +89,33 @@ class ArchiveMember:
     def __len__(self) -> int:
         return self.info.file_size
 
+    def chunks(self):
+        size = 0
+        with self.archive.open(self.info) as stream:
+            while chunk := stream.read(1024 * 1024):
+                size += len(chunk)
+                yield chunk
+        # ZipExtFile verifies CRC but can accept overstated uncompressed sizes.
+        # Never publish a manifest whose declared length differs from its bytes.
+        if size != len(self):
+            raise ValueError(f"Archive member size mismatch: {self.info.filename}")
+
 
 Payload = bytes | ArchiveMember
 
 
 def read_payload(data: Payload) -> bytes:
-    return data.archive.read(data.info) if isinstance(data, ArchiveMember) else data
+    return b"".join(data.chunks()) if isinstance(data, ArchiveMember) else data
 
 
 def digest(data: Payload) -> str:
     if isinstance(data, bytes):
         return hashlib.sha256(data).hexdigest()
     if data.checksum is None:
-        with data.archive.open(data.info) as stream:
-            data.checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+        checksum = hashlib.sha256()
+        for chunk in data.chunks():
+            checksum.update(chunk)
+        data.checksum = checksum.hexdigest()
     return data.checksum
 
 
@@ -172,14 +185,13 @@ def write_zip(path: Path, entries: dict[str, tuple[zipfile.ZipInfo, Payload]]) -
                 # ZipFile.open uses ZipInfo's level (the public property arrived
                 # in Python 3.13); match writestr's level on older build hosts.
                 entry._compresslevel = 9
-                with data.archive.open(data.info) as source, out.open(entry, "w") as target:
-                    if data.checksum is not None:
-                        shutil.copyfileobj(source, target, 1024 * 1024)
-                    else:
-                        checksum = hashlib.sha256()
-                        while chunk := source.read(1024 * 1024):
+                with out.open(entry, "w") as target:
+                    checksum = hashlib.sha256() if data.checksum is None else None
+                    for chunk in data.chunks():
+                        if checksum is not None:
                             checksum.update(chunk)
-                            target.write(chunk)
+                        target.write(chunk)
+                    if checksum is not None:
                         data.checksum = checksum.hexdigest()
 
 

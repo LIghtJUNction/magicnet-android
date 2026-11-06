@@ -443,8 +443,9 @@ magicnet_fswatch_prune_names() {
         "${MAGICNET_FSWATCH_PRUNE_NAMES:-ui zashboard cache.db cache.db-wal cache.db-shm cache.db-journal} mcp.conf config-override.json config-override-active.json selector-selections.json" \
         'sing-box/.magicnet-staging sing-box/config.json sing-box/config.json.bak sing-box/config.json.new sing-box/config.json.route.new' \
         'sing-box/tailscale-auth.json.new sing-box/tailscale-auth.json.merged' \
-        'sing-box/config.json.tailscale.new sing-box/config.json.tailscale-auth.new sing-box/config.json.tailscale-scrub.new' \
+        'sing-box/config.json.tailscale.new sing-box/config.json.tailscale-auth.new sing-box/config.json.tailscale-inject.new sing-box/config.json.tailscale-scrub.new' \
         'sing-box/config.json.magicnet-selectors.new sing-box/config.json.magicnet-block.new sing-box/config.json.zashboard.new' \
+        'sing-box/config.json.magicnet-block.base sing-box/config.json.magicnet-block.base.magicnet-selectors.new' \
         'sing-box/config.json.app-policy.new sing-box/config.json.include-packages.tmp sing-box/config.json.include-uids.tmp' \
         'sing-box/config.json.exclude-uids.tmp sing-box/config.json.exclude-uids.tmp.new sing-box/config.json.magicnet-warp.new' \
         'sing-box/config.json.magicnet-dns.new sing-box/config.json.hotspot-policy.new sing-box/config.json.magicnet-route.new' \

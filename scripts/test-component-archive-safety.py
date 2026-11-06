@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import stat
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -141,6 +142,35 @@ class ArchiveSafetyTest(unittest.TestCase):
             packager.write_zip(self.root / 'copy.zip', entries)
             self.assertIsNone(source.testzip())
             self.assertEqual(offsets, {info.filename: info.header_offset for info in source.infolist()})
+
+    def test_declared_member_size_must_match_streamed_bytes(self):
+        # CRC alone does not detect an overstated size. Cover component writing,
+        # small metadata reads and the CLI-alias digest-only comparison path.
+        self.entries['cli'] = packager.zip_entry('cli', b'cli-fixture', 0o755)
+        for names in (('bin/sing-box',), ('module.prop',), ('cli',)):
+            with self.subTest(names=names):
+                # Equal declared lengths are necessary to reach alias hashing.
+                self.entries['cli'] = packager.zip_entry('cli', b'cli' if names == ('cli',) else b'cli-fixture', 0o755)
+                self.write()
+                raw = bytearray(self.archive.read_bytes())
+                with zipfile.ZipFile(self.archive) as source:
+                    expected = {name: source.read(name) for name in names}
+                    sizes = {name: source.getinfo('bin/magicnet-cli').file_size if name == 'cli'
+                             else source.getinfo(name).file_size + 100 for name in names}
+                    for name in names:
+                        info = source.getinfo(name)
+                        struct.pack_into('<I', raw, info.header_offset + 22, sizes[name])
+                    offset = source.start_dir
+                while raw[offset:offset + 4] == b'PK\x01\x02':
+                    name_size, extra_size, comment_size = struct.unpack_from('<HHH', raw, offset + 28)
+                    name = raw[offset + 46:offset + 46 + name_size].decode()
+                    if name in names:
+                        struct.pack_into('<I', raw, offset + 24, sizes[name])
+                    offset += 46 + name_size + extra_size + comment_size
+                self.archive.write_bytes(raw)
+                with zipfile.ZipFile(self.archive) as source:
+                    self.assertEqual({name: source.read(name) for name in names}, expected)
+                self.reject_without_output()
 
     def test_bootstrap_rejects_symlinks_before_extracting(self):
         module = self.root / 'module'
