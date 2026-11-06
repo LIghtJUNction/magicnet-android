@@ -98,6 +98,38 @@ class ArchiveSafetyTest(unittest.TestCase):
         with zipfile.ZipFile(self.output / 'MagicNet-full.zip') as archive:
             self.assertNotIn(name, archive.namelist())
 
+    def test_unsanitized_development_directories_are_rejected(self):
+        for name in ('tests/test_module.py', '.config/sing-box/tests/test_rules.py',
+                     'lib/kamfw/test/', 'webroot/__tests__/panel.js',
+                     'webroot/fixtures/input.json', 'webroot/__fixtures__/input.json',
+                     'webroot/__snapshots__/panel.snap', 'lib/bench/run.sh',
+                     'lib/benches/run.sh', 'lib/benchmark/run.sh',
+                     'lib/benchmarks/run.sh', 'coverage/index.html',
+                     'htmlcov/index.html', 'webroot/node_modules/pkg/index.js'):
+            with self.subTest(path=name):
+                self.write()
+                with zipfile.ZipFile(self.archive, 'a') as archive:
+                    archive.writestr(name, b'fixture')
+                self.reject_without_output()
+
+    def test_runtime_test_names_survive_every_final_archive(self):
+        runtime = {'bin/test': b'runtime command',
+                   '.config/sing-box/rules/test.srs': b'runtime rules',
+                   'lib/kamfw/test-support.sh': b'runtime helper',
+                   'webroot/contest.js': b'runtime web asset'}
+        self.entries.update({name: packager.zip_entry(name, data) for name, data in runtime.items()})
+        self.write()
+        manifest = self.split()
+        with zipfile.ZipFile(self.output / 'MagicNet-full.zip') as archive:
+            for name, data in runtime.items():
+                self.assertEqual(archive.read(name), data)
+        files = {item['path'] for component in manifest['components'] for item in component['files']}
+        self.assertTrue({'bin/test', '.config/sing-box/rules/test.srs', 'webroot/contest.js'} <= files)
+        for path in self.output.glob('*.zip'):
+            with self.subTest(archive=path.name), zipfile.ZipFile(path) as archive:
+                self.assertIsNone(archive.testzip())
+                self.assertFalse(any(packager.DEVELOPMENT_DIRECTORY.search(name) for name in archive.namelist()))
+
     def test_write_zip_does_not_mutate_source_central_directory(self):
         self.write()
         with zipfile.ZipFile(self.archive) as source:

@@ -41,6 +41,10 @@ if grep -Eq '(^/)|((^|/)\.\.(/|$))' "$entries_file"; then
     fail "zip contains an unsafe absolute or parent-traversal entry"
 fi
 
+if grep -Eq '(^|/)(tests?|__tests__|fixtures?|__fixtures__|__snapshots__|bench|benches|benchmarks?|coverage|htmlcov|node_modules)/' "$entries_file"; then
+    fail "zip contains tests, fixtures or development dependencies"
+fi
+
 require_entry module.prop
 require_entry customize.sh
 require_entry cli

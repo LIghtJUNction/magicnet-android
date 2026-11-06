@@ -33,6 +33,9 @@ remove_zip_entries '(^|/)\.git($|/)' "Removing git metadata from module artifact
 # These can enter the archive through module sources and submodules. Do not
 # strip dotfiles wholesale: .envrc and .kamfwrc are runtime configuration.
 remove_zip_entries '(^|/)(\.github|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache)(/|$)|(^|/)(\.gitignore|\.gitattributes|\.gitmodules|\.DS_Store|Thumbs\.db)$|\.py[co]$' "Removing development metadata and caches from module artifact"
+# Match directory segments, including empty directory entries, not runtime
+# commands or rules named test. Dependencies can carry their own nested tests.
+remove_zip_entries '(^|/)(tests?|__tests__|fixtures?|__fixtures__|__snapshots__|bench|benches|benchmarks?|coverage|htmlcov|node_modules)/' "Removing tests, fixtures and development dependencies from module artifact"
 remove_zip_entries '^\.local/subscriptions\.env$' "Removing local subscription memory from module artifact"
 remove_zip_entries '(^|/)(mihomo|__mihomo__)(\.sh)?($|/)' "Removing legacy mihomo helpers from module artifact"
 remove_zip_entries '^bin/magicnet-ebpf$' "Removing the retired eBPF runtime binary from module artifact"

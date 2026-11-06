@@ -37,6 +37,22 @@ removed_entries=(
     '.pytest_cache/state'
     '.mypy_cache/state'
     '.ruff_cache/state'
+    'tests/test_module.py'
+    '.config/sing-box/tests/test_rules.py'
+    '.config/sing-box/test/data.json'
+    'lib/kamfw/tests/shell/fixture.sh'
+    'lib/kamfw/fixtures/input.json'
+    'lib/kamfw/fixture/input.json'
+    'webroot/__tests__/panel.test.js'
+    'webroot/__fixtures__/state.json'
+    'webroot/__snapshots__/panel.snap'
+    'lib/bench/runner.sh'
+    'lib/benches/runner.sh'
+    'lib/benchmark/runner.sh'
+    'lib/benchmarks/runner.sh'
+    'coverage/report.json'
+    'htmlcov/index.html'
+    'webroot/node_modules/runtime/index.js'
 )
 preserved_entries=(
     '.envrc'
@@ -53,11 +69,16 @@ preserved_entries=(
     'customize.sh'
     'service.sh'
     'webroot/index.html'
+    'bin/test'
+    '.config/sing-box/rules/test.srs'
+    'lib/kamfw/test-support.sh'
+    'webroot/contest.js'
 )
 for entry in "${removed_entries[@]}" "${preserved_entries[@]}"; do
     mkdir -p "$(dirname "$test_root/source/$entry")"
     printf 'fixture: %s\n' "$entry" > "$test_root/source/$entry"
 done
+mkdir -p "$test_root/source/lib/kamfw/empty/tests"
 # This exact shape used to trigger an archive-time kamfw source rewrite. The
 # sanitizer may remove unwanted entries, but must never patch dependency code.
 cat > "$test_root/source/lib/kamfw/__singbox__.sh" <<'FIXTURE'
@@ -99,6 +120,10 @@ for entry in "${removed_entries[@]}"; do
         exit 1
     fi
 done
+if grep -Eq '(^|/)(tests?|__tests__|fixtures?|__fixtures__|__snapshots__|bench|benches|benchmarks?|coverage|htmlcov|node_modules)/' "$test_root/archive-entries"; then
+    echo 'Development directory survived archive cleanup' >&2
+    exit 1
+fi
 for entry in "${preserved_entries[@]}"; do
     unzip -p "$artifact" "$entry" > "$test_root/preserved-entry"
     cmp "$test_root/source/$entry" "$test_root/preserved-entry"
