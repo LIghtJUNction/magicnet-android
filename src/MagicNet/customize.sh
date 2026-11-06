@@ -14,7 +14,7 @@ unset _magicnet_binary_path
 # before the manager has copied the rest of the payload.
 if unzip -o "$ZIPFILE" \
   ".config/kamfw/.envrc" \
-  "lib/kamfw/*" "lib/kamfw-web/*" "lib/magicnet/*" \
+  "lib/kamfw/*" "lib/magicnet/*" \
   "lib/magicnet_singbox_subscribe.sh" -d "$MODPATH" >&2 &&
   [ -f "$MODPATH/lib/kamfw/.kamfwrc" ]; then
   for _magicnet_log_path in "$MODPATH" "$MODPATH/.log" "$MODPATH/.log/kam.log"; do

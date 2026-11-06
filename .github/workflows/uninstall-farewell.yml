@@ -7,7 +7,7 @@ on:
       - 'src/MagicNet/uninstall.sh'
       - 'src/MagicNet/lib/magicnet/uninstall.sh'
       - 'src/MagicNet/lib/magicnet/farewell/**'
-      - 'src/MagicNet/lib/kamfw-web/**'
+      - 'src/MagicNet/lib/kamfw'
       - '.github/ISSUE_TEMPLATE/uninstall_feedback.md'
       - 'scripts/test-uninstall*.py'
       - '.github/workflows/uninstall-farewell.yml'
@@ -17,7 +17,7 @@ on:
       - 'src/MagicNet/uninstall.sh'
       - 'src/MagicNet/lib/magicnet/uninstall.sh'
       - 'src/MagicNet/lib/magicnet/farewell/**'
-      - 'src/MagicNet/lib/kamfw-web/**'
+      - 'src/MagicNet/lib/kamfw'
       - '.github/ISSUE_TEMPLATE/uninstall_feedback.md'
       - 'scripts/test-uninstall*.py'
       - '.github/workflows/uninstall-farewell.yml'
@@ -37,6 +37,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Initialize pinned kamfw only
+        run: git submodule update --init --depth 1 src/MagicNet/lib/kamfw
       - name: Install host dependencies
         run: |
           sudo apt-get update
@@ -46,6 +48,7 @@ jobs:
           shellcheck -s sh -e SC1090,SC1091,SC2015,SC2034,SC2329
           src/MagicNet/uninstall.sh
           src/MagicNet/lib/magicnet/uninstall.sh
+          src/MagicNet/lib/kamfw/launcher.sh
       - name: Test cleanup and real temporary BusyBox server
         timeout-minutes: 2
         run: python3 scripts/test-uninstall.py

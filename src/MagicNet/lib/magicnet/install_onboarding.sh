@@ -51,11 +51,6 @@ magicnet_onboarding_find_busybox() (
     exit 1
 )
 
-magicnet_onboarding_android_am() {
-    "$MN_SETUP_BB" timeout 5 /system/bin/am "$@" --user current \
-        -c android.intent.category.BROWSABLE
-}
-
 magicnet_onboarding_android_command() {
     case "$1" in am | cmd) ;; *) return 127 ;; esac
     _android_tool=$1
@@ -65,27 +60,14 @@ magicnet_onboarding_android_command() {
 
 magicnet_onboarding_open() (
     unset LD_LIBRARY_PATH LD_PRELOAD
-    # Keep the upstream framework untouched. The browser extension from #186 is
-    # loaded only in this subshell; all other module launch callers keep their API.
     import launcher || exit 1
-    if [ -n "${MODPATH:-}" ] && [ -f "$MODPATH/lib/kamfw-web/launcher.sh" ]; then
-        . "$MODPATH/lib/kamfw-web/launcher.sh" || exit 1
-        PATH="/system/bin:${PATH:-}"
-        export PATH
-        # Called indirectly by the extension's launch browser dispatcher.
-        # shellcheck disable=SC2317
-        _launch_run() { magicnet_onboarding_android_command "$@"; }
-        launch browser "$1" >"$MN_SETUP_RUN/browser.log" 2>&1
-        exit "$?"
-    fi
-    # Backward-compatible fallback for older packages without the extension.
-    # Called indirectly by the pinned kamfw launcher; covered by host tests.
+    PATH="/system/bin:${PATH:-}"
+    export PATH
+    # Keep Android commands bounded by the installer's selected BusyBox.
+    # Called indirectly by kamfw's launch browser dispatcher.
     # shellcheck disable=SC2317
-    am() {
-        magicnet_onboarding_android_am "$@" >"$MN_SETUP_RUN/browser.log" 2>&1
-        exit "$?"
-    }
-    launch url "$1"
+    _launch_run() { magicnet_onboarding_android_command "$@"; }
+    launch browser "$1" >"$MN_SETUP_RUN/browser.log" 2>&1
 )
 
 magicnet_onboarding_collect() (

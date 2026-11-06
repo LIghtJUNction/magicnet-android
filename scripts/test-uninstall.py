@@ -26,7 +26,7 @@ class UninstallTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.module = self.root / "MagicNet"
         for name in ("uninstall.sh", "lib/magicnet/uninstall.sh",
-                     "lib/kamfw-web/launcher.sh", "lib/magicnet/farewell/index.html"):
+                     "lib/kamfw/launcher.sh", "lib/magicnet/farewell/index.html"):
             target = self.module / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(SOURCE / name, target)

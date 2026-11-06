@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise the production kamfw browser adapter with recorded Android commands.
+"""Exercise the production kamfw launcher with recorded Android commands.
 
-The original HTTP/CGI suite continues to exercise the old-launcher fallback.
-These tests cover the bundled extension, numeric foreground user, browser-role
-resolution, failure propagation, and the single production installer entry.
+These tests cover numeric foreground user, browser-role resolution, failure
+propagation, and the single production installer entry.
 """
 import os
 from pathlib import Path
@@ -39,8 +38,8 @@ class BrowserTests(unittest.TestCase):
     def launch(self, **overrides):
         with tempfile.TemporaryDirectory(prefix='magicnet-browser-') as tmp:
             module = Path(tmp)
-            (module / 'lib/kamfw-web').mkdir(parents=True)
-            shutil.copy(MODULE / 'lib/kamfw-web/launcher.sh', module / 'lib/kamfw-web/launcher.sh')
+            (module / 'lib/kamfw').mkdir(parents=True)
+            shutil.copy(MODULE / 'lib/kamfw/launcher.sh', module / 'lib/kamfw/launcher.sh')
             binaries = module / 'bin'
             binaries.mkdir()
             for name in ('am', 'cmd'):
@@ -53,7 +52,7 @@ class BrowserTests(unittest.TestCase):
             calls = module / 'calls'
             env = dict(os.environ, MODPATH=tmp, MN_SETUP_RUN=tmp,
                        MN_SETUP_BB=str(recorder), TEST_CALLS=str(calls),
-                       KAMFW_TEST_DIR=str(MODULE / 'lib/kamfw'),
+                       KAMFW_TEST_DIR=str(module / 'lib/kamfw'),
                        PATH=str(binaries) + ':' + os.environ.get('PATH', ''))
             env.update(overrides)
             script = '. "$1"; import() { . "$KAMFW_TEST_DIR/$1.sh"; }; magicnet_onboarding_open "$2"'

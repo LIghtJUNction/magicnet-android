@@ -93,7 +93,7 @@ printf '%s\\n' checked >"$MODPATH/core-called"
                 '.config/kamfw/.envrc': b'',
                 'lib/kamfw/.kamfwrc': b'',
                 'lib/kamfw/helper.sh': b'',
-                'lib/kamfw-web/helper.sh': b'',
+                'lib/kamfw/launcher.sh': b'',
                 'lib/magicnet/helper.sh': b'',
                 'lib/magicnet/install_config.sh': library_source,
                 'lib/magicnet_singbox_subscribe.sh': b'',

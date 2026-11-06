@@ -91,7 +91,7 @@ magicnet_farewell_stage() (
     "$_bb" cp "$_bb" "$_run/busybox" || exit 1
     "$_bb" chmod 700 "$_run/busybox" || exit 1
     "$_bb" cp "$MODDIR/lib/magicnet/uninstall.sh" "$_run/uninstall.sh" || exit 1
-    "$_bb" cp "$MODDIR/lib/kamfw-web/launcher.sh" "$_run/launcher.sh" || exit 1
+    "$_bb" cp "$MODDIR/lib/kamfw/launcher.sh" "$_run/launcher.sh" || exit 1
     _token=$("$_bb" od -An -N16 -tx1 /dev/urandom | "$_bb" tr -d ' \n')
     [ "${#_token}" = 32 ] || exit 1
     "$_bb" mkdir -p "$_run/www/$_token" || exit 1

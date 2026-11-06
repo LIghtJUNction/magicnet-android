@@ -48,9 +48,18 @@ class Session:
 print() { printf '%s\n' "$*"; }
 i18n() { printf '%s' "$1"; }
 import() { . "$KAMFW_TEST_DIR/$1.sh"; }
-magicnet_onboarding_android_am() {
-    printf '%s\n' "$@" >"$MODPATH/am-arguments"
-    return "$TEST_AM_RC"
+# Make Android tools discoverable; every actual call must use the bounded runner.
+am() { return 99; }
+cmd() { return 99; }
+magicnet_onboarding_android_command() {
+    case "$1 $2" in
+        'am get-current-user') printf '%s\n' 10 ;;
+        'cmd role') return 0 ;;
+        'am start' | 'cmd activity')
+            printf '%s\n' "$@" >"$MODPATH/am-arguments"
+            return "$TEST_AM_RC" ;;
+        *) return 99 ;;
+    esac
 }
 magicnet_onboarding_collect
 '''
@@ -136,7 +145,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertTrue((KAMFW / "launcher.sh").is_file(), "initialize the kamfw submodule")
 
     def test_shell_and_javascript_syntax(self):
-        for path in [HELPER, MODULE / "customize.sh", *(MODULE / "lib/magicnet/onboarding").glob("*.sh")]:
+        for path in [HELPER, KAMFW / "launcher.sh", MODULE / "customize.sh", *(MODULE / "lib/magicnet/onboarding").glob("*.sh")]:
             subprocess.run([BUSYBOX, "ash", "-n", str(path)], check=True)
         if shutil.which("node"):
             subprocess.run(["node", "--check", str(MODULE / "lib/magicnet/onboarding/app.js")], check=True)
@@ -211,12 +220,14 @@ magicnet_install_onboarding
             recorder.chmod(0o700)
             env = dict(os.environ, KAMFW_TEST_DIR=str(KAMFW), MN_SETUP_BB=str(recorder),
                        MN_SETUP_RUN=tmp, TEST_ARGS=str(Path(tmp) / "arguments"))
-            script = '. "$1"; import() { . "$KAMFW_TEST_DIR/$1.sh"; }; magicnet_onboarding_open "$2"'
+            script = ('. "$1"; import() { . "$KAMFW_TEST_DIR/$1.sh"; }; '
+                      'am() { return 99; }; cmd() { return 99; }; magicnet_onboarding_open "$2"')
             result = subprocess.run([BUSYBOX, "ash", "-c", script, "test", str(HELPER), "http://127.0.0.1:33333/#test"], env=env)
             self.assertEqual(result.returncode, 7)
             args = (Path(tmp) / "arguments").read_text().splitlines()
-            self.assertEqual(args, ["timeout", "5", "/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d",
-                                    "http://127.0.0.1:33333/#test", "--user", "current", "-c", "android.intent.category.BROWSABLE"])
+            self.assertEqual(args, ["timeout", "5", "/system/bin/cmd", "activity", "start-activity",
+                                    "--user", "current", "-a", "android.intent.action.VIEW", "-f", "0x10000000",
+                                    "-c", "android.intent.category.BROWSABLE", "-d", "http://127.0.0.1:33333/#test"])
             self.assertNotIn("-n", args)  # No hard-coded browser package/component.
 
     def test_http_security_boundaries(self):
@@ -374,7 +385,7 @@ magicnet_install_onboarding
         self.assertNotIn('launch url "https://github.com', source)
         helper = HELPER.read_text()
         self.assertIn('import launcher', helper)
-        self.assertIn('launch url "$1"', helper)
+        self.assertIn('launch browser "$1"', helper)
         self.assertNotIn('cli setup', helper)
 
 
