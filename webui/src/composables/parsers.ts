@@ -195,7 +195,7 @@ export function formatMcpUrl(bind: string, port: string): string {
 
 export const dnsDefaults: DnsState = {
   profile: "default",
-  primary: "bootstrap-local-dns",
+  primary: "doh-cloudflare",
   secondary: "",
   transport: "default",
 };

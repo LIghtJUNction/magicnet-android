@@ -64,8 +64,9 @@ magicnet_dns_apply_singbox() {
         | if ($remote | length) == 0 then . + [cf_https("doh-cloudflare"; "1.1.1.1")]
           elif ($remote | length) == 1 and $remote[0].type == "https"
             and $remote[0].detour == "proxy"
+            and (($remote[0].tls.insecure // false) == false)
             and ($remote[0].server | type == "string" and length > 0) then .
-          else error("default DNS requires one doh-cloudflare HTTPS server with proxy detour")
+          else error("default DNS requires one doh-cloudflare HTTPS server with proxy detour and verified TLS")
           end;
       def server_for($profile; $tag; $server):
         if $profile == "cloudflare-udp" then cf_udp($tag; $server)

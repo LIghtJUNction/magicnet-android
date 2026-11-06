@@ -249,7 +249,11 @@ direct/domain rules and proxy endpoint bootstrap keep their own resolvers.
 A standalone configuration or an explicit configuration override can define a
 different effective graph; this profile readback does not attest to live DNS
 egress. The health check examines the effective configuration's default DNS
-references, and the packet regression verifies the managed proxy path.
+references, neutral matcher values and configured outbound chain; it does not
+infer a proxy from its tag alone. The packet regression verifies the managed
+proxy path. Applying the managed default rejects a resolver that disables TLS
+verification. A failed profile materialization restores the previous saved
+profile under the shared configuration lock and reports any rollback failure.
 
 The `dns_capture_preflight` capability adds the explicit read-only
 `cli --json network preflight` command (`network.preflight` envelope):

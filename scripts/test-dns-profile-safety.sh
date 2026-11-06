@@ -135,6 +135,7 @@ for mutation in \
   '(.dns.servers[] | select(.tag == "doh-cloudflare")).detour = "direct"' \
   '(.dns.servers[] | select(.tag == "doh-cloudflare")).type = "local"' \
   '(.dns.servers[] | select(.tag == "doh-cloudflare")).server = ""' \
+  '(.dns.servers[] | select(.tag == "doh-cloudflare")).tls.insecure = true' \
   '.dns.servers += [.dns.servers[] | select(.tag == "doh-cloudflare")]'; do
   jq "$mutation" "$WORK/managed-dns.json" >"$WORK/conflicting-dns.json"
   cp "$WORK/conflicting-dns.json" "$MODDIR/.config/sing-box/config.json"

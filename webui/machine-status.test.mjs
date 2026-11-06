@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { decodeMachineData, machineErrorCode, machineFailureText, parseMachineDns, parseMachineNetwork, parseMachineNetworkPreflight, parseMachineRuntime } from "./src/composables/machineStatus.ts";
+import { dnsDefaults } from "./src/composables/parsers.ts";
 
 const envelope = (command, data) => JSON.stringify({ schema: 1, ok: true, command, data });
-const dns = { profile: "default", primary: "bootstrap-local-dns", secondary: null, transport: "default" };
+const dns = { profile: "default", primary: "doh-cloudflare", secondary: null, transport: "default" };
 const network = {
   configured: { ipv6_mode: "prefer_ipv4", mtu: 1400, udp_timeout: "5m" },
   effective: { ipv6_mode: "ipv4_only", stack: "mixed", mtu: 1280, udp_timeout: "3m" },
@@ -48,7 +49,9 @@ test("unsupported machine commands stay errors rather than enabling legacy fallb
 });
 
 test("DNS shape validation is shared and nullable secondary clears stale values", () => {
-  assert.deepEqual(parseMachineDns(envelope("dns.status", dns)), { ...dns, secondary: "" });
+  assert.deepEqual(dnsDefaults, { profile: "default", primary: "doh-cloudflare", secondary: "", transport: "default" });
+  assert.deepEqual(parseMachineDns(envelope("dns.status", dns)), dnsDefaults);
+  assert.equal(parseMachineDns(""), null);
   for (const invalid of [{}, { ...dns, profile: "unsupported" }, { ...dns, primary: null },
     { ...dns, secondary: false }, { ...dns, transport: "quic" }]) {
     assert.equal(parseMachineDns(envelope("dns.status", invalid)), null);

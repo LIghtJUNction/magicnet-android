@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::service::restart_current_core;
+use crate::service::{config_apply_lock, restart_current_core_locked};
 use crate::{run_magicnet_function, write_text_file, App};
 
 const DNS_CONF: &str = ".config/magicnet/dns.conf";
@@ -19,8 +19,9 @@ pub(crate) fn dns_cmd(app: &App, args: &[String]) -> Result<(), String> {
             args.get(1).map(String::as_str).unwrap_or("www.gstatic.com"),
         ),
         "apply" => {
+            let guard = config_apply_lock(app)?;
             run_magicnet_function(app, "magicnet_dns_apply")?;
-            restart_current_core(app)
+            restart_current_core_locked(app, &guard)
         }
         _ => Err(dns_usage()),
     }
@@ -90,14 +91,29 @@ fn dns_status(app: &App) {
 
 fn dns_set(app: &App, profile: &str) -> Result<(), String> {
     let profile = normalize_profile(profile)?;
-    write_text_file(
-        app,
-        Path::new(DNS_CONF),
-        &format!("MAGICNET_DNS_PROFILE={profile}\n"),
-    )?;
-    run_magicnet_function(app, "magicnet_dns_apply")?;
-    restart_current_core(app)?;
+    let guard = config_apply_lock(app)?;
+    apply_dns_profile(app, profile)?;
+    restart_current_core_locked(app, &guard)?;
     println!("[info] DNS profile set to {profile}");
+    Ok(())
+}
+
+fn apply_dns_profile(app: &App, profile: &str) -> Result<(), String> {
+    let path = Path::new(DNS_CONF);
+    let previous = crate::utils::read_module_text_bounded(app, path, 64 * 1024)?;
+    write_text_file(app, path, &format!("MAGICNET_DNS_PROFILE={profile}\n"))?;
+    if let Err(error) = run_magicnet_function(app, "magicnet_dns_apply") {
+        let restored = match previous {
+            Some(text) => write_text_file(app, path, &text),
+            None => crate::utils::remove_module_file(app, path),
+        };
+        restored.map_err(|restore| {
+            format!("DNS apply failed: {error}; saved DNS profile rollback failed: {restore}")
+        })?;
+        return Err(format!(
+            "DNS apply failed; previous DNS profile restored: {error}"
+        ));
+    }
     Ok(())
 }
 
@@ -153,7 +169,116 @@ fn dns_usage() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{dns_test_curl_args, normalize_test_domain, DNS_TEST_PROXY};
+    use super::{
+        apply_dns_profile, dns_set, dns_test_curl_args, normalize_test_domain, DNS_CONF,
+        DNS_TEST_PROXY,
+    };
+    use crate::test_support::{temp_app, TempApp};
+    use std::fs;
+
+    fn profile_fixture(previous: Option<&str>, apply_body: &str) -> TempApp {
+        let app = temp_app();
+        fs::create_dir_all(app.moddir.join(".config/magicnet")).unwrap();
+        fs::create_dir_all(app.moddir.join("lib/kamfw")).unwrap();
+        if let Some(previous) = previous {
+            fs::write(app.moddir.join(DNS_CONF), previous).unwrap();
+        }
+        fs::write(app.moddir.join("lib/kamfw/.kamfwrc"), "import() { :; }\n").unwrap();
+        fs::write(
+            app.moddir.join("lib/magicnet.sh"),
+            format!(
+                "magicnet_dns_apply() {{\ncp \"$MODDIR/{DNS_CONF}\" \"$MODDIR/attempted-profile\"\n{apply_body}\n}}\nmagicnet_start_kernel() {{ touch \"$MODDIR/started\"; }}\nmagicnet_stop_kernel() {{ touch \"$MODDIR/stopped\"; }}\n"
+            ),
+        )
+        .unwrap();
+        app
+    }
+
+    #[test]
+    fn dns_profile_waits_for_shared_config_owner_before_writing() {
+        let original = "MAGICNET_DNS_PROFILE=cloudflare-dot\n";
+        let app = profile_fixture(Some(original), "return 0");
+        let _guard = crate::service::config_apply_lock(&app).unwrap();
+        let error = dns_set(&app, "default").unwrap_err();
+        assert!(error.contains("config apply is still busy"), "{error}");
+        assert_eq!(
+            fs::read_to_string(app.moddir.join(DNS_CONF)).unwrap(),
+            original
+        );
+        assert!(!app.moddir.join("attempted-profile").exists());
+    }
+
+    #[test]
+    fn failed_dns_apply_restores_exact_previous_intent_or_absence() {
+        for previous in [
+            None,
+            Some("# original settings\r\nMAGICNET_DNS_PROFILE='cloudflare-dot'\r\n\n"),
+        ] {
+            let app = profile_fixture(previous, "return 42");
+            let error = dns_set(&app, "default").unwrap_err();
+            assert!(
+                error.contains("magicnet_dns_apply failed with status 42"),
+                "{error}"
+            );
+            assert_eq!(
+                fs::read_to_string(app.moddir.join("attempted-profile")).unwrap(),
+                "MAGICNET_DNS_PROFILE=default\n"
+            );
+            assert_eq!(
+                fs::read(app.moddir.join(DNS_CONF)).ok().as_deref(),
+                previous.map(str::as_bytes)
+            );
+            assert!(!app.moddir.join("started").exists());
+            assert!(!app.moddir.join("stopped").exists());
+        }
+    }
+
+    #[test]
+    fn failed_dns_apply_reports_restore_failure() {
+        for previous in [None, Some("MAGICNET_DNS_PROFILE=cloudflare-dot\n")] {
+            let app = profile_fixture(
+                previous,
+                "rm \"$MODDIR/.config/magicnet/dns.conf\"\nmkdir \"$MODDIR/.config/magicnet/dns.conf\"\nreturn 42",
+            );
+            let error = dns_set(&app, "default").unwrap_err();
+            assert!(
+                error.contains("magicnet_dns_apply failed with status 42"),
+                "{error}"
+            );
+            assert!(
+                error.contains("saved DNS profile rollback failed"),
+                "{error}"
+            );
+            assert!(!error.contains("previous DNS profile restored"), "{error}");
+            assert!(!app.moddir.join("started").exists());
+            assert!(!app.moddir.join("stopped").exists());
+        }
+    }
+
+    #[test]
+    fn successful_dns_apply_keeps_default_and_explicit_profiles() {
+        for profile in [
+            "default",
+            "cloudflare-doh",
+            "cloudflare-dot",
+            "cloudflare-udp",
+        ] {
+            let app = profile_fixture(
+                Some("# old settings\nMAGICNET_DNS_PROFILE=default\n"),
+                "return 0",
+            );
+            apply_dns_profile(&app, profile).unwrap();
+            let expected = format!("MAGICNET_DNS_PROFILE={profile}\n");
+            assert_eq!(
+                fs::read_to_string(app.moddir.join(DNS_CONF)).unwrap(),
+                expected
+            );
+            assert_eq!(
+                fs::read_to_string(app.moddir.join("attempted-profile")).unwrap(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn dns_test_domain_rejects_urls_and_shell_fragments() {
