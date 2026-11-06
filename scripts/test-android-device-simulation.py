@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import struct
 import subprocess
@@ -219,15 +220,29 @@ class InstalledControlsTests(unittest.TestCase):
             'secondary_status': 'not_run', 'direct_status': 'not_run', 'last_action': 'none',
             'action_status': 'none', 'last_action_at': None, 'last_refresh_at': None,
         }
+        self.export_service = {'schema': 1, 'ok': True, 'command': 'service.status', 'data': {
+            'core': {'selected': 'sing-box', 'sing_box': {'process_state': 'running', 'running': True,
+                      'pid_summary': '123', 'rss_kib': 4096}},
+            'api': {'url': '<redacted-url>', 'ready': True},
+            'readiness': {'dataplane': True, 'overall': True},
+            'supervisors': {'fswatch': '456'},
+            'transparent': {'configured_mode': 'tun', 'effective_mode': 'tun'},
+            'subscription': {'source': 'standalone'},
+            'connectivity': copy.deepcopy(self.connectivity),
+        }}
+        self.capture_header = 'status=ok exit_code=0 timed_out=false output_truncated=false duration_ms=2\n'
+        bodies = {'service status': self.capture_header + json.dumps(self.export_service) + '\n',
+                  'dns api and mcp': '--- mcp ---\n' + self.capture_header
+                      + 'enabled=0\nbind=127.0.0.1\nport=8766\nsecret_set=0\npid=stopped\n'}
         sections = ('platform and versions', 'system resources', 'subscription lifecycle',
                     'canonical state', 'connectivity history', 'configuration structure',
                     'configuration: route', 'configuration: dns', 'service status', 'core resources',
                     'sing-box version', 'sing-box configuration check', 'routes: ipv4 rules',
                     'routes: ipv6 rules', 'routes: ipv4 routes', 'routes: ipv6 routes',
-                    'transparent TUN and eBPF observation', 'collection summary')
+                    'transparent TUN and eBPF observation', 'dns api and mcp', 'collection summary')
         self.report = ('MagicNet canonical support bundle\nschema=1\nformat=diagnostic-text-v1\n'
                        'privacy=redacted\nexternal_network_probes=not_run\nstate_mutations=none\n'
-                       + ''.join(f'\n[{section}]\nstatus=available\n' for section in sections)
+                       + ''.join(f'\n[{section}]\n' + bodies.get(section, 'status=available\n') for section in sections)
                        + 'end_of_report=true\n').encode()
         self.export = {'path': SIM.SUPPORT_EXPORT, 'bytes': len(self.report)}
         self.overrides = {}
@@ -264,6 +279,13 @@ class InstalledControlsTests(unittest.TestCase):
     def check(self):
         SIM.installed_controls(self.device, self.out, self.evidence)
 
+    def replace_report_section(self, name, body):
+        text = self.report.decode()
+        pattern = r'(?m)^\[' + re.escape(name) + r'\]\n.*?(?=^\[[^\]\n]+\]\n|\Z)'
+        self.report = re.sub(pattern, lambda _: '[' + name + ']\n' + body + '\n',
+                             text, flags=re.S).encode()
+        self.export['bytes'] = len(self.report)
+
     def test_installed_contracts_and_export_evidence_without_forced_network_probe(self):
         self.connectivity['unrecognized_private_field'] = 'private-canary'
         self.check()
@@ -279,6 +301,88 @@ class InstalledControlsTests(unittest.TestCase):
             '--json support export')])
         self.assertEqual(len(self.calls), 5)
         self.assertEqual(len(SIM.PHASES), 12)
+        content = self.evidence['support_export']['content']
+        self.assertEqual(content['service_status']['connectivity']['status'], 'unknown')
+        self.assertEqual(content['service_status']['connectivity']['reason'], 'not_checked')
+        self.assertIsNone(content['service_status']['connectivity']['http_status'])
+        self.assertIsNone(content['service_status']['connectivity']['checked_at'])
+        self.assertEqual(content['mcp_status'], {'enabled': False, 'secret_set': False,
+                                               'port': 8766, 'running': False})
+
+    def test_export_rejects_the_observed_whole_line_url_redaction_defect(self):
+        self.replace_report_section('service status', self.capture_header + '<redacted-url>\n')
+        with self.assertRaisesRegex(RuntimeError, 'invalid diagnostic service.status JSON'):
+            self.check()
+        self.assertEqual(self.evidence['stage'], 'export_content')
+        self.assertEqual(self.evidence['status'], 'failed')
+
+    def test_export_accepts_compact_or_pretty_json_with_redacted_leaf_values(self):
+        for indent in (None, 2):
+            with self.subTest(indent=indent):
+                self.replace_report_section('service status', self.capture_header
+                                            + json.dumps(self.export_service, indent=indent))
+                self.check()
+                self.assertTrue(self.evidence['support_export']['content']['service_status']['overall_ready'])
+                self.assertEqual(self.evidence['support_export']['content']['service_status']['rss_kib'], 4096)
+
+    def test_export_rejects_broken_machine_envelopes_and_lost_service_state(self):
+        values = [self.export_service | {'schema': True}, self.export_service | {'ok': False},
+                  self.export_service | {'command': 'core.status'}]
+        for key in ('core', 'api', 'readiness', 'supervisors', 'transparent', 'subscription', 'connectivity'):
+            value = copy.deepcopy(self.export_service)
+            del value['data'][key]
+            values.append(value)
+        for value in values:
+            with self.subTest(value=value):
+                self.replace_report_section('service status', self.capture_header + json.dumps(value))
+                with self.assertRaises(RuntimeError):
+                    self.check()
+                self.assertEqual(self.evidence['stage'], 'export_content')
+
+    def test_export_connectivity_preserves_types_and_evidence_for_online(self):
+        for changes in ({'status': 'online'}, {'checked_at': 'null'}, {'http_status': '204'},
+                        {'warning': 1}, {'reason': '<private-value>'}):
+            with self.subTest(changes=changes):
+                value = copy.deepcopy(self.export_service)
+                value['data']['connectivity'].update(changes)
+                self.replace_report_section('service status', self.capture_header + json.dumps(value))
+                with self.assertRaises(RuntimeError):
+                    self.check()
+        value = copy.deepcopy(self.export_service)
+        value['data']['connectivity'].update({'status': 'online', 'reason': 'https_204',
+                                             'http_status': 204, 'checked_at': 12345, 'latency_ms': 4})
+        self.replace_report_section('service status', self.capture_header + json.dumps(value))
+        self.check()
+        snapshot = self.evidence['support_export']['content']['service_status']['connectivity']
+        self.assertEqual(snapshot['http_status'], 204)
+        # Two read-only captures may see a normal producer update between them.
+        self.assertEqual(self.evidence['connectivity']['status'], 'unknown')
+        self.assertEqual(snapshot['status'], 'online')
+
+    def test_export_rejects_unsupported_mcp_but_does_not_require_it_enabled(self):
+        self.replace_report_section('dns api and mcp', '--- mcp ---\n'
+            'status=incomplete exit_code=1 timed_out=false output_truncated=false duration_ms=2\n'
+            '{"command":"machine.error","error":{"code":"machine.unsupported_command"}}\n')
+        with self.assertRaisesRegex(RuntimeError, 'MCP status is unsupported'):
+            self.check()
+        for enabled, secret, pid in ((0, 0, 'stopped'), (1, 1, '123')):
+            self.replace_report_section('dns api and mcp', '--- mcp ---\n' + self.capture_header
+                + f'enabled={enabled}\nport=8766\nsecret_set={secret}\npid={pid}\n')
+            self.check()
+            mcp = self.evidence['support_export']['content']['mcp_status']
+            self.assertEqual(mcp['enabled'], bool(enabled))
+            self.assertEqual(mcp['running'], pid != 'stopped')
+
+    def test_export_rejects_incomplete_capture_or_extra_json(self):
+        for body in (self.capture_header.replace('timed_out=false', 'timed_out=true')
+                     + json.dumps(self.export_service),
+                     self.capture_header + json.dumps(self.export_service) + '\n{}',
+                     self.capture_header + json.dumps(self.export_service).replace(
+                         '"ok": true', '"ok": false, "ok": true')):
+            with self.subTest(body=body):
+                self.replace_report_section('service status', body)
+                with self.assertRaises(RuntimeError):
+                    self.check()
 
     def test_supervisor_start_timeout_is_failure_and_stops_further_checks(self):
         self.overrides[SIM.MOD + '/cli supervisor start all'] = cp('private-canary', 124, 'private-canary')

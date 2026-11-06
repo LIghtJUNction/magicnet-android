@@ -219,6 +219,107 @@ def has_owned_network(text: str) -> bool:
     return bool(re.search(r'magicnet|sing-box|(?:lookup|table)\s+2022\b', text, re.I))
 
 
+def connectivity_snapshot(connectivity: dict) -> dict:
+    require(isinstance(connectivity, dict), 'missing diagnostic connectivity object')
+    require(connectivity.get('target') == 'https://www.google.com/generate_204'
+            and connectivity.get('path') == 'mixed_proxy', 'invalid connectivity target or path')
+    for key, allowed in {
+        'status': ('unknown', 'pending', 'online', 'degraded', 'offline', 'paused', 'stale'),
+        'secondary_status': ('not_run', 'online', 'failed'),
+        'direct_status': ('not_run', 'online', 'failed'),
+        'last_action': ('none', 'repair', 'refresh', 'restart', 'deferred'),
+        'action_status': ('none', 'pending', 'ok', 'failed', 'busy'),
+    }.items():
+        require(connectivity.get(key) in allowed, 'invalid connectivity ' + key)
+    for key in ('reason', 'primary_reason'):
+        value = connectivity.get(key)
+        require(isinstance(value, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,63}', value) is not None,
+                'invalid connectivity ' + key)
+    require(type(connectivity.get('warning')) is bool, 'invalid connectivity warning')
+    for key in ('consecutive_failures', 'probe_count', 'backoff_seconds', 'checked_at',
+                'next_check_at', 'retry_in_seconds', 'latency_ms', 'http_status',
+                'last_action_at', 'last_refresh_at'):
+        require(key in connectivity, 'missing connectivity ' + key)
+        value = connectivity[key]
+        nullable = key not in ('consecutive_failures', 'probe_count', 'backoff_seconds')
+        require((nullable and value is None) or (type(value) is int and value >= 0),
+                'invalid connectivity ' + key)
+    require(60 <= connectivity['backoff_seconds'] <= 1800, 'invalid connectivity backoff')
+    if connectivity['status'] == 'online':
+        require(connectivity['http_status'] == 204 and (connectivity['checked_at'] or 0) > 0
+                and connectivity['latency_ms'] is not None, 'unproven online connectivity')
+    return {key: connectivity[key] for key in (
+        'target', 'path', 'status', 'reason', 'primary_reason', 'warning',
+        'checked_at', 'next_check_at', 'retry_in_seconds', 'consecutive_failures',
+        'probe_count', 'backoff_seconds', 'latency_ms', 'http_status',
+        'secondary_status', 'direct_status', 'last_action', 'action_status',
+        'last_action_at', 'last_refresh_at',
+    )}
+
+
+def diagnostic_capture(body: str) -> str:
+    header, separator, content = body.partition('\n')
+    fields = dict(item.split('=', 1) for item in header.split() if '=' in item)
+    require(separator and all(fields.get(key) == value for key, value in (
+        ('status', 'ok'), ('exit_code', '0'), ('timed_out', 'false'), ('output_truncated', 'false'))),
+        'diagnostic capture is not complete')
+    return content.strip()
+
+
+def diagnostic_status(body: str, command: str) -> dict:
+    content = diagnostic_capture(body)
+    try:
+        value, end = json.JSONDecoder(object_pairs_hook=unique_keys).raw_decode(content)
+        trailing = content[end:].strip()
+        require(not trailing or trailing.startswith('stderr:\n'), 'extra diagnostic JSON output')
+        return decode_status(json.dumps(value), command)
+    except (ValueError, TypeError, RuntimeError):
+        raise RuntimeError('invalid diagnostic ' + command + ' JSON') from None
+
+
+def diagnostic_content(text: str) -> dict:
+    parts = re.split(r'^\[([^\]\n]+)\]\n', text, flags=re.M)
+    sections = {parts[index]: parts[index + 1] for index in range(1, len(parts) - 1, 2)}
+    require(len(sections) == (len(parts) - 1) // 2, 'duplicate diagnostic section')
+    require('service status' in sections and 'dns api and mcp' in sections,
+            'missing diagnostic status content')
+    service = diagnostic_status(sections['service status'], 'service.status')
+    for key in ('core', 'api', 'readiness', 'supervisors', 'transparent', 'subscription'):
+        require(isinstance(service.get(key), dict), 'missing diagnostic service ' + key)
+    core = service['core'].get('sing_box')
+    require(isinstance(core, dict) and core.get('process_state') == 'running'
+            and core.get('running') is True, 'diagnostic core state was lost')
+    require('rss_kib' in core and (core['rss_kib'] is None
+            or (type(core['rss_kib']) is int and core['rss_kib'] > 0)), 'diagnostic core memory was lost')
+    require(service['api'].get('ready') is True and service['readiness'].get('dataplane') is True
+            and service['readiness'].get('overall') is True, 'diagnostic readiness was lost')
+    fswatch = service['supervisors'].get('fswatch')
+    require(isinstance(fswatch, str) and re.fullmatch(r'[1-9][0-9]{0,9}', fswatch) is not None
+            and int(fswatch) <= 2147483647, 'diagnostic fswatch state was lost')
+    require(service['transparent'].get('configured_mode') == 'tun'
+            and service['transparent'].get('effective_mode') == 'tun', 'diagnostic TUN modes were lost')
+    require(isinstance(service['subscription'].get('source'), str), 'diagnostic subscription source was lost')
+    connectivity = connectivity_snapshot(service.get('connectivity'))
+
+    # MCP has a read-only text status command; no --json MCP command exists.
+    mcp_parts = sections['dns api and mcp'].split('--- mcp ---\n')
+    require(len(mcp_parts) == 2 and 'machine.unsupported_command' not in mcp_parts[1],
+            'diagnostic MCP status is unsupported or missing')
+    mcp = dict(line.split('=', 1) for line in diagnostic_capture(mcp_parts[1]).splitlines() if '=' in line)
+    require(mcp.get('enabled') in ('0', '1') and mcp.get('secret_set') in ('0', '1'),
+            'diagnostic MCP configuration was lost')
+    port, pid = mcp.get('port', ''), mcp.get('pid', '')
+    require(re.fullmatch(r'[0-9]{1,5}', port) is not None and 0 < int(port) <= 65535,
+            'diagnostic MCP port was lost')
+    require(pid == 'stopped' or (re.fullmatch(r'[1-9][0-9]{0,9}', pid) is not None
+            and int(pid) <= 2147483647), 'diagnostic MCP process state was lost')
+    return {'service_status': {'command': 'service.status', 'schema': 1,
+                'core_running': True, 'api_ready': True, 'dataplane_ready': True, 'overall_ready': True,
+                'fswatch_running': True, 'rss_kib': core['rss_kib'], 'connectivity': connectivity},
+            'mcp_status': {'enabled': mcp['enabled'] == '1', 'secret_set': mcp['secret_set'] == '1',
+                           'port': int(port), 'running': pid != 'stopped'}}
+
+
 def installed_controls(device, out: Path, evidence: dict) -> None:
     """Check installed CLI contracts without requesting any fresh network probe."""
     started = time.monotonic()
@@ -254,40 +355,7 @@ def installed_controls(device, out: Path, evidence: dict) -> None:
 
         evidence['stage'] = 'connectivity_status'
         connectivity = machine('connectivity status', 'connectivity.status', 10)
-        require(connectivity.get('target') == 'https://www.google.com/generate_204'
-                and connectivity.get('path') == 'mixed_proxy', 'invalid connectivity target or path')
-        for key, allowed in {
-            'status': ('unknown', 'pending', 'online', 'degraded', 'offline', 'paused', 'stale'),
-            'secondary_status': ('not_run', 'online', 'failed'),
-            'direct_status': ('not_run', 'online', 'failed'),
-            'last_action': ('none', 'repair', 'refresh', 'restart', 'deferred'),
-            'action_status': ('none', 'pending', 'ok', 'failed', 'busy'),
-        }.items():
-            require(connectivity.get(key) in allowed, 'invalid connectivity ' + key)
-        for key in ('reason', 'primary_reason'):
-            value = connectivity.get(key)
-            require(isinstance(value, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,63}', value) is not None,
-                    'invalid connectivity ' + key)
-        require(type(connectivity.get('warning')) is bool, 'invalid connectivity warning')
-        for key in ('consecutive_failures', 'probe_count', 'backoff_seconds', 'checked_at',
-                    'next_check_at', 'retry_in_seconds', 'latency_ms', 'http_status',
-                    'last_action_at', 'last_refresh_at'):
-            require(key in connectivity, 'missing connectivity ' + key)
-            value = connectivity[key]
-            nullable = key not in ('consecutive_failures', 'probe_count', 'backoff_seconds')
-            require((nullable and value is None) or (type(value) is int and value >= 0),
-                    'invalid connectivity ' + key)
-        require(60 <= connectivity['backoff_seconds'] <= 1800, 'invalid connectivity backoff')
-        if connectivity['status'] == 'online':
-            require(connectivity['http_status'] == 204 and (connectivity['checked_at'] or 0) > 0
-                    and connectivity['latency_ms'] is not None, 'unproven online connectivity')
-        evidence['connectivity'] = {key: connectivity[key] for key in (
-            'target', 'path', 'status', 'reason', 'primary_reason', 'warning',
-            'checked_at', 'next_check_at', 'retry_in_seconds', 'consecutive_failures',
-            'probe_count', 'backoff_seconds', 'latency_ms', 'http_status',
-            'secondary_status', 'direct_status', 'last_action', 'action_status',
-            'last_action_at', 'last_refresh_at',
-        )}
+        evidence['connectivity'] = connectivity_snapshot(connectivity)
 
         evidence['stage'] = 'support_export'
         exported = machine('support export', 'support.export', 40)
@@ -322,7 +390,8 @@ def installed_controls(device, out: Path, evidence: dict) -> None:
                 and '\nstate_mutations=none\n' in text
                 and text.endswith('end_of_report=true\n'), 'diagnostic export is incomplete or invalid')
         evidence['support_export'].update({'artifact': destination.name, 'sha256': digest(destination),
-                                           'required_sections': list(required_sections)})
+                                           'required_sections': list(required_sections),
+                                           'content': diagnostic_content(text)})
         evidence.update({'stage': 'complete', 'status': 'passed'})
     finally:
         evidence['seconds'] = round(time.monotonic() - started, 3)

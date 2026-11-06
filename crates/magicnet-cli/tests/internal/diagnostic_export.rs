@@ -74,6 +74,278 @@ fn logs_redact_credentials_node_labels_headers_and_uid_ranges() {
     );
 }
 
+fn machine_capture(stdout: String) -> Capture {
+    Capture {
+        status: "status=ok exit_code=0 timed_out=false output_truncated=false duration_ms=1".into(),
+        stdout,
+        stderr: String::new(),
+        complete: true,
+    }
+}
+
+fn captured_json(text: &str) -> Value {
+    let (_, payload) = text.split_once('\n').expect("capture status precedes JSON");
+    serde_json::Deserializer::from_str(payload)
+        .into_iter::<Value>()
+        .next()
+        .expect("one JSON value")
+        .expect("valid redacted JSON")
+}
+
+#[test]
+fn machine_capture_preserves_compact_and_pretty_status_despite_url_leaves() {
+    let value = json!({
+        "schema": 1, "ok": true, "command": "service.status", "data": {
+            "core": {"selected": "sing-box", "sing_box": {
+                "process_state": "running", "running": true, "pid_summary": "1234,5678", "rss_kib": 12345
+            }},
+            "api": {"url": "http://127.0.0.1:9090", "webui": "http://127.0.0.1:9090/ui", "ready": true},
+            "lifecycle": "ready", "readiness": {"dataplane": true, "overall": true},
+            "supervisors": {"fswatch": "2345", "wifi_policy": "stopped"},
+            "connectivity": {
+                "target": crate::connectivity::TARGET, "path": "mixed_proxy", "status": "offline",
+                "reason": "upstream_unavailable", "primary_reason": "dns_failure", "warning": true,
+                "http_status": null, "latency_ms": null, "checked_at": 1770000000,
+                "next_check_at": 1770000060, "retry_in_seconds": 60, "backoff_seconds": 60,
+                "consecutive_failures": 1, "probe_count": 1, "secondary_status": "failed",
+                "direct_status": "online", "last_action": "repair", "action_status": "pending",
+                "last_action_at": 1770000000, "last_refresh_at": null
+            }
+        }
+    });
+    for stdout in [
+        value.to_string(),
+        serde_json::to_string_pretty(&value).unwrap(),
+    ] {
+        let mut collector = Collector::new(Instant::now(), None);
+        let capture = machine_capture(stdout);
+        collector.append_machine_capture("service status", &capture, "service.status");
+        let result = captured_json(
+            collector
+                .report
+                .strip_prefix("\n[service status]\n")
+                .unwrap(),
+        );
+        for key in ["schema", "ok", "command"] {
+            assert_eq!(result[key], value[key]);
+        }
+        for key in [
+            "core",
+            "lifecycle",
+            "readiness",
+            "supervisors",
+            "connectivity",
+        ] {
+            assert_eq!(result["data"][key], value["data"][key], "lost {key}");
+        }
+        assert_eq!(result["data"]["api"]["ready"], true);
+        assert_eq!(result["data"]["api"]["url"], "<redacted-url>");
+        assert_eq!(result["data"]["api"]["webui"], "<redacted-url>");
+        assert!(!collector.report.contains("http://127.0.0.1"));
+        assert_eq!(collector.incomplete_commands, 0);
+    }
+    for profile in ["cloudflare-doh", "cloudflare-dot"] {
+        let value = json!({"schema": 1, "ok": true, "command": "dns.status", "data": {
+            "profile": profile, "transport": if profile.ends_with("doh") { "doh" } else { "dot" },
+            "primary": "https://cloudflare-dns.com/dns-query", "secondary": "tls://1.0.0.1"
+        }});
+        for stdout in [
+            value.to_string(),
+            serde_json::to_string_pretty(&value).unwrap(),
+        ] {
+            let mut collector = Collector::new(Instant::now(), None);
+            let safe =
+                captured_json(&collector.machine_text(&machine_capture(stdout), "dns.status"));
+            assert_eq!(safe["command"], "dns.status");
+            assert_eq!(safe["data"]["profile"], profile);
+            assert_eq!(safe["data"]["transport"], value["data"]["transport"]);
+            assert_eq!(safe["data"]["primary"], "<redacted-url>");
+            assert_eq!(safe["data"]["secondary"], "<redacted-url>");
+        }
+    }
+}
+
+#[test]
+fn machine_capture_preserves_all_published_transparent_transaction_phases() {
+    // The transaction producer in service.rs and android-tun-proof.py use this
+    // complete phase vocabulary; losing a phase hides where recovery stopped.
+    for phase in [
+        "idle",
+        "prepared",
+        "target-written",
+        "preflight",
+        "candidate-prepared",
+        "stopping-old",
+        "old-stopped",
+        "candidate-starting",
+        "verified",
+        "rolling-back",
+        "old-restored",
+    ] {
+        let transparent = json!({
+            "mode": "ebpf", "configured_mode": "ebpf", "effective_type": "ebpf",
+            "effective_mode": "hybrid", "capability": "ok", "local_cgroup": "attached",
+            "shared_tc": "pending", "shared_interface_count": 2, "transition": phase,
+            "has_recent_error": false, "dataplane_ready": null, "local_ready": true,
+            "shared_ready": false
+        });
+        for (command, data) in [
+            ("transparent.status", transparent.clone()),
+            ("service.status", json!({"transparent": transparent})),
+        ] {
+            let expected = json!({"schema": 1, "ok": true, "command": command, "data": data});
+            let mut collector = Collector::new(Instant::now(), None);
+            let text = collector.machine_text(&machine_capture(expected.to_string()), command);
+            assert_eq!(
+                captured_json(&text),
+                expected,
+                "lost {command} phase {phase}"
+            );
+        }
+    }
+    let value = json!({"schema": 1, "ok": true, "command": "transparent.status",
+        "data": {"transition": "UNTRUSTED-PHASE-CANARY"}});
+    let mut collector = Collector::new(Instant::now(), None);
+    let text = collector.machine_text(&machine_capture(value.to_string()), "transparent.status");
+    assert!(!text.contains("UNTRUSTED-PHASE-CANARY"));
+    assert!(captured_json(&text)["data"].get("transition").is_some());
+}
+
+#[test]
+fn machine_capture_redacts_private_keys_identifiers_headers_and_unknown_strings() {
+    let config = json!({"outbounds": [{"tag": "PRIVATE-NODE-CANARY"}, {"tag": "unknown"}]});
+    let mut collector = Collector::new(Instant::now(), Some(&config));
+    let config_alias = collector.privacy.project(&config, "", 0)["outbounds"][0]["tag"].clone();
+    let value = json!({"schema": 1, "ok": true, "command": "service.status", "data": {
+        "status": "unknown", "phase": "offline", "reason": "dns_failure",
+        "rss_kib": 8192, "warning": false, "latency_ms": null,
+        "selected": "PRIVATE-NODE-CANARY",
+        "target": "https://www.google.com/generate_204?token=URL-TOKEN-CANARY",
+        "headers": {"Authorization": "Bearer MULTI WORD HEADER-CANARY", "Cookie": "SESSION-CANARY"},
+        "UID": [10112, 10113], "bootId": "BOOT-ID-CANARY", "device_id": 987654321,
+        "devID": "DEVICE-CANARY", "authKey": "AUTH-KEY-CANARY", "api_key": "API-KEY-CANARY",
+        "privateKey": "PRIVATE-KEY-CANARY", "password": "PASSWORD-CANARY", "token": "TOKEN-CANARY",
+        "PRIVATE-OBJECT-KEY-CANARY": {"NESTED-PRIVATE-KEY-CANARY": "UNKNOWN-STRING-CANARY"},
+        "unknown_field": "UNCONFIGURED-NODE-CANARY"
+    }});
+    let mut capture = machine_capture(value.to_string());
+    capture.stderr =
+        "ERROR DNS unavailable\nAuthorization: Bearer STDERR MULTI WORD CANARY\n".into();
+    let text = collector.machine_text(&capture, "service.status");
+    let safe = captured_json(&text);
+    assert_eq!(
+        safe["data"]["status"], "unknown",
+        "a private label must not mask a canonical status"
+    );
+    assert_eq!(safe["data"]["phase"], "offline");
+    assert_eq!(safe["data"]["reason"], "dns_failure");
+    assert_eq!(safe["data"]["rss_kib"], 8192);
+    assert_eq!(safe["data"]["warning"], false);
+    assert_eq!(safe["data"]["latency_ms"], Value::Null);
+    assert_eq!(safe["data"]["selected"], config_alias);
+    assert_eq!(safe["data"]["target"], "<redacted-url>");
+    assert_eq!(
+        safe["data"].as_object().unwrap().len(),
+        value["data"].as_object().unwrap().len()
+    );
+    assert!(text.contains("ERROR DNS unavailable"));
+    for private in [
+        "CANARY",
+        "MULTI WORD",
+        "10112",
+        "10113",
+        "987654321",
+        "https://",
+        "unknown_field",
+    ] {
+        assert!(!text.contains(private), "leaked {private}: {text}");
+    }
+}
+
+#[test]
+fn machine_capture_invalid_truncated_or_unexpected_output_fails_closed() {
+    let valid = json!({"schema": 1, "ok": true, "command": "service.status", "data": {
+        "message": "UNTRACKED-SECRET-CANARY"
+    }})
+    .to_string();
+    let too_deep = format!(
+        "{}\"UNTRACKED-SECRET-CANARY\"{}",
+        "[".repeat(140),
+        "]".repeat(140)
+    );
+    for (stdout, complete, command) in [
+        (
+            format!("{valid} trailing-SECRET-CANARY"),
+            true,
+            "service.status",
+        ),
+        (
+            "{\"schema\":1,\"SECRET-CANARY\":".into(),
+            true,
+            "service.status",
+        ),
+        (valid.clone(), false, "service.status"),
+        (valid.clone(), true, "dns.status"),
+        (valid, true, "unsupported.status"),
+        (too_deep, true, "service.status"),
+        ("SECRET-CANARY".repeat(STREAM_LIMIT), true, "service.status"),
+    ] {
+        let mut collector = Collector::new(Instant::now(), None);
+        let mut capture = machine_capture(stdout);
+        capture.complete = complete;
+        let text = collector.machine_text(&capture, command);
+        assert_eq!(
+            captured_json(&text),
+            json!({"omitted": "invalid_or_incomplete_machine_json"})
+        );
+        assert!(!text.contains("SECRET-CANARY"));
+        assert_eq!(collector.incomplete_commands, usize::from(complete));
+    }
+}
+
+#[test]
+fn machine_projection_limits_depth_arrays_and_serialized_output() {
+    let mut nested = json!("DEPTH-SECRET-CANARY");
+    for _ in 0..30 {
+        nested = json!({"data": nested});
+    }
+    let value = json!({"schema": 1, "ok": true, "command": "service.status", "data": {
+        "data": nested, "core": (0..160).collect::<Vec<_>>()
+    }});
+    let mut collector = Collector::new(Instant::now(), None);
+    let text = collector.machine_text(&machine_capture(value.to_string()), "service.status");
+    let safe = captured_json(&text);
+    assert!(text.contains("depth_limit"));
+    assert!(!text.contains("DEPTH-SECRET-CANARY"));
+    assert_eq!(safe["data"]["core"].as_array().unwrap().len(), 129);
+    assert_eq!(safe["data"]["core"][128]["omitted_entries"], 32);
+
+    // Small unknown keys expand to aliases. Keep the original section/report
+    // limits and emit a whole JSON omission instead of half a serialized object.
+    let entries = (0..2500)
+        .map(|index| (index.to_string(), json!("x")))
+        .collect::<serde_json::Map<_, _>>();
+    let value = json!({"schema": 1, "ok": true, "command": "service.status", "data": entries});
+    assert!(value.to_string().len() <= STREAM_LIMIT);
+    let text = collector.machine_text(&machine_capture(value.to_string()), "service.status");
+    assert_eq!(
+        captured_json(&text),
+        json!({"omitted": "machine_json_output_limit"})
+    );
+    assert_eq!(collector.truncated_sections, 1);
+    assert!(text.len() <= SECTION_LIMIT);
+
+    collector.report = "x".repeat(REPORT_LIMIT - 8192 - 40);
+    collector.append_machine_capture(
+        "service status",
+        &machine_capture(value.to_string()),
+        "service.status",
+    );
+    let report = collector.finish();
+    assert!(report.len() <= REPORT_LIMIT);
+    assert!(report.ends_with("end_of_report=true\n"));
+}
+
 #[test]
 fn command_timeout_keeps_partial_stderr_and_never_counts_as_success() {
     let mut collector = Collector::new(Instant::now(), None);

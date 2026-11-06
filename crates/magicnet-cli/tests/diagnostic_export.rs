@@ -1,5 +1,5 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -14,7 +14,13 @@ impl Fixture {
             .as_nanos();
         let root =
             std::env::temp_dir().join(format!("magicnet-export-{}-{stamp}", std::process::id()));
-        for directory in [".config/sing-box", ".state/machines", ".log", "bin"] {
+        for directory in [
+            ".config/sing-box",
+            ".config/magicnet",
+            ".state/machines",
+            ".log",
+            "bin",
+        ] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
         fs::write(
@@ -27,6 +33,12 @@ impl Fixture {
             "outbounds":[{"type":"vless","tag":"PRIVATE-NODE-CANARY","server":"hidden.invalid","password":"PASSWORD-CANARY"}],
             "route":{"final":"PRIVATE-NODE-CANARY"}
         }"#).unwrap();
+        fs::write(
+            root.join(".config/magicnet/dns.conf"),
+            "MAGICNET_DNS_PROFILE=cloudflare-doh\n",
+        )
+        .unwrap();
+        fs::write(root.join(".config/magicnet/mcp.conf"), "MAGICNET_MCP_ENABLED=0\nMAGICNET_MCP_BIND=127.0.0.1\nMAGICNET_MCP_PORT=8766\nMAGICNET_MCP_SECRET=MCP-SECRET-CANARY\n").unwrap();
         fs::write(
             root.join(".state/machines/service.state"),
             "schema=1\ndomain=service\nstate=stale\n",
@@ -54,6 +66,107 @@ impl Fixture {
             .output()
             .unwrap()
     }
+
+    fn canonical_snapshot(&self) -> Vec<(PathBuf, Vec<u8>, u64, SystemTime)> {
+        let mut snapshot = fs::read_dir(self.0.join(".state/machines"))
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let metadata = fs::metadata(&path).unwrap();
+                (
+                    path.clone(),
+                    fs::read(path).unwrap(),
+                    metadata.ino(),
+                    metadata.modified().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        snapshot.sort_by(|left, right| left.0.cmp(&right.0));
+        snapshot
+    }
+}
+
+fn section<'a>(report: &'a str, title: &str) -> &'a str {
+    report
+        .split_once(&format!("\n[{title}]\n"))
+        .unwrap_or_else(|| panic!("missing {title}"))
+        .1
+        .split("\n[")
+        .next()
+        .unwrap()
+        .trim()
+}
+
+fn machine_capture(text: &str) -> serde_json::Value {
+    let (status, payload) = text.split_once('\n').expect("capture metadata and JSON");
+    assert!(status.starts_with("status=ok "), "{status}");
+    serde_json::Deserializer::from_str(payload)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .expect("one machine JSON value")
+        .expect("valid diagnostic machine JSON")
+}
+
+fn assert_status_evidence(fixture: &Fixture, report: &str) {
+    let service = machine_capture(section(report, "service status"));
+    let expected: serde_json::Value =
+        serde_json::from_slice(&fixture.run(&["--json", "service", "status"]).stdout).unwrap();
+    for key in ["schema", "ok", "command"] {
+        assert_eq!(service[key], expected[key], "service envelope {key}");
+    }
+    for key in [
+        "core",
+        "lifecycle",
+        "readiness",
+        "supervisors",
+        "transparent",
+        "subscription",
+        "connectivity",
+    ] {
+        assert_eq!(
+            service["data"][key], expected["data"][key],
+            "service data {key}"
+        );
+    }
+    assert_eq!(
+        service["data"]["api"]["ready"],
+        expected["data"]["api"]["ready"]
+    );
+    assert!(service["data"]["api"].get("url").is_some());
+    assert_ne!(
+        service["data"]["api"]["url"],
+        expected["data"]["api"]["url"]
+    );
+
+    let transparent = machine_capture(section(report, "transparent TUN and eBPF observation"));
+    let expected: serde_json::Value =
+        serde_json::from_slice(&fixture.run(&["--json", "transparent", "status"]).stdout).unwrap();
+    assert_eq!(transparent, expected);
+
+    let combined = section(report, "dns api and mcp");
+    let (dns, mcp) = combined
+        .strip_prefix("--- dns ---\n")
+        .unwrap()
+        .split_once("\n--- mcp ---\n")
+        .unwrap();
+    let dns = machine_capture(dns);
+    assert_eq!(dns["schema"], 1);
+    assert_eq!(dns["ok"], true);
+    assert_eq!(dns["command"], "dns.status");
+    assert_eq!(dns["data"]["profile"], "cloudflare-doh");
+    assert_eq!(dns["data"]["transport"], "doh");
+    assert!(dns["data"].get("primary").is_some());
+    assert!(dns["data"].get("secondary").is_some());
+    assert!(!dns.to_string().contains("https://"));
+    assert!(mcp.starts_with("status=ok "), "{mcp}");
+    for field in ["enabled=0", "port=8766", "secret_set=1", "pid=stopped"] {
+        assert!(
+            mcp.lines().any(|line| line == field),
+            "missing {field}: {mcp}"
+        );
+    }
+    assert!(!mcp.contains("unsupported"));
+    assert!(!report.contains("MCP-SECRET-CANARY"));
 }
 
 impl Drop for Fixture {
@@ -65,6 +178,7 @@ impl Drop for Fixture {
 #[test]
 fn machine_export_creates_one_complete_file_and_keeps_service_state_unchanged() {
     let fixture = Fixture::new();
+    let before = fixture.canonical_snapshot();
     let started = Instant::now();
     let output = fixture.run(&["--json", "support", "export"]);
     assert!(
@@ -84,6 +198,12 @@ fn machine_export_creates_one_complete_file_and_keeps_service_state_unchanged() 
             .join(".state/diagnostics/MagicNet-diagnostics.txt")
     );
     let report = fs::read_to_string(&path).unwrap();
+    assert_status_evidence(&fixture, &report);
+    assert_eq!(
+        fixture.canonical_snapshot(),
+        before,
+        "canonical bytes, inode and mtime must stay unchanged"
+    );
     assert_eq!(
         envelope["data"]["bytes"].as_u64().unwrap(),
         report.len() as u64
@@ -156,8 +276,22 @@ fn machine_export_creates_one_complete_file_and_keeps_service_state_unchanged() 
 #[test]
 fn bundle_observation_never_creates_an_export_or_reconciles_canonical_state() {
     let fixture = Fixture::new();
+    let before = fixture.canonical_snapshot();
+    let state_modified = fs::metadata(fixture.0.join(".state"))
+        .unwrap()
+        .modified()
+        .unwrap();
     let output = fixture.run(&["support", "bundle"]);
     assert!(output.status.success());
+    assert_status_evidence(&fixture, &String::from_utf8_lossy(&output.stdout));
+    assert_eq!(fixture.canonical_snapshot(), before);
+    assert_eq!(
+        fs::metadata(fixture.0.join(".state"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        state_modified
+    );
     assert!(!fixture.0.join(".state/diagnostics").exists());
     assert_eq!(
         fs::read_dir(fixture.0.join(".state/machines"))

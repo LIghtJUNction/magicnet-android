@@ -165,7 +165,7 @@ pub(super) fn bundle(app: &App) -> String {
         &["--json", "service", "status"],
         Duration::from_secs(5),
     );
-    collector.append_capture("service status", &service);
+    collector.append_machine_capture("service status", &service, "service.status");
     collector.append("core resources", &core_resources(service.json().as_ref()));
     let health = collector.cli(app, &["health"], Duration::from_secs(7));
     collector.append_capture("health", &health);
@@ -211,7 +211,11 @@ pub(super) fn bundle(app: &App) -> String {
         &["--json", "transparent", "status"],
         Duration::from_secs(5),
     );
-    collector.append_capture("transparent TUN and eBPF observation", &transparent);
+    collector.append_machine_capture(
+        "transparent TUN and eBPF observation",
+        &transparent,
+        "transparent.status",
+    );
     collector.append("kernel networking", &kernel_networking());
 
     let proxies = collector.cli(app, &["api", "proxies"], Duration::from_secs(3));
@@ -229,10 +233,12 @@ pub(super) fn bundle(app: &App) -> String {
         ),
     );
     let dns = collector.cli(app, &["--json", "dns", "status"], Duration::from_secs(2));
-    let mcp = collector.cli(app, &["--json", "mcp", "status"], Duration::from_secs(2));
-    collector.append(
+    let mcp = collector.cli(app, &["mcp", "status"], Duration::from_secs(2));
+    let dns = collector.machine_text(&dns, "dns.status");
+    let mcp = collector.redacted_text(&mcp.text());
+    collector.append_safe(
         "dns api and mcp",
-        &format!("--- dns ---\n{}\n--- mcp ---\n{}", dns.text(), mcp.text()),
+        &format!("--- dns ---\n{dns}\n--- mcp ---\n{mcp}"),
     );
     collector.finish()
 }
@@ -294,6 +300,60 @@ impl Collector {
 
     fn append_capture(&mut self, title: &str, capture: &Capture) {
         self.append(title, &capture.text());
+    }
+
+    fn redacted_text(&self, text: &str) -> String {
+        text.lines()
+            .map(|line| self.privacy.line(line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn append_machine_capture(&mut self, title: &str, capture: &Capture, command: &str) {
+        let text = self.machine_text(capture, command);
+        self.append_safe(title, &text);
+    }
+
+    fn machine_text(&mut self, capture: &Capture, command: &str) -> String {
+        // Only these bounded, read-only machine responses use structural redaction.
+        // A compact JSON URL must not cause the text redactor to discard its envelope.
+        let value = (matches!(
+            command,
+            "service.status" | "transparent.status" | "dns.status"
+        ) && capture.stdout.len() <= STREAM_LIMIT)
+            .then(|| capture.json())
+            .flatten()
+            .filter(|value| {
+                value["schema"] == 1
+                    && value["ok"] == true
+                    && value["command"] == command
+                    && value["data"].is_object()
+            });
+        let mut stdout = if let Some(value) = value {
+            serde_json::to_string(&self.privacy.machine_value(&value, "", 0))
+                .unwrap_or_else(|_| "{\"omitted\":\"machine_json_serialization_failed\"}".into())
+        } else {
+            if capture.complete {
+                self.incomplete_commands += 1;
+            }
+            // Do not fall back to raw malformed/truncated JSON: arbitrary string
+            // values and dynamic keys may carry secrets absent from the config.
+            "{\"omitted\":\"invalid_or_incomplete_machine_json\"}".into()
+        };
+        let available = (SECTION_LIMIT - 1024)
+            .min(REPORT_LIMIT.saturating_sub(self.report.len() + 8192 + 1024));
+        if stdout.len() > available {
+            stdout = "{\"omitted\":\"machine_json_output_limit\"}".into();
+            self.truncated_sections += 1;
+        }
+        // Serialize on one line: append_lines can omit the entire value at a
+        // report boundary, but can never cut a JSON document between its lines.
+        let mut text = format!("{}\n{stdout}", self.privacy.line(&capture.status));
+        if !capture.stderr.is_empty() {
+            text.push_str("\nstderr:\n");
+            text.push_str(&self.redacted_text(&capture.stderr));
+        }
+        text
     }
 
     fn append(&mut self, title: &str, text: &str) {
@@ -846,9 +906,54 @@ impl Privacy {
         if public_value(value) {
             return value.into();
         }
+        self.private_symbol(value)
+    }
+
+    fn private_symbol(&mut self, value: &str) -> String {
         let next = self.aliases.len() + 1;
         let id = self.aliases.entry(value.into()).or_insert(next);
         format!("<ref:{id}>")
+    }
+
+    fn machine_value(&mut self, value: &Value, key: &str, depth: usize) -> Value {
+        if depth > 24 {
+            return json!({"omitted": "depth_limit"});
+        }
+        if machine_private_key(key) {
+            return json!({"present": !value.is_null(), "count": value.as_array().map(Vec::len)});
+        }
+        match value {
+            Value::Object(items) => Value::Object(
+                items
+                    .iter()
+                    .map(|(key, value)| {
+                        // A node name, device identifier or credential can also be a key.
+                        // Keep unknown fields observable using report-local aliases.
+                        let safe_key = if machine_key(key) {
+                            key.clone()
+                        } else {
+                            self.private_symbol(key)
+                        };
+                        (safe_key, self.machine_value(value, key, depth + 1))
+                    })
+                    .collect(),
+            ),
+            Value::Array(items) => {
+                let mut result = items
+                    .iter()
+                    .take(128)
+                    .map(|value| self.machine_value(value, key, depth + 1))
+                    .collect::<Vec<_>>();
+                if items.len() > 128 {
+                    result.push(json!({"omitted_entries": items.len() - 128}));
+                }
+                Value::Array(result)
+            }
+            Value::String(value) if machine_public_value(key, value) => value.clone().into(),
+            Value::String(value) if value.contains("://") => "<redacted-url>".into(),
+            Value::String(value) => self.private_symbol(value).into(),
+            _ => value.clone(),
+        }
     }
 
     fn project(&mut self, value: &Value, key: &str, depth: usize) -> Value {
@@ -888,6 +993,232 @@ impl Privacy {
             Value::String(value) => Value::String(self.symbol(value)),
             _ => value.clone(),
         }
+    }
+}
+
+fn machine_private_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    let compact = lower.replace(['_', '-'], "");
+    private_key(&lower)
+        || compact.contains("uid")
+        || compact.contains("boot")
+        || matches!(
+            compact.as_str(),
+            "id" | "gid"
+                | "gids"
+                | "devid"
+                | "deviceid"
+                | "androidid"
+                | "serial"
+                | "serialnumber"
+                | "imei"
+                | "imsi"
+                | "mac"
+                | "macaddress"
+                | "authorization"
+                | "proxyauthorization"
+                | "cookie"
+                | "setcookie"
+                | "header"
+                | "headers"
+                | "auth"
+        )
+        || [
+            "password",
+            "passwd",
+            "secret",
+            "token",
+            "apikey",
+            "privatekey",
+            "publickey",
+            "authkey",
+        ]
+        .iter()
+        .any(|suffix| compact.ends_with(suffix))
+}
+
+// This is the schema of the three captured machine commands, independent of
+// sing-box's configuration vocabulary. Unknown fields are aliased, not dropped.
+fn machine_key(key: &str) -> bool {
+    matches!(
+        key,
+        "schema"
+            | "ok"
+            | "command"
+            | "data"
+            | "error"
+            | "code"
+            | "message"
+            | "lifecycle"
+            | "core"
+            | "selected"
+            | "sing_box"
+            | "process_state"
+            | "running"
+            | "pid_summary"
+            | "rss_kib"
+            | "supervisors"
+            | "fswatch"
+            | "wifi_policy"
+            | "transparent"
+            | "api"
+            | "url"
+            | "webui"
+            | "ready"
+            | "readiness"
+            | "dataplane"
+            | "overall"
+            | "subscription"
+            | "source"
+            | "connectivity"
+            | "mode"
+            | "configured_mode"
+            | "effective_type"
+            | "effective_mode"
+            | "capability"
+            | "local_cgroup"
+            | "shared_tc"
+            | "shared_interface_count"
+            | "transition"
+            | "has_recent_error"
+            | "dataplane_ready"
+            | "local_ready"
+            | "shared_ready"
+            | "target"
+            | "path"
+            | "status"
+            | "phase"
+            | "reason"
+            | "primary_reason"
+            | "warning"
+            | "checked_at"
+            | "next_check_at"
+            | "retry_in_seconds"
+            | "consecutive_failures"
+            | "probe_count"
+            | "backoff_seconds"
+            | "latency_ms"
+            | "http_status"
+            | "secondary_status"
+            | "direct_status"
+            | "last_action"
+            | "action_status"
+            | "last_action_at"
+            | "last_refresh_at"
+            | "profile"
+            | "primary"
+            | "secondary"
+            | "transport"
+    )
+}
+
+fn machine_public_value(key: &str, value: &str) -> bool {
+    match key {
+        "command" => matches!(
+            value,
+            "service.status" | "transparent.status" | "dns.status"
+        ),
+        "target" => value == crate::connectivity::TARGET,
+        "path" => value == "mixed_proxy",
+        "selected" => value == "sing-box",
+        "pid_summary" | "fswatch" | "wifi_policy" => {
+            matches!(value, "stopped" | "unknown")
+                || (value.len() <= 96
+                    && value.split(',').count() <= 8
+                    && value
+                        .split(',')
+                        .all(|pid| pid.parse::<u32>().is_ok_and(|pid| pid > 0)))
+        }
+        "source" => matches!(value, "local_file" | "remote_url" | "unknown"),
+        "profile" => matches!(
+            value,
+            "default" | "cloudflare-doh" | "cloudflare-dot" | "cloudflare-udp"
+        ),
+        "transport" => matches!(value, "default" | "doh" | "dot" | "udp"),
+        "mode" | "configured_mode" | "effective_type" | "effective_mode" => {
+            matches!(
+                value,
+                "tun" | "ebpf" | "local" | "shared" | "hybrid" | "unknown"
+            )
+        }
+        "transition" => matches!(
+            value,
+            "idle"
+                | "prepared"
+                | "target-written"
+                | "preflight"
+                | "candidate-prepared"
+                | "stopping-old"
+                | "old-stopped"
+                | "candidate-starting"
+                | "verified"
+                | "rolling-back"
+                | "old-restored"
+        ),
+        "status" | "phase" | "process_state" | "lifecycle" | "capability" | "local_cgroup"
+        | "shared_tc" | "secondary_status" | "direct_status" | "action_status" => {
+            matches!(
+                value,
+                "unknown"
+                    | "running"
+                    | "stopped"
+                    | "ready"
+                    | "not_ready"
+                    | "running_unknown"
+                    | "reconfiguring"
+                    | "pending"
+                    | "online"
+                    | "degraded"
+                    | "offline"
+                    | "paused"
+                    | "stale"
+                    | "ok"
+                    | "failed"
+                    | "not_run"
+                    | "none"
+                    | "busy"
+                    | "not_required"
+                    | "inactive"
+                    | "configured"
+                    | "attached"
+                    | "missing"
+                    | "idle"
+                    | "prepared"
+                    | "stopping"
+                    | "applying"
+                    | "starting"
+                    | "rolling-back"
+                    | "rolled-back"
+            )
+        }
+        "reason" | "primary_reason" => matches!(
+            value,
+            "ok" | "not_checked"
+                | "probing"
+                | "core_stopped"
+                | "core_unknown"
+                | "module_disabled"
+                | "stop_requested"
+                | "no_default_route"
+                | "dns_failure"
+                | "proxy_refused"
+                | "timeout"
+                | "tls_failure"
+                | "http_error"
+                | "probe_unavailable"
+                | "probe_invalid"
+                | "proxy_unavailable"
+                | "endpoint_specific"
+                | "upstream_unavailable"
+                | "transport_failure"
+                | "clock_unavailable"
+                | "monitor_overdue"
+        ),
+        "last_action" => matches!(
+            value,
+            "none" | "repair" | "refresh" | "restart" | "deferred"
+        ),
+        _ => false,
     }
 }
 
