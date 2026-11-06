@@ -21,7 +21,7 @@ require_entry() {
     grep -Fx "$entry" "$entries_file" >/dev/null || fail "missing zip entry: $entry"
 }
 
-for tool in file go grep jq python3 readelf sed unzip zipinfo; do
+for tool in file flock go grep jq python3 readelf sed unzip zipinfo; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing required command: $tool"
 done
 
@@ -2019,18 +2019,141 @@ printf 'running extracted package default routing policy test\n'
 MAGICNET_ROUTING_CONFIG_DIR="$routing_config_dir" \
     bash "$ROOT/scripts/test-default-routing-policy.sh"
 
-watchdog_text="$(unzip -p "$ZIP_PATH" lib/kamfw/watchdog.sh)"
-fswatch_text="$(unzip -p "$ZIP_PATH" lib/kamfw/fswatch.sh)"
-# shellcheck disable=SC2016
-grep -F 'nohup sh "$_wd_script_file"' <<<"$watchdog_text" >/dev/null ||
-    fail "watchdog does not launch detached loop script"
-grep -F 'KAM_MODULES' <<<"$watchdog_text" >/dev/null ||
-    fail "watchdog loop does not reset KAM_MODULES"
-# shellcheck disable=SC2016
-grep -F 'nohup sh "$_fw_script_file"' <<<"$fswatch_text" >/dev/null ||
-    fail "fswatch does not launch detached loop script"
-# shellcheck disable=SC2016
-grep -F '_fw_tmp_dir="${TMPDIR:-}"' <<<"$fswatch_text" >/dev/null ||
-    fail "fswatch does not guard invalid TMPDIR"
+# Exercise the extracted framework contract, rather than matching its private
+# variable names. Only Android's proc-reader CLI boundary is adapted to this
+# host; the loader, worker launch/stop code and util-linux lifecycle lock are real.
+python3 - "$ZIP_PATH" "$elf_tmp/kamfw-workers" <<'PY_KAMFW'
+import fcntl
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+import zipfile
+
+archive_path, root = Path(sys.argv[1]), Path(sys.argv[2])
+with zipfile.ZipFile(archive_path) as archive:
+    archive.extractall(root, [entry for entry in archive.namelist()
+                             if entry.startswith("lib/kamfw/")])
+(root / ".config/kamfw").mkdir(parents=True)
+(root / "watched").mkdir()
+(root / "watched/input").write_text("before")
+(root / ".config/kamfw/.envrc").write_text(
+    # A new process must not inherit the parent's imported-module cache.
+    '[ "${MAGICNET_PACKAGE_CHILD:-0}" != 1 ] || [ -z "${KAM_MODULES:-}" ] || exit 97\n'
+    'KAM_UI_LANGUAGE=en\n'
+)
+(root / "cli").write_text(f"#!{sys.executable}\n" + r'''
+from pathlib import Path
+import sys
+try:
+    command, base, pid = sys.argv[1:]
+    process = Path(base) / str(int(pid))
+    if command == "__proc-cmdline":
+        with (process / "cmdline").open("rb") as stream:
+            data = stream.read(65537)
+        if len(data) > 65536 or not data.endswith(b"\0"):
+            raise ValueError("invalid argv")
+        values = data[:-1].split(b"\0")
+        if any(not value or b"\n" in value or b"\r" in value for value in values):
+            raise ValueError("invalid argv")
+        sys.stdout.buffer.write(b"\n".join(values) + b"\n")
+    elif command == "__proc-stat":
+        fields = (process / "stat").read_text().rsplit(") ", 1)[1].split()
+        print(fields[0], int(fields[19]))
+    else:
+        raise ValueError("unsupported proc boundary")
+except (OSError, ValueError, IndexError):
+    sys.exit(1)
+''')
+(root / "cli").chmod(0o700)
+env = {key: value for key, value in os.environ.items()
+       if not key.startswith(("KAM_", "MAGICNET_"))}
+env.update(MODDIR=str(root), MODPATH=str(root), KAM_HOME=str(root),
+           KAMFW_DIR=str(root / "lib/kamfw"), KAM_MODULES="",
+           KAM_FSWATCH_BUSYBOX_BIN="/bin/false",
+           TMPDIR=str(root / "missing/tmp"))
+driver = r'''
+set -e
+. "$KAMFW_DIR/.kamfwrc"
+import watchdog
+import fswatch
+export MAGICNET_PACKAGE_CHILD=1
+"$@"
+'''
+groups = []
+
+def run(*arguments, expected=0):
+    process = subprocess.Popen(["sh", "-c", driver, "package-worker", *arguments],
+                               env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, start_new_session=True)
+    groups.append(process.pid)
+    try:
+        output = process.communicate(timeout=8)[0]
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        output = process.communicate(timeout=2)[0]
+        raise AssertionError(f"packaged worker did not detach/finish: {arguments}: {output}") from None
+    assert process.returncode == expected, (arguments, process.returncode, output)
+    return output.strip()
+
+def wait_for_marker(path):
+    deadline = time.monotonic() + 5
+    while not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert path.exists(), f"detached worker did not execute its callback: {path.name}"
+
+try:
+    # Missing TMPDIR must fall back locally, with no temporary snapshot leaks.
+    snapshot = str(root / "snapshot")
+    run("fswatch", "changed", str(root / "watched"), snapshot)
+    run("fswatch", "changed", str(root / "watched"), snapshot, expected=1)
+    run("fswatch", "changed", str(root / "absent"), snapshot, expected=1)
+    assert (root / ".tmp").is_dir()
+    assert not list((root / ".tmp").iterdir()), "fswatch leaked temporary snapshots"
+    for worker in ("watchdog", "fswatch"):
+        marker = root / f"{worker}.marker"
+        callback = f': >"$KAM_HOME/{worker}.marker"'
+        args = [worker, "start", "package"]
+        if worker == "fswatch":
+            args.append(str(root / "watched"))
+        run(*args, "1", callback)
+        owner = root / f".state/{worker}/package.pid"
+        pid = int(owner.read_text().strip())
+        assert run(worker, "status", "package") == str(pid)
+        loop = owner.with_suffix(".loop.sh")
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        assert argv[1:] == [str(loop).encode(), b""], "worker PID does not own its loop script"
+        if worker == "fswatch":
+            lock = owner.with_suffix(".lifecycle.lock")
+            with lock.open("a") as stream:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for descriptor in Path(f"/proc/{pid}/fd").iterdir():
+                try:
+                    target = os.readlink(descriptor)
+                except FileNotFoundError:
+                    continue  # A transient loop I/O descriptor may have closed.
+                assert target != str(lock), "worker inherited lifecycle lock FD"
+            (root / "watched/input").write_text("after")
+        wait_for_marker(marker)
+        marker.unlink()
+        os.kill(pid, signal.SIGHUP)
+        if worker == "fswatch":
+            (root / "watched/input").write_text("after-hup")
+        wait_for_marker(marker)
+        run(worker, "stop", "package")
+        assert not owner.exists(), "stopped worker retained PID file"
+        run(worker, "status", "package", expected=1)
+    assert not list((root / ".tmp").iterdir()), "worker leaked temporary snapshots"
+finally:
+    # Bound all fixture children, including sleep, even after an assertion fails.
+    for group in groups:
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+print("Packaged kamfw detached workers, loader reset, PID/lock and TMPDIR cleanup passed")
+PY_KAMFW
 
 printf 'package smoke passed: %s\n' "$ZIP_PATH"

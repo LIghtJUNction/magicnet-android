@@ -149,16 +149,36 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
 "$MODPATH/bin/jq" -e 'type == "object"' "$3" >/dev/null
 ''',
             "bin/magicnet-cli": b"#!/bin/sh\nexit 0\n",
+            "lib/kamfw/tests/installer-fixture-canary.sh": b"#!/bin/sh\nexit 1\n",
         }
         for file in (module / "lib").rglob("*"):
             if file.is_file() and (file.suffix in (".sh", ".jq") or file.name == ".kamfwrc"):
                 entries[file.relative_to(module).as_posix()] = file.read_bytes()
-        source = cls.root / "source.zip"
+        # Follow the release's sanitize -> split sequence. Framework checkouts
+        # include their own tests, which the packager correctly refuses.
+        project = cls.root / "fixture-project"
+        (project / "dist").mkdir(parents=True)
+        (project / "scripts").mkdir()
+        (project / "kam.toml").write_text('[prop]\nid = "MagicNet"\n')
+        # These controlled host payloads are intentionally not Android ARM64
+        # binaries. Keep a real CRC check here; the release's architecture smoke
+        # remains a separate gate, and the archive path audit below is strict.
+        smoke = project / "scripts/package-smoke.sh"
+        smoke.write_text('#!/bin/sh\nexec unzip -tq "$1"\n')
+        smoke.chmod(0o755)
+        source = project / "dist/MagicNet.zip"
         PACKAGE.write_zip(source, {name: PACKAGE.zip_entry(name, data, 0o755 if name.startswith("bin/") else 0o644)
                                    for name, data in entries.items()})
+        subprocess.run(["bash", str(ROOT / "hooks/post-build/7900.sanitize_zip.sh")],
+                       env=dict(os.environ, KAM_PROJECT_ROOT=str(project), KAM_HOOKS_ROOT=str(ROOT / "hooks")),
+                       check=True, capture_output=True, text=True, timeout=20)
+        cls.sanitized_source = source
+        cls.framework_runtime = {name: data for name, data in entries.items()
+                                 if name.startswith("lib/kamfw/")}
         output = cls.root / "dist"
         arch = {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]
         manifest = PACKAGE.split(source, cls.helper, output, "LIghtJUNction/MagicNet", arch)
+        cls.component_archives = sorted(output.glob("*.zip"))
         cls.components = cls.root / "offline-components"
         cls.components.mkdir()
         for component in manifest["components"]:
@@ -176,6 +196,18 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
+
+    def test_framework_tests_are_removed_before_split_without_changing_runtime(self):
+        for path in [self.sanitized_source, *self.component_archives, *self.archives.values()]:
+            with self.subTest(archive=str(path.relative_to(self.root))), zipfile.ZipFile(path) as archive:
+                self.assertIsNone(archive.testzip())
+                names = set(archive.namelist())
+                self.assertFalse(any(PACKAGE.DEVELOPMENT_DIRECTORY.search(name) for name in names))
+                for name in names & self.framework_runtime.keys():
+                    self.assertEqual(archive.read(name), self.framework_runtime[name])
+        with zipfile.ZipFile(self.sanitized_source) as archive:
+            self.assertTrue({"lib/kamfw/.kamfwrc", "lib/kamfw/watchdog.sh", "lib/kamfw/fswatch.sh"}
+                            <= set(archive.namelist()))
 
     def install(self, root, name, shell, *, upgrade=False, rejected=False, expected_error=None,
                 customize=None, before="", after=""):
