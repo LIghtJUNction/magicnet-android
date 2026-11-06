@@ -128,6 +128,7 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
         subprocess.run(["go", "build", "-trimpath", "-o", str(cls.helper),
                         "./installer/components"], cwd=ROOT, env=env, check=True)
         module = ROOT / "src/MagicNet"
+        cls.website_targets = (module / ".config/magicnet/website-targets.tsv").read_bytes()
         cls.template = json.dumps({
             "dns": {"servers": []},
             "route": {"final": "proxy", "rule_set": [
@@ -140,6 +141,7 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
             "customize.sh": (module / "customize.sh").read_bytes(),
             ".config/kamfw/.envrc": (module / ".config/kamfw/.envrc").read_bytes(),
             ".config/sing-box/config.json": cls.template,
+            ".config/magicnet/website-targets.tsv": cls.website_targets,
             ".config/sing-box/rules/fixture.json": b'{"version":3,"rules":[{"domain_suffix":["example.invalid"]}]}',
             "bin/jq": Path(shutil.which("jq")).read_bytes(),
             "bin/sing-box": b'''#!/bin/sh
@@ -267,6 +269,7 @@ set_perm_recursive() {
         if upgrade:
             self.assertEqual((active / ".config/sing-box/config.json").read_bytes(), previous)
         self.assertEqual(list(module.rglob(".install-template.*")), [])
+        self.assertEqual(list(module.rglob(".install-catalog.*")), [])
         self.assertEqual(list(module.rglob("install-config.*")), [])
         return result
 
@@ -398,7 +401,68 @@ cp() {
             for upgrade in (False, True):
                 for shell in SHELLS:
                     with self.subTest(archive=name, upgrade=upgrade, shell=shell), tempfile.TemporaryDirectory() as tmp:
-                        self.install(Path(tmp), name, shell, upgrade=upgrade)
+                        root = Path(tmp)
+                        self.install(root, name, shell, upgrade=upgrade)
+                        catalog = root / "modules_update/MagicNet/.config/magicnet/website-targets.tsv"
+                        self.assertEqual(catalog.read_bytes(), self.website_targets)
+                        self.assertEqual(catalog.stat().st_mode & 0o777, 0o600)
+
+    def test_upgrade_keeps_new_catalog_and_existing_user_values(self):
+        for name in self.archives:
+            for shell in SHELLS:
+                for custom in (False, True):
+                    with self.subTest(archive=name, shell=shell, custom=custom), tempfile.TemporaryDirectory() as tmp:
+                        root = Path(tmp)
+                        previous = root / "modules/MagicNet/.config/magicnet"
+                        previous.mkdir(parents=True)
+                        setting = previous / "user-setting.conf"
+                        setting.write_bytes(b"user-setting=preserved\n")
+                        setting.chmod(0o600)
+                        catalog = previous / "website-targets.tsv"
+                        expected = b"custom\thttps://custom.invalid/\n" if custom else self.website_targets
+                        if custom:
+                            catalog.write_bytes(expected)
+                            catalog.chmod(0o600)
+                        self.install(root, name, shell, upgrade=True)
+                        restored = root / "modules_update/MagicNet/.config/magicnet"
+                        self.assertEqual((restored / catalog.name).read_bytes(), expected)
+                        self.assertEqual((restored / catalog.name).stat().st_mode & 0o777, 0o600)
+                        self.assertEqual((restored / setting.name).read_bytes(), setting.read_bytes())
+                        self.assertEqual(catalog.exists(), custom)
+                        if custom:
+                            self.assertEqual(catalog.read_bytes(), expected)
+
+    def test_upgrade_preserves_history_without_restoring_runtime_ownership(self):
+        for name in self.archives:
+            for shell in SHELLS:
+                with self.subTest(archive=name, shell=shell), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    previous = root / "modules/MagicNet/.state/sing-box"
+                    previous.mkdir(parents=True)
+                    history = previous / "subscription-status"
+                    history.write_bytes(b"phase=complete\nresult=success\nattempt_epoch=123\nsuccess_epoch=123\nsource_mode=local\n")
+                    history.chmod(0o600)
+                    (previous / "subscription-update.lock").mkdir()
+                    (previous / "subscription-update.lock/owner").write_text("999999:1:old\n")
+                    self.install(root, name, shell, upgrade=True)
+                    restored = root / "modules_update/MagicNet/.state/sing-box"
+                    self.assertEqual((restored / history.name).read_bytes(), history.read_bytes())
+                    self.assertEqual((restored / history.name).stat().st_mode & 0o777, 0o600)
+                    self.assertFalse((restored / "subscription-update.lock").exists())
+
+    def test_upgrade_refuses_linked_catalog_without_touching_target(self):
+        for shell in SHELLS:
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                previous = root / "modules/MagicNet/.config/magicnet"
+                previous.mkdir(parents=True)
+                target = root / "unrelated-catalog"
+                target.write_bytes(b"untouched\n")
+                (previous / "website-targets.tsv").symlink_to(target)
+                self.install(root, "magicnet_installer.zip", shell, upgrade=True,
+                             expected_error="unsafe website probe catalog")
+                self.assertEqual(target.read_bytes(), b"untouched\n")
+                self.assertTrue((previous / "website-targets.tsv").is_symlink())
 
     def test_rejected_core_upgrade_leaves_previous_config(self):
         with tempfile.TemporaryDirectory() as tmp:

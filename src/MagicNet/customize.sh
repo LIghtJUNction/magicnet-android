@@ -80,6 +80,7 @@ MAGICNET_INSTALL_MIGRATION_ITEMS='.config/sing-box/config.json
 .config/sing-box/subscription-filter.list
 .config/sing-box/subscription-1.yaml
 .state/sing-box/subscription-work
+.state/sing-box/subscription-status
 .state/sing-box/selector-selections.json
 .state/transparent-mode
 .state/network-access-recovery
@@ -423,6 +424,32 @@ magicnet_seed_config_repository() {
 }
 
 magicnet_seed_config_repository || abort "! failed to initialize the sing-box config repository"
+
+# SKIPUNZIP installs need the catalog from the archive; an older settings
+# directory can also remove it during restore. Seed only after that restore.
+magicnet_seed_website_catalog() (
+  _catalog_parent="${MODPATH}/.config/magicnet"
+  _catalog="$_catalog_parent/website-targets.tsv"
+  for _path in "${MODPATH}/.config" "$_catalog_parent" "$_catalog"; do
+    [ ! -L "$_path" ] || exit 1
+  done
+  if [ -e "$_catalog" ]; then
+    [ -f "$_catalog" ]
+    exit "$?"
+  fi
+  umask 077
+  mkdir -p "$_catalog_parent" || exit 1
+  _catalog_stage="$_catalog_parent/.install-catalog.$$"
+  mkdir "$_catalog_stage" || exit 1
+  trap 'rm -rf "$_catalog_stage"' 0
+  trap 'exit 1' 1 2 3 15
+  unzip -p "$ZIPFILE" '.config/magicnet/website-targets.tsv' >"$_catalog_stage/catalog" || exit 1
+  [ -s "$_catalog_stage/catalog" ] || exit 1
+  chmod 600 "$_catalog_stage/catalog" || exit 1
+  mv "$_catalog_stage/catalog" "$_catalog"
+)
+
+magicnet_seed_website_catalog || abort "! missing or unsafe website probe catalog"
 
 # Older releases shipped a domestic-app bypass catalog.  Keep only packages that
 # are still Android VPN services during the one-time migration; ordinary app
