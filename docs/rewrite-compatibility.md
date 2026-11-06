@@ -2,7 +2,7 @@
 
 ## Contract and baseline
 
-The rewrite keeps observable product behavior and replaces internal implementations by responsibility. The comparison baseline is the complete source tree at `9d545e100080ef454f7bc7c11fb9c2508b639e4e`; its framework is `MemDeco-WG/kamfw@bb0dc7582ee2c27e31e49d2d3b714b97528defef`. The associated recipe baseline is `LIghtJUNction/MagicNet@d81d03792ef7ca973f7ab798f0e74061834218d2`. Git history and detached baseline worktrees retain the original implementations for differential tests.
+The rewrite keeps observable product behavior and replaces internal implementations by responsibility. The comparison baseline is the complete source tree at `aefcbfbab80fe14008e4467eb0292251f7ce8f89`; its framework is `MemDeco-WG/kamfw@bb0dc7582ee2c27e31e49d2d3b714b97528defef`. The associated recipe baseline is `LIghtJUNction/MagicNet@d81d03792ef7ca973f7ab798f0e74061834218d2`. Git history and detached baseline worktrees retain the original implementations for differential tests. The baseline includes the connectivity recovery and diagnostic exporter committed while the rewrite was being prepared; those additions are preserved during integration.
 
 Compatibility concerns inputs, outputs, exit status, persistent intent, resource ownership and recovery. Private functions and source layout are implementation details. Existing tests that inspect an old function's spelling must follow the replacement call path or exercise its behavior; they must continue to enforce the original requirement.
 

@@ -26,12 +26,12 @@ const FAST_MAX_MS = 120;
 const NORMAL_MAX_MS = 250;
 
 export function parseNodeTestAll(text: string): NodeDelayEntry[] {
-  const entries = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .map(parseNodeDelayLine)
-    .filter((entry): entry is NodeDelayEntry => Boolean(entry));
-  return Array.from(new Map(entries.map((entry) => [entry.node, entry])).values())
+  const entries = new Map<string, NodeDelayEntry>();
+  for (const line of text.split(/\r?\n/)) {
+    const entry = parseNodeDelayLine(line.trim());
+    if (entry) entries.set(entry.node, entry);
+  }
+  return [...entries.values()]
     .sort((left, right) => (left.delayMillis ?? Number.MAX_SAFE_INTEGER) - (right.delayMillis ?? Number.MAX_SAFE_INTEGER) || left.node.localeCompare(right.node));
 }
 
@@ -69,23 +69,33 @@ function extremeEntry(
 }
 
 export function buildNodeDelayStats(entries: NodeDelayEntry[]): NodeDelayStats {
-  const usable = entries.filter((entry) => entry.delayMillis !== null);
-  const averageMillis = usable.length
-    ? Math.round(usable.reduce((total, entry) => total + (entry.delayMillis || 0), 0) / usable.length)
-    : null;
-  const medianMillis = usable.length ? medianDelay(usable.map((entry) => entry.delayMillis || 0)) : null;
+  const delays: number[] = [];
+  const counts = { fast: 0, normal: 0, slow: 0, failed: 0 };
+  let total = 0;
+  let fastest: NodeDelayEntry | null = null;
+  let slowest: NodeDelayEntry | null = null;
+  for (const entry of entries) {
+    counts[entry.quality]++;
+    if (entry.delayMillis === null) continue;
+    const delay = entry.delayMillis || 0;
+    delays.push(delay);
+    total += delay;
+    if (!fastest || entry.delayMillis < fastest.delayMillis!) fastest = entry;
+    if (!slowest || entry.delayMillis > slowest.delayMillis!) slowest = entry;
+  }
+  delays.sort((left, right) => left - right);
+  const middle = Math.floor(delays.length / 2);
+  const medianMillis = !delays.length ? null : delays.length % 2
+    ? delays[middle] : Math.round((delays[middle - 1] + delays[middle]) / 2);
   return {
     tested: entries.length,
-    usable: usable.length,
-    failed: entries.filter((entry) => entry.quality === "failed").length,
-    fast: entries.filter((entry) => entry.quality === "fast").length,
-    normal: entries.filter((entry) => entry.quality === "normal").length,
-    slow: entries.filter((entry) => entry.quality === "slow").length,
-    averageMillis,
+    usable: delays.length,
+    ...counts,
+    averageMillis: delays.length ? Math.round(total / delays.length) : null,
     medianMillis,
-    usablePercent: entries.length ? Math.round((usable.length / entries.length) * 100) : 0,
-    fastest: fastestEntry(usable),
-    slowest: slowestEntry(usable)
+    usablePercent: entries.length ? Math.round((delays.length / entries.length) * 100) : 0,
+    fastest,
+    slowest,
   };
 }
 
@@ -150,13 +160,6 @@ function parseNodeDelayLine(line: string): NodeDelayEntry | null {
 function parseNodeDelayMillis(value: string): number | null {
   const match = value.match(/\b(\d+)\s*ms\b/i);
   return match?.[1] ? Number(match[1]) : null;
-}
-
-function medianDelay(values: number[]): number {
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  if (sorted.length % 2) return sorted[middle];
-  return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
 }
 
 function nodeDelayQuality(delayMillis: number | null): NodeDelayQuality {

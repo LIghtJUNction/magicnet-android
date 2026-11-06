@@ -39,11 +39,14 @@ export type TrafficSamplingHealthReport = {
 export function parseTrafficSample(text: string, timestampMillis = Date.now()): TrafficSample | null {
   const wholeJson = parseTrafficJson(text, timestampMillis);
   if (wholeJson) return wholeJson;
-  for (const line of text.split(/\r?\n/).reverse()) {
+  const lines = text.split(/\r?\n/);
+  let kvLine: string | undefined;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index];
     const sample = parseTrafficJson(line, timestampMillis);
     if (sample) return sample;
+    if (kvLine === undefined && /\bup\s*=/.test(line) && /\bdown\s*=/.test(line)) kvLine = line;
   }
-  const kvLine = text.split(/\r?\n/).reverse().find((item) => /\bup\s*=/.test(item) && /\bdown\s*=/.test(item));
   if (kvLine) {
     const fields = Object.fromEntries(kvLine.split(/\s+/).map((part) => part.split("=", 2)).filter((pair) => pair.length === 2));
     const pair = trafficPair(fields, "", null);
@@ -59,17 +62,27 @@ export function parseTrafficSample(text: string, timestampMillis = Date.now()): 
 }
 
 export function buildTrafficStatsSummary(samples: TrafficSample[]): TrafficStatsSummary {
-  const totals = samples.map((sample) => sample.up + sample.down);
-  const peakTotal = totals.length ? Math.max(0, ...totals) : 0;
-  const peakTotalIndex = totals.findIndex((value) => value === peakTotal);
+  let sumUp = 0, sumDown = 0, peakUp = 0, peakDown = 0, peakTotal = 0;
+  let peakTotalTimestampMillis: number | null = null;
+  for (const sample of samples) {
+    sumUp += sample.up;
+    sumDown += sample.down;
+    peakUp = Math.max(peakUp, sample.up);
+    peakDown = Math.max(peakDown, sample.down);
+    const total = sample.up + sample.down;
+    if (total > peakTotal || (total === peakTotal && peakTotalTimestampMillis === null)) {
+      peakTotalTimestampMillis = sample.timestampMillis;
+    }
+    peakTotal = Math.max(peakTotal, total);
+  }
   return {
     latest: samples.at(-1) || null,
-    averageUp: average(samples.map((sample) => sample.up)),
-    averageDown: average(samples.map((sample) => sample.down)),
-    peakUp: Math.max(0, ...samples.map((sample) => sample.up)),
-    peakDown: Math.max(0, ...samples.map((sample) => sample.down)),
+    averageUp: samples.length ? sumUp / samples.length : 0,
+    averageDown: samples.length ? sumDown / samples.length : 0,
+    peakUp,
+    peakDown,
     peakTotal,
-    peakTotalTimestampMillis: peakTotalIndex >= 0 ? samples[peakTotalIndex].timestampMillis : null,
+    peakTotalTimestampMillis: Number.isNaN(peakTotal) ? null : peakTotalTimestampMillis,
     sampleCount: samples.length,
     windowMillis: samples.length >= 2 ? Math.max(0, samples[samples.length - 1].timestampMillis - samples[0].timestampMillis) : 0
   };
@@ -77,53 +90,26 @@ export function buildTrafficStatsSummary(samples: TrafficSample[]): TrafficStats
 
 export function evaluateTrafficAlert(samples: TrafficSample[], thresholdMiBPerSecond: number): TrafficAlertState {
   const thresholdBytesPerSecond = Math.max(0, thresholdMiBPerSecond) * 1024 * 1024;
-  const latest = samples.at(-1) || null;
+  const latest = samples.at(-1);
   const latestTotal = latest ? latest.up + latest.down : 0;
-  if (!thresholdBytesPerSecond) {
-    return {
-      level: "idle",
-      message: t("未设置告警阈值。"),
-      latestTotal,
-      thresholdBytesPerSecond,
-      sustainedSamples: 0
-    };
-  }
-  if (!latest) {
-    return {
-      level: "idle",
-      message: t("等待真实流量样本。"),
-      latestTotal,
-      thresholdBytesPerSecond,
-      sustainedSamples: 0
-    };
-  }
-  const sustainedSamples = [...samples].reverse().findIndex((sample) => sample.up + sample.down < thresholdBytesPerSecond);
-  const consecutive = sustainedSamples === -1 ? samples.length : sustainedSamples;
-  if (consecutive >= 3) {
-    return {
-      level: "danger",
-      message: t("连续 {consecutive} 个样本超过阈值。", { consecutive: consecutive }),
-      latestTotal,
-      thresholdBytesPerSecond,
-      sustainedSamples: consecutive
-    };
-  }
-  if (latestTotal >= thresholdBytesPerSecond) {
-    return {
-      level: "warning",
-      message: t("最近一个样本超过阈值。"),
-      latestTotal,
-      thresholdBytesPerSecond,
-      sustainedSamples: consecutive
-    };
-  }
-  return {
-    level: "ok",
-    message: t("当前流量低于阈值。"),
-    latestTotal,
-    thresholdBytesPerSecond,
-    sustainedSamples: 0
+  const result: TrafficAlertState = {
+    level: "idle", message: t("未设置告警阈值。"), latestTotal,
+    thresholdBytesPerSecond, sustainedSamples: 0,
   };
+  if (!thresholdBytesPerSecond) return result;
+  if (!latest) return { ...result, message: t("等待真实流量样本。") };
+  let consecutive = 0;
+  for (let index = samples.length - 1; index >= 0; index--) {
+    if (samples[index].up + samples[index].down < thresholdBytesPerSecond) break;
+    consecutive++;
+  }
+  if (consecutive >= 3) return {
+    ...result, level: "danger", sustainedSamples: consecutive,
+    message: t("连续 {consecutive} 个样本超过阈值。", { consecutive }),
+  };
+  return latestTotal >= thresholdBytesPerSecond
+    ? { ...result, level: "warning", sustainedSamples: consecutive, message: t("最近一个样本超过阈值。") }
+    : { ...result, level: "ok", message: t("当前流量低于阈值。") };
 }
 
 export function formatTrafficStatsReport(
@@ -321,6 +307,3 @@ function numberValue(value: unknown): number | null {
   return null;
 }
 
-function average(values: number[]): number {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-}

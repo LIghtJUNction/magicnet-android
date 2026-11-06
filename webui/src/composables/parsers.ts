@@ -252,22 +252,13 @@ export function parseHealth(text: string): HealthItem[] {
 }
 
 export function parseApps(text: string): AppPolicy {
-  const policy: AppPolicy = {
-    mode: "blacklist",
-    proxy: [],
-    direct: [],
-    bypass: [],
-  };
-  let section: "proxy" | "direct" | "bypass" | null = null;
-  text.split(/\r?\n/).forEach((raw) => {
-    const line = raw.trim();
-    if (!line) return;
-    if (line.startsWith("mode="))
-      policy.mode = line.includes("whitelist") ? "whitelist" : "blacklist";
-    else if (line === "proxy apps:") section = "proxy";
-    else if (line === "direct apps:") section = "direct";
-    else if (line === "bypass apps:") section = "bypass";
-    else if (section) policy[section].push(line);
+  const policy: AppPolicy = { mode: "blacklist", proxy: [], direct: [], bypass: [] };
+  readSections(text, policy, {
+    "proxy apps:": "proxy", "direct apps:": "direct", "bypass apps:": "bypass",
+  }, (line) => {
+    if (!line.startsWith("mode=")) return false;
+    policy.mode = line.includes("whitelist") ? "whitelist" : "blacklist";
+    return true;
   });
   return policy;
 }
@@ -354,24 +345,30 @@ function configValidationFailureDetail(text: string): string {
 }
 
 export function parseRouteRuleSummary(text: string): RouteRuleSummary {
-  const summary: RouteRuleSummary = {
-    proxy: [],
-    direct: [],
-    block: [],
-    warp: [],
-  };
-  let current: keyof RouteRuleSummary | null = null;
-  text.split(/\r?\n/).forEach((raw) => {
-    const line = raw.trim();
-    if (!line) return;
-    const heading = line.toLowerCase();
-    if (heading === "proxy domain suffixes:") current = "proxy";
-    else if (heading === "direct domain suffixes:") current = "direct";
-    else if (heading === "block domain suffixes:") current = "block";
-    else if (heading === "warp domain suffixes:") current = "warp";
-    else if (current && !line.endsWith(":")) summary[current].push(line);
-  });
+  const summary: RouteRuleSummary = { proxy: [], direct: [], block: [], warp: [] };
+  readSections(text, summary, {
+    "proxy domain suffixes:": "proxy", "direct domain suffixes:": "direct",
+    "block domain suffixes:": "block", "warp domain suffixes:": "warp",
+  }, undefined, true);
   return summary;
+}
+
+/** The text compatibility formats share section traversal, not field semantics. */
+function readSections<K extends string>(
+  text: string,
+  target: Record<K, string[]>,
+  headings: Record<string, K>,
+  consume: (line: string) => boolean = () => false,
+  foldHeadings = false,
+): void {
+  let section: K | undefined;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || consume(line)) continue;
+    const heading = foldHeadings ? line.toLowerCase() : line;
+    if (Object.hasOwn(headings, heading)) section = headings[heading];
+    else if (section !== undefined && !(foldHeadings && line.endsWith(":"))) target[section].push(line);
+  }
 }
 
 export function parseConnectionSnapshot(
@@ -383,14 +380,12 @@ export function parseConnectionSnapshot(
       ? root.connections
       : null;
     if (!rawConnections) return null;
-    const connections = rawConnections
-      .map(parseConnectionTarget)
-      .filter((item): item is ConnectionTarget => Boolean(item))
-      .filter(
-        (item, index, items) =>
-          items.findIndex((other) => other.id === item.id) === index,
-      )
-      .sort((left, right) => right.totalBytes - left.totalBytes);
+    const unique = new Map<string, ConnectionTarget>();
+    for (const value of rawConnections) {
+      const target = parseConnectionTarget(value);
+      if (target && !unique.has(target.id)) unique.set(target.id, target);
+    }
+    const connections = [...unique.values()].sort((left, right) => right.totalBytes - left.totalBytes);
     return {
       count: rawConnections.length,
       uploadTotal: safeNumber(root.uploadTotal),
@@ -431,32 +426,17 @@ export function connectionBuckets(
   connections: ConnectionTarget[],
   kind: "rule" | "chain" | "process",
 ): ConnectionBucket[] {
-  const seeds = connections
-    .map((target) => {
-      const name = bucketName(target, kind);
-      if (!name) return null;
-      return {
-        name,
-        query: kind === "chain" ? name.replace(/ > /g, " ") : name,
-        bytes: target.totalBytes,
-      };
-    })
-    .filter((item): item is { name: string; query: string; bytes: number } =>
-      Boolean(item),
-    );
-  return Object.values(
-    seeds.reduce<Record<string, ConnectionBucket>>((acc, seed) => {
-      acc[seed.name] ||= {
-        name: seed.name,
-        query: seed.query,
-        count: 0,
-        bytes: 0,
-      };
-      acc[seed.name].count += 1;
-      acc[seed.name].bytes += seed.bytes;
-      return acc;
-    }, Object.create(null) as Record<string, ConnectionBucket>),
-  )
+  const buckets: Record<string, ConnectionBucket> = Object.create(null);
+  for (const target of connections) {
+    const name = bucketName(target, kind);
+    if (!name) continue;
+    const bucket = buckets[name] ??= {
+      name, query: kind === "chain" ? name.replace(/ > /g, " ") : name, count: 0, bytes: 0,
+    };
+    bucket.count += 1;
+    bucket.bytes += target.totalBytes;
+  }
+  return Object.values(buckets)
     .sort((left, right) => right.bytes - left.bytes || right.count - left.count)
     .slice(0, 4);
 }
@@ -626,40 +606,28 @@ export function parseBlock(
     communityDomains: [],
     allowRules: [],
   };
-  let section:
-    | keyof Pick<
-        BlocklistState,
-        "manual" | "communityRules" | "communityDomains" | "allowRules"
-      >
-    | null = null;
-  text.split(/\r?\n/).forEach((raw) => {
-    const line = raw.trim();
-    if (!line) return;
+  readSections(text, next, {
+    "manual domain suffixes:": "manual", "community rules:": "communityRules",
+    "community domain suffixes:": "communityDomains", "local allow rules:": "allowRules",
+  }, (line) => {
     if (line.startsWith("enabled=")) next.enabled = line.slice(8) !== "0";
-    else if (line.startsWith("community="))
-      next.community = line.slice(10) !== "0";
+    else if (line.startsWith("community=")) next.community = line.slice(10) !== "0";
     else if (line.startsWith("url=")) next.url = line.slice(4);
-    else if (line === "manual domain suffixes:") section = "manual";
-    else if (line === "community rules:") section = "communityRules";
-    else if (line === "community domain suffixes:")
-      section = "communityDomains";
-    else if (line === "local allow rules:") section = "allowRules";
-    else if (section) next[section].push(line);
+    else return false;
+    return true;
   });
   return next;
 }
 
 export function parseMcp(text: string, previous: McpState): McpState {
   const next = { ...previous, portOwner: "" };
-  text.split(/\r?\n/).forEach((raw) => {
-    const line = raw.trim();
-    if (line.startsWith("enabled=")) next.enabled = line.slice(8) !== "0";
-    else if (line.startsWith("bind=")) next.bind = line.slice(5);
-    else if (line.startsWith("port=")) next.port = line.slice(5);
-    else if (line.startsWith("pid=")) next.pid = line.slice(4);
-    else if (line.startsWith("secret_set="))
-      next.secretSet = line.slice(11) === "1";
-    else if (line.startsWith("port_owner=")) next.portOwner = line.slice(11);
+  readFields(text, {
+    enabled: (value) => { next.enabled = value !== "0"; },
+    bind: (value) => { next.bind = value; },
+    port: (value) => { next.port = value; },
+    pid: (value) => { next.pid = value; },
+    secret_set: (value) => { next.secretSet = value === "1"; },
+    port_owner: (value) => { next.portOwner = value; },
   });
   next.url = formatMcpUrl(next.bind, next.port);
   return next;
@@ -667,17 +635,23 @@ export function parseMcp(text: string, previous: McpState): McpState {
 
 export function parseWarp(text: string, previous: WarpState): WarpState {
   const next = { ...previous };
-  text.split(/\r?\n/).forEach((raw) => {
-    const line = raw.trim();
-    if (line.startsWith("enabled=")) next.enabled = line.slice(8) === "1";
-    else if (line.startsWith("configured="))
-      next.configured = line.slice(11) === "1";
-    else if (line.startsWith("tag=")) next.tag = line.slice(4) || "warp";
-    else if (line.startsWith("endpoint=")) next.endpoint = line.slice(9);
-    else if (line.startsWith("addresses="))
-      next.addresses = Number(line.slice(10)) || 0;
-    else if (line.startsWith("allowed_ips="))
-      next.allowedIps = Number(line.slice(12)) || 0;
+  readFields(text, {
+    enabled: (value) => { next.enabled = value === "1"; },
+    configured: (value) => { next.configured = value === "1"; },
+    tag: (value) => { next.tag = value || "warp"; },
+    endpoint: (value) => { next.endpoint = value; },
+    addresses: (value) => { next.addresses = Number(value) || 0; },
+    allowed_ips: (value) => { next.allowedIps = Number(value) || 0; },
   });
   return next;
+}
+
+function readFields(text: string, fields: Record<string, (value: string) => void>): void {
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    const separator = line.indexOf("=");
+    if (separator < 0) continue;
+    const name = line.slice(0, separator);
+    if (Object.hasOwn(fields, name)) fields[name](line.slice(separator + 1));
+  }
 }

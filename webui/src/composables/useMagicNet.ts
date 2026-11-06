@@ -188,114 +188,57 @@ async function runShellOutcome(
   access: ExecAccess = "write",
 ): Promise<ExecOutcome> {
   const command = `su -M -c ${shellQuote(commandBody)}`;
-  const commandPreview = previewOverride || compactCommand(command);
-  const foregroundToken = quiet ? 0 : foregroundUiGate.begin();
-  const ownsForegroundUi = (): boolean =>
-    !quiet && foregroundUiGate.owns(foregroundToken);
-  const captureSequence = quiet
-    ? 0
-    : beginOperationCapture(
-        state.operationCapture,
-        commandPreview,
-        t("$ {p0}\n执行中...", { p0: commandPreview }),
-      );
-  if (trackCommand && (!quiet || previewOverride))
-    state.lastCommand = commandPreview;
-  if (ownsForegroundUi()) {
-    state.task = label;
-    state.notice = t("已接收：{p0}", { p0: t(label) });
-    const wasBusy = state.busy;
+  const preview = previewOverride || compactCommand(command);
+  const token = quiet ? 0 : foregroundUiGate.begin();
+  const ownsUi = () => !quiet && foregroundUiGate.owns(token);
+  const pending = t("$ {p0}\n执行中...", { p0: preview });
+  const capture = quiet ? 0 : beginOperationCapture(state.operationCapture, preview, pending);
+
+  // Progress, completion and errors have the same ownership rule. A quiet read
+  // may reconcile state but must never replace another operation's feedback.
+  function publish(phase: Phase, notice: string, output?: string): void {
+    const update = output === undefined ? { phase } : { phase, output };
+    if (!ownsUi() || !updateOperationCapture(state.operationCapture, capture, update)) return;
+    Object.assign(state, update, { notice });
+  }
+
+  if (trackCommand && (!quiet || previewOverride)) state.lastCommand = preview;
+  if (ownsUi()) {
+    const phase = state.busy ? "queued" : "accepted";
     state.busy = true;
-    state.phase = wasBusy ? "queued" : "accepted";
-    updateOperationCapture(state.operationCapture, captureSequence, {
-      phase: state.phase,
-    });
-    state.output = t("$ {p0}\n执行中...", { p0: commandPreview });
+    state.task = label;
+    publish(phase, t("已接收：{p0}", { p0: t(label) }), pending);
   }
   await nextTick();
   await nextFrame();
 
-  state.hasKsu = hasAsyncExec();
-  if (!state.hasKsu) {
-    const outcome = unavailableExecOutcome(commandPreview);
-    const output = t("当前没有 KernelSU 异步执行通道，命令未执行。请使用支持 spawn 的新版管理器。\n\n{p0}", { p0: outcome.text });
-    if (
-      ownsForegroundUi() &&
-      updateOperationCapture(state.operationCapture, captureSequence, {
-        phase: "error",
-        output,
-      })
-    ) {
-      state.output = output;
-      state.phase = "error";
-      state.notice = t("未执行：{p0}", { p0: t(label) });
-      state.busy = false;
-      state.task = "";
-    }
-    return outcome;
-  }
-
   try {
-    const result = await execQueue.enqueue(
-      () => {
-        if (
-          ownsForegroundUi() &&
-          updateOperationCapture(state.operationCapture, captureSequence, {
-            phase: "running",
-          })
-        ) {
-          state.phase = "running";
-          state.notice = t("正在执行：{p0}", { p0: t(label) });
-        }
-        return execAsync(command);
-      },
-      CLI_TIMEOUT_MS,
-      label,
-      access,
-    );
-    const outcome = normalizeExecOutcome(result);
-    const text = outcome.text;
-    const output = `$ ${commandPreview}\n${text || t("完成")}`;
-    if (
-      ownsForegroundUi() &&
-      updateOperationCapture(state.operationCapture, captureSequence, {
-        phase: outcome.ok ? "done" : "error",
-        output,
-      })
-    ) {
-      state.phase = outcome.ok ? "done" : "error";
-      state.notice = outcome.ok ? t("完成：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) });
-      state.output = output;
+    state.hasKsu = hasAsyncExec();
+    if (!state.hasKsu) {
+      const outcome = unavailableExecOutcome(preview);
+      publish("error", t("未执行：{p0}", { p0: t(label) }),
+        t("当前没有 KernelSU 异步执行通道，命令未执行。请使用支持 spawn 的新版管理器。\n\n{p0}", { p0: outcome.text }));
+      return outcome;
     }
+    const result = await execQueue.enqueue(() => {
+      publish("running", t("正在执行：{p0}", { p0: t(label) }));
+      return execAsync(command);
+    }, CLI_TIMEOUT_MS, label, access);
+    const outcome = normalizeExecOutcome(result);
+    publish(outcome.ok ? "done" : "error",
+      outcome.ok ? t("完成：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) }),
+      `$ ${preview}\n${outcome.text || t("完成")}`);
     return outcome;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // An expired queue entry was never dispatched. Only an execution timeout
-    // leaves an unknown device outcome that needs background reconciliation.
     const timedOut = error instanceof ExecTimeoutError && error.started;
     const text = `${timedOut ? "[exec-timeout]" : "[error] errno=-1"} ${message}`;
-    const output = `$ ${commandPreview}\n${text}`;
-    if (
-      ownsForegroundUi() &&
-      updateOperationCapture(state.operationCapture, captureSequence, {
-        phase: "error",
-        output,
-      })
-    ) {
-      state.phase = "error";
-      state.notice = timedOut ? t("等待超时：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) });
-      state.output = output;
-    }
-    return {
-      ok: false,
-      timedOut,
-      errno: -1,
-      stdout: "",
-      stderr: message,
-      text,
-    };
+    publish("error",
+      timedOut ? t("等待超时：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) }),
+      `$ ${preview}\n${text}`);
+    return { ok: false, timedOut, errno: -1, stdout: "", stderr: message, text };
   } finally {
-    if (ownsForegroundUi()) {
+    if (ownsUi()) {
       state.busy = false;
       state.task = "";
     }
