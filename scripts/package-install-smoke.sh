@@ -54,7 +54,9 @@ MAGICNET_TEST_HOST_UNZIP="$(command -v unzip)"
 MAGICNET_TEST_HOST_CP="$(command -v cp)"
 MAGICNET_TEST_HOST_JQ="$(command -v jq)"
 MAGICNET_TEST_HOST_SINGBOX="$(command -v sing-box)"
+MAGICNET_TEST_HOST_CURL="$ROOT/scripts/fixtures/host-install-curl.sh"
 export MAGICNET_TEST_HOST_UNZIP MAGICNET_TEST_HOST_CP MAGICNET_TEST_HOST_JQ MAGICNET_TEST_HOST_SINGBOX
+export MAGICNET_TEST_HOST_CURL
 
 MAGICNET_TEST_REAL_CORE="$MAGICNET_TEST_HOST_SINGBOX" bash "$ROOT/scripts/test-install-config-template.sh"
 "$ROOT/scripts/package-smoke.sh" "$ZIP_PATH"
@@ -101,6 +103,9 @@ done
 
 install_host_tool_fixtures() {
     fixture_module="$1"
+    if [[ -f "$fixture_module/bin/curl" ]]; then
+        cp "$MAGICNET_TEST_HOST_CURL" "$fixture_module/bin/curl"
+    fi
     for tool in bash chown chmod cp cut date find grep ln mkdir mv rm sed sh timeout tr unzip; do
         host_tool="$(command -v "$tool")" || fail "missing host tool fixture: $tool"
         [[ -x "$host_tool" ]] || fail "host tool fixture is not executable: $tool"

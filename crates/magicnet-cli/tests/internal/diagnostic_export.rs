@@ -394,6 +394,145 @@ fn core_version_remains_readable_without_passing_arbitrary_command_text() {
     assert!(!safe.contains("SECRET"));
 }
 
+fn curl_build_fixture() -> Value {
+    json!({
+        "schema":1, "scope":"production-android-curl",
+        "target":{"os":"android", "abi":"arm64-v8a", "api":21},
+        "versions":{"curl":"8.22.0", "openssl":"3.5.8", "zlib":"1.3.2"},
+        "ca":{"mode":"embedded", "version":"2026-09-25", "sha256":"a".repeat(64),
+            "bytes":188900, "cert_count":121, "runtime_bundle":false, "system_store":false},
+        "sources":{"curl":{"url":"https://private.invalid/subscription?token=SOURCE-SECRET", "sha256":"b".repeat(64)}},
+        "curl_sha256":"c".repeat(64), "curl_bytes":4194304, "builder_sha256":"d".repeat(64),
+        "toolchain":{"ndk_revision":"29.0.14206865", "ndk_source_properties_sha256":"e".repeat(64),
+            "compiler":"PRIVATE-COMPILER-CANARY"},
+        "runtime_capability":"not_tested", "PRIVATE-BUILD-KEY":"BUILD-SECRET-CANARY"
+    })
+}
+
+#[test]
+fn curl_version_and_build_evidence_preserve_public_versions_without_raw_private_text() {
+    let app = crate::test_support::temp_app();
+    let path = app.moddir.join("bin/curl");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "fixture executable identity").unwrap();
+    let build = app.moddir.join(CURL_BUILD_RECORD);
+    fs::create_dir_all(build.parent().unwrap()).unwrap();
+    let expected = curl_build_fixture();
+    fs::write(&build, expected.to_string()).unwrap();
+    let capture = machine_capture("curl 8.22.0 (PRIVATE-PLATFORM-CANARY) libcurl/8.22.0 OpenSSL/3.5.8 zlib/1.3.2 https://private.invalid/?secret=VERSION-SECRET\nRelease-Date: 2026-11-04\nProtocols: http https PRIVATE-PROTOCOL\nFeatures: SSL libz IPv6 PRIVATE-FEATURE\n".into());
+    let privacy = Privacy::new(Some(&json!({"outbounds":[{"tag":"8.22.0"}]})));
+    let evidence = curl_executor_evidence(&app, &path, &capture, &privacy);
+    assert!(evidence.starts_with("selection=module_bin available=true\n"));
+    let (version, build) = evidence.split_once("\n--- build provenance ---\n").unwrap();
+    let version = captured_json(version.split_once("--- version ---\n").unwrap().1);
+    assert_eq!(version["curl_version"], "8.22.0");
+    assert_eq!(version["libcurl_version"], "8.22.0");
+    assert_eq!(version["tls_backend"], "OpenSSL");
+    assert_eq!(version["tls_version"], "3.5.8");
+    assert_eq!(version["zlib_version"], "1.3.2");
+    assert_eq!(
+        version["capabilities"],
+        json!({"https":true, "tls":true, "gzip":true})
+    );
+    let build: Value = serde_json::from_str(build).unwrap();
+    for key in [
+        "schema",
+        "scope",
+        "target",
+        "versions",
+        "ca",
+        "curl_sha256",
+        "curl_bytes",
+        "runtime_capability",
+    ] {
+        assert_eq!(build[key], expected[key], "lost public build field {key}");
+    }
+    assert_eq!(build["binary_digest_verification"], "not_run");
+    assert_eq!(build["applies_to_selected_path"], true);
+    assert_eq!(
+        curl_build_evidence(&app, false)["applies_to_selected_path"],
+        false
+    );
+    for private in ["PRIVATE-", "SECRET", "private.invalid", "https://"] {
+        assert!(!evidence.contains(private), "leaked {private}: {evidence}");
+    }
+    assert!(evidence.len() < 4096);
+}
+
+#[test]
+fn curl_evidence_reports_missing_executor_invalid_output_and_untrusted_build_records() {
+    let app = crate::test_support::temp_app();
+    let absent = app.moddir.join("bin/curl");
+    let mut collector = Collector::new(Instant::now(), None);
+    let capture = collector.command(
+        Command::new(&absent),
+        &["-q", "--version"],
+        Duration::from_secs(1),
+    );
+    let evidence = curl_executor_evidence(&app, &absent, &capture, &collector.privacy);
+    assert!(evidence.starts_with("selection=missing available=false\n"));
+    assert!(evidence.contains("command_spawn_failed"));
+    assert!(evidence.contains("build_record_missing"));
+    assert_eq!(collector.incomplete_commands, 1);
+
+    for (stdout, complete) in [
+        ("curl PRIVATE-VERSION token=SECRET-CANARY".to_owned(), true),
+        ("curl 8.22.0 libcurl/8.22.0\nProtocols: http https\nFeatures: SSL libz".to_owned(), false),
+        ("curl 8.22.0 libcurl/8.22.0\nProtocols: https\nProtocols: PRIVATE-CANARY\nFeatures: SSL libz".to_owned(), true),
+        ("PRIVATE-CANARY".repeat(STREAM_LIMIT), true),
+    ] {
+        let mut capture = machine_capture(stdout);
+        capture.complete = complete;
+        let evidence = curl_executor_evidence(&app, &absent, &capture, &collector.privacy);
+        assert!(evidence.contains("version_unavailable_or_invalid"));
+        assert!(!evidence.contains("PRIVATE") && !evidence.contains("CANARY"));
+    }
+    let build = app.moddir.join(CURL_BUILD_RECORD);
+    fs::create_dir_all(build.parent().unwrap()).unwrap();
+    let mut malformed = curl_build_fixture();
+    malformed["ca"]["mode"] = json!("PRIVATE-CA-CANARY");
+    for text in [
+        malformed.to_string(),
+        "{PRIVATE-CANARY".into(),
+        "x".repeat(CURL_BUILD_LIMIT as usize + 1),
+    ] {
+        fs::write(&build, text).unwrap();
+        assert_eq!(
+            curl_build_evidence(&app, true)["reason"],
+            "build_record_invalid_or_oversized"
+        );
+    }
+    fs::remove_file(&build).unwrap();
+    let decoy = app.moddir.join("private-build-record");
+    fs::write(&decoy, curl_build_fixture().to_string()).unwrap();
+    symlink(&decoy, &build).unwrap();
+    assert_eq!(curl_build_evidence(&app, true)["status"], "unavailable");
+}
+
+#[test]
+fn curl_version_command_uses_the_existing_total_deadline_without_a_network_request() {
+    let app = crate::test_support::temp_app();
+    let path = app.moddir.join("bin/curl");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "#!/bin/sh\nexit 93\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut collector = Collector::new(Instant::now() - BUDGET, None);
+    let capture = collector.command(
+        crate::trusted_curl(&app),
+        &["--version"],
+        Duration::from_secs(2),
+    );
+    assert!(capture.status.contains("collection_deadline"));
+    assert!(!capture.status.contains("exit_code=93"));
+    let evidence = curl_executor_evidence(&app, &path, &capture, &collector.privacy);
+    collector.append_safe("curl executor", &evidence);
+    let report = collector.finish();
+    assert!(report.contains("available=false"));
+    assert!(report.contains("network_request=not_run"));
+    assert!(report.len() <= REPORT_LIMIT);
+    assert!(report.ends_with("end_of_report=true\n"));
+}
+
 #[test]
 fn exhausted_total_budget_does_not_spawn_more_commands() {
     let app = crate::test_support::temp_app();

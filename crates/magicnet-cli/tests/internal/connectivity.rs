@@ -56,6 +56,38 @@ fn failures_back_off_and_online_resets_without_a_recovery_burst() {
 }
 
 #[test]
+fn missing_or_invalid_executor_is_not_reported_as_an_upstream_failure() {
+    for reason in ["probe_unavailable", "probe_invalid"] {
+        let mut state = State::new(&clock(100));
+        let failed = Observation::failed(reason);
+        for now in [100, 500] {
+            state.record(&clock(now), &failed, Some(&failed), Some(&failed));
+            assert_eq!(state.phase, "offline");
+            assert_eq!(state.reason, reason);
+            assert_eq!(state.primary_reason, reason);
+            assert_eq!(state.http, None);
+            assert_eq!(state.millis, None);
+            assert_eq!(state.action(&clock(now), true), None);
+        }
+        assert_eq!(state.next_uptime, 620);
+        // Even if the executor changes between requests and the direct control
+        // later works, a malformed primary result cannot authorize recovery.
+        state.record(&clock(1000), &failed, Some(&failed), Some(&online()));
+        assert_eq!(state.reason, reason);
+        assert_eq!(state.action(&clock(1000), true), None);
+
+        state.record(
+            &clock(2000),
+            &Observation::failed("timeout"),
+            Some(&Observation::failed("timeout")),
+            Some(&failed),
+        );
+        assert_eq!(state.reason, "timeout");
+        assert_eq!(state.action(&clock(2000), true), None);
+    }
+}
+
+#[test]
 fn two_hour_outage_simulation_keeps_probe_and_action_budgets() {
     let mut state = State::new(&clock(100));
     let mut times = Vec::new();

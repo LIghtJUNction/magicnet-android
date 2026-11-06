@@ -20,6 +20,7 @@ impl Fixture {
             ".state/machines",
             ".log",
             "bin",
+            "licenses/curl",
         ] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
@@ -55,6 +56,27 @@ impl Fixture {
         let core = root.join("bin/sing-box");
         fs::write(&core, "#!/bin/sh\ncase \"$1\" in version) echo 'sing-box version simulated' ;; check) echo 'ERROR configuration invalid password=PASSWORD-CANARY' >&2; exit 2 ;; *) exit 1 ;; esac\n").unwrap();
         fs::set_permissions(core, fs::Permissions::from_mode(0o755)).unwrap();
+        let curl = root.join("bin/curl");
+        fs::write(&curl, r#"#!/bin/sh
+case "$*" in
+  '-q --version')
+    printf '%s\n' 'curl 8.22.0 (aarch64-unknown-linux-android) libcurl/8.22.0 OpenSSL/3.5.8 zlib/1.3.2' 'Protocols: http https' 'Features: SSL libz IPv6'
+    ;;
+  *https://*) : >"${0%/bin/curl}/unexpected-network-request"; exit 95 ;;
+  *) exit 7 ;;
+esac
+"#).unwrap();
+        fs::set_permissions(curl, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(root.join("licenses/curl/build-provenance.json"), serde_json::json!({
+            "schema":1, "scope":"production-android-curl",
+            "target":{"os":"android", "abi":"arm64-v8a", "api":21},
+            "versions":{"curl":"8.22.0", "openssl":"3.5.8", "zlib":"1.3.2"},
+            "ca":{"mode":"embedded", "version":"2026-09-25", "sha256":"a".repeat(64),
+                "bytes":188900, "cert_count":121, "runtime_bundle":false, "system_store":false},
+            "curl_sha256":"b".repeat(64), "curl_bytes":4000000,
+            "sources":{"curl":{"url":"https://private.invalid/?token=CURL-SOURCE-SECRET-CANARY"}},
+            "PRIVATE-CURL-BUILD-KEY":"CURL-BUILD-SECRET-CANARY", "runtime_capability":"not_tested"
+        }).to_string()).unwrap();
         Self(root)
     }
 
@@ -167,6 +189,27 @@ fn assert_status_evidence(fixture: &Fixture, report: &str) {
     }
     assert!(!mcp.contains("unsupported"));
     assert!(!report.contains("MCP-SECRET-CANARY"));
+
+    let curl = section(report, "curl executor");
+    assert!(curl.starts_with("selection=module_bin available=true\nnetwork_request=not_run\n"));
+    let (version, build) = curl.split_once("\n--- build provenance ---\n").unwrap();
+    let version = machine_capture(version.split_once("--- version ---\n").unwrap().1);
+    assert_eq!(version["curl_version"], "8.22.0");
+    assert_eq!(version["tls_version"], "3.5.8");
+    assert_eq!(
+        version["capabilities"],
+        serde_json::json!({"https":true,"tls":true,"gzip":true})
+    );
+    let build: serde_json::Value = serde_json::from_str(build).unwrap();
+    assert_eq!(build["status"], "available");
+    assert_eq!(build["ca"]["mode"], "embedded");
+    assert_eq!(build["ca"]["bytes"], 188900);
+    assert_eq!(build["runtime_capability"], "not_tested");
+    assert_eq!(build["binary_digest_verification"], "not_run");
+    assert!(!report.contains("CURL-SOURCE-SECRET-CANARY"));
+    assert!(!report.contains("CURL-BUILD-SECRET-CANARY"));
+    assert!(!report.contains("PRIVATE-CURL-BUILD-KEY"));
+    assert!(!fixture.0.join("unexpected-network-request").exists());
 }
 
 impl Drop for Fixture {
@@ -219,6 +262,7 @@ fn machine_export_creates_one_complete_file_and_keeps_service_state_unchanged() 
         "configuration: route",
         "configuration: inbounds",
         "connectivity history",
+        "curl executor",
         "core resources",
         "health",
         "sing-box configuration check",

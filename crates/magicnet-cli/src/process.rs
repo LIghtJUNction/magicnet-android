@@ -1025,9 +1025,39 @@ fn clear_unsafe_module_root_environment(command: &mut Command) {
 
 pub(crate) fn trusted_curl(app: &App) -> Command {
     let mut command = Command::new(trusted_curl_path(app));
+    // This must precede every caller's flags: ignore curlrc without changing
+    // HOME for other children or discarding the application's explicit proxy.
+    command.arg("-q");
     clear_unsafe_loader_environment(&mut command);
+    for key in UNSAFE_CURL_ENV {
+        command.env_remove(key);
+    }
     command
 }
+
+const UNSAFE_CURL_ENV: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "CURL_HOME",
+    "XDG_CONFIG_HOME",
+    "CURL_CA_BUNDLE",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "CURL_SSL_BACKEND",
+    "SSLKEYLOGFILE",
+    "OPENSSL_CONF",
+    "OPENSSL_CONF_INCLUDE",
+    "OPENSSL_MODULES",
+    "OPENSSL_ENGINES",
+    "NETRC",
+    "QLOGDIR",
+];
 
 pub(crate) fn trusted_curl_path(app: &App) -> PathBuf {
     // App has already resolved the privileged module root. Reading MODDIR
@@ -2278,6 +2308,60 @@ mod process_group_tests {
             .env("MODDIR", &decoy.moddir)
             .status().unwrap();
         assert!(status.success());
+    }
+
+    #[test]
+    fn trusted_curl_child_ignores_inherited_proxy_trust_and_config_but_keeps_home() {
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD_ROOT: &str = "MAGICNET_TEST_CURL_ENV_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            assert_eq!(std::env::var("CURL_CA_BUNDLE").unwrap(), "untrusted-canary");
+            let app = App::for_test(root.into());
+            let output = super::trusted_curl(&app).arg("--version").output().unwrap();
+            assert!(output.status.success(), "{:?}", output.status);
+            assert_eq!(output.stdout, b"clean curl environment\n");
+            assert!(output.stderr.is_empty());
+            return;
+        }
+        let app = crate::test_support::temp_app();
+        fs::create_dir_all(app.moddir.join("bin")).unwrap();
+        let curl = app.moddir.join("bin/curl");
+        fs::write(
+            &curl,
+            r#"#!/bin/sh
+test "$1" = -q && test "$2" = --version || exit 81
+test -z "${HTTPS_PROXY+x}${http_proxy+x}${NO_PROXY+x}${CURL_HOME+x}${XDG_CONFIG_HOME+x}" || exit 82
+test -z "${CURL_CA_BUNDLE+x}${SSL_CERT_FILE+x}${SSL_CERT_DIR+x}${CURL_SSL_BACKEND+x}" || exit 83
+test -z "${SSLKEYLOGFILE+x}${OPENSSL_CONF+x}${OPENSSL_MODULES+x}${NETRC+x}" || exit 84
+test "$HOME" = /intentional/curl-test-home || exit 85
+printf 'clean curl environment\n'
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(curl, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "process::process_group_tests::trusted_curl_child_ignores_inherited_proxy_trust_and_config_but_keeps_home", "--nocapture"])
+            .env(CHILD_ROOT, &app.moddir)
+            .env("HOME", "/intentional/curl-test-home");
+        for key in [
+            "HTTPS_PROXY",
+            "http_proxy",
+            "NO_PROXY",
+            "CURL_HOME",
+            "XDG_CONFIG_HOME",
+            "CURL_CA_BUNDLE",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "CURL_SSL_BACKEND",
+            "SSLKEYLOGFILE",
+            "OPENSSL_CONF",
+            "OPENSSL_MODULES",
+            "NETRC",
+        ] {
+            child.env(key, "untrusted-canary");
+        }
+        assert!(child.status().unwrap().success());
     }
 
     #[test]

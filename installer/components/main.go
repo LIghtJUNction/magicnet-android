@@ -90,7 +90,7 @@ func managedName(name string) bool {
 	if strings.HasPrefix(name, "bin/") && strings.Count(name, "/") == 1 {
 		return name != "bin/magicnet-components"
 	}
-	for _, prefix := range []string{"webroot/", ".config/sing-box/zashboard/", ".config/sing-box/rules/"} {
+	for _, prefix := range []string{"licenses/curl/", "webroot/", ".config/sing-box/zashboard/", ".config/sing-box/rules/"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}

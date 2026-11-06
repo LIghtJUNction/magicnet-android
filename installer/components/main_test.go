@@ -98,6 +98,19 @@ func TestFullPackageNeedsNoNetwork(t *testing.T) {
 		t.Fatal("offline install unnecessarily cached payload archives")
 	}
 }
+
+func TestCurlLicenseManagedPathsRemainScoped(t *testing.T) {
+	for _, name := range []string{"bin/curl", "licenses/curl/build-provenance.json", "licenses/curl/curl-COPYING.txt"} {
+		if !managedName(name) {
+			t.Fatalf("curl runtime or license path is not managed: %s", name)
+		}
+	}
+	for _, name := range []string{"licenses/curl", "licenses/other/notice", "licenses/curl-other/notice", "licenses/curl/../outside", "/licenses/curl/notice"} {
+		if managedName(name) {
+			t.Fatalf("curl license prefix allowed an unrelated path: %s", name)
+		}
+	}
+}
 func TestUnchangedOldComponentIsReusedWithoutManifest(t *testing.T) {
 	c, _ := part(t, "engine", "bin/sing-box", "same")
 	o := optionsFixture(t, archiveFixture(t, t.TempDir(), manifestFixture(c), nil))

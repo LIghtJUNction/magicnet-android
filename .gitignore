@@ -47,3 +47,6 @@ Thumbs.db
 
 # Generated Android framework policy bridge.
 /src/MagicNet/libexec/network-policy-bridge.jar
+
+# Verified curl notices/provenance are generated from locked source archives.
+/src/MagicNet/licenses/curl/

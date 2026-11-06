@@ -31,6 +31,7 @@ class CoreSizeTests(unittest.TestCase):
 
     def build_source(self, cli=None, symlink=False):
         entries = {
+            **{name: b"curl package fixture; never executed\n" for name in package.CURL_RUNTIME_FILES},
             "module.prop": b"id=MagicNet\nversion=v1.4.8\nversionCode=123\n",
             "customize.sh": b"import rich\n",
             ".config/sing-box/config.json": b"{}\n",

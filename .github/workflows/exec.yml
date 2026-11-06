@@ -232,6 +232,12 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-module-rust-v2-${{ steps.toolchain.outputs.rust }}-${{ steps.toolchain.outputs.ndk }}-${{ hashFiles('Cargo.lock', '.cargo/**') }}-
             ${{ runner.os }}-${{ runner.arch }}-module-rust-v2-${{ steps.toolchain.outputs.rust }}-${{ steps.toolchain.outputs.ndk }}-
 
+      - name: Cache verified curl source archives
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.cache/magicnet/curl/sources
+          key: ${{ runner.os }}-android-curl-sources-v1-${{ hashFiles('scripts/android-curl-lock.json') }}
+
       - name: Setup Node.js and npm cache
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -265,7 +271,7 @@ jobs:
         run: echo "$HOME/.cache/magicnet/cargo-ndk/bin" >> "$GITHUB_PATH"
 
       - name: Install artifact tools
-        run: sudo apt-get update && sudo apt-get install -y binutils busybox-static file jq ripgrep unzip zip python3-yaml shellcheck
+        run: sudo apt-get update && sudo apt-get install -y binutils busybox-static file jq ripgrep unzip zip python3-yaml shellcheck make perl pkg-config
 
       - name: Test forked sing-box eBPF support
         shell: bash
@@ -295,9 +301,12 @@ jobs:
           cargo ndk --version
 
       - name: Build module
+        env:
+          MAGICNET_CURL_NDK_SHA256: ${{ steps.toolchain.outputs.ndk }}
         shell: bash
         run: |
           set -euo pipefail
+          export MAGICNET_CURL_SOURCE_CACHE="$HOME/.cache/magicnet/curl/sources"
           find hooks src -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
           rm -rf dist
           kam build

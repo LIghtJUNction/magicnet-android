@@ -197,11 +197,11 @@ def fixture_elf(machine, suffix=b""):
     return bytes(value) + suffix
 
 
-def fixture_android_curl(*, interpreter=b'/system/bin/linker64\x00', needed=('libc.so', 'libdl.so')):
+def fixture_android_curl(*, machine=62, interpreter=b'/system/bin/linker64\x00', needed=('libc.so', 'libdl.so')):
     """Synthetic ELF structure only; never claim these bytes execute Android curl."""
     value = bytearray(1024)
-    value[:6] = b'\x7fELF\x02\x01'
-    struct.pack_into('<HHI', value, 16, 3, 62, 1)
+    value[:7] = b'\x7fELF\x02\x01\x01'
+    struct.pack_into('<HHI', value, 16, 3, machine, 1)
     struct.pack_into('<Q', value, 32, 64)
     struct.pack_into('<HHH', value, 52, 64, 56, 3)
     strings = b'\x00'.join(name.encode() for name in needed) + b'\x00'
@@ -223,12 +223,18 @@ def fixture_android_curl(*, interpreter=b'/system/bin/linker64\x00', needed=('li
 
 
 def bind_synthetic_curl_ca(runtime):
-    """Bind a local test CA, not the reviewed production/CI public CA pin."""
+    """Use the real verifier with a test-only lock; never execute the synthetic ELF."""
     path = Path(os.environ['MAGICNET_PUBLIC_CURL_DIR']) / 'cacert.pem'
     data = path.read_bytes()
-    runtime.CURL_SOURCES = runtime.CURL_SOURCES | {'ca': hashlib.sha256(data).hexdigest()}
-    runtime.CURL_CA_BYTES = len(data)
-    runtime.CURL_CA_CERTS = data.count(b'-----BEGIN CERTIFICATE-----')
+    verifier = runtime.SIM.curl_artifact_verifier()
+    inputs = verifier.lock()
+    inputs['sources']['ca']['sha256'] = hashlib.sha256(data).hexdigest()
+    inputs['ca']['bytes'] = len(data)
+    inputs['ca']['cert_count'] = data.count(b'-----BEGIN CERTIFICATE-----')
+    verifier.LOCK_PATH = path.parent / 'synthetic-contract-lock.json'
+    verifier.LOCK_PATH.write_text(json.dumps(inputs, sort_keys=True) + '\n')
+    runtime.SIM.curl_artifact_verifier = lambda: verifier
+    return verifier
 
 
 class RuntimeDevice:
@@ -255,7 +261,7 @@ class RuntimeDevice:
         self.live_hash = expected['payload_sha256']['bin/sing-box']
         self.apk_path = '/data/app/test-probe/base.apk'
         self.hashes = {runtime.SIM.MOD + '/' + path: value
-                       for section in ('payload_sha256', 'extra_payload_sha256', 'static_files_sha256')
+                       for section in ('payload_sha256', 'extra_payload_sha256', 'metadata_sha256', 'static_files_sha256')
                        for path, value in expected[section].items()}
         self.hashes[runtime.SIM.MOD + '/' + runtime.SIM.PROVENANCE] = expected['marker_sha256']
         self.hashes[runtime.SIM.MOD + '/' + runtime.PUBLIC_PROVENANCE] = expected['public_marker_sha256']
@@ -452,12 +458,25 @@ class PublicRuntimeContract(unittest.TestCase):
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.runtime = load_public_runtime()
-        bind_synthetic_curl_ca(self.runtime)
+        self.verifier = bind_synthetic_curl_ca(self.runtime)
+        licenses = self.curl_dir / 'licenses'
+        licenses.mkdir()
+        for name in self.verifier.LICENSE_FILES:
+            content = ('Synthetic structure-only contract fixture for ' + name + '\n').encode()
+            (licenses / name).write_bytes(content)
+            self.source_entries['licenses/curl/' + name] = content
         self.write_curl_metadata()
+        production = self.root / 'production-curl'
+        production.write_bytes(fixture_android_curl(machine=183))
+        production.chmod(0o755)
+        self.source_entries['bin/curl'] = production.read_bytes()
+        self.source_entries[self.verifier.PROVENANCE] = json.dumps(
+            self.curl_metadata(production, 'arm64-v8a')).encode()
+        self.write_archive()
         self.capabilities = dict(schema=1, status='verified', https=True, ssl=True,
                                  resolve=True, gzip=True, tls_positive=True, hostname_reject=True,
                                  default_trust_reject=True, embedded_ca_identity=True, cleanup=True,
-                                 embedded_ca_bytes=self.runtime.CURL_CA_BYTES)
+                                 embedded_ca_bytes=self.verifier.lock()['ca']['bytes'])
         self.fake_curl_proof = patch.object(self.runtime, 'verify_curl_capabilities',
                                             return_value=self.capabilities)
         self.fake_curl_proof.start()
@@ -468,20 +487,28 @@ class PublicRuntimeContract(unittest.TestCase):
         self.no_real_processes.start()
         self.addCleanup(self.no_real_processes.stop)
 
+    def curl_metadata(self, binary, abi):
+        v = self.verifier
+        inputs = v.lock()
+        licenses = self.curl_dir / 'licenses'
+        return {'schema': 1, 'scope': v.SCOPE, 'status': 'built',
+                'target': {'os': 'android', 'abi': abi, 'api': 21},
+                'versions': inputs['versions'].copy(),
+                'sources': {name: {key: value[key] for key in ('url', 'sha256')}
+                            for name, value in inputs['sources'].items()},
+                'ca': v.ca_identity(inputs),
+                'builder_sha256': v.digest(v.BUILDER_PATH),
+                'verifier_sha256': v.digest(Path(v.__file__)), 'lock_sha256': v.digest(v.LOCK_PATH),
+                'curl_sha256': v.digest(binary), 'curl_bytes': binary.stat().st_size,
+                'elf': v.elf_identity(binary, abi),
+                'toolchain': {'ndk_revision': '30.0.16248370', 'compiler': 'synthetic contract compiler',
+                              'ndk_source_properties_sha256': v.digest(self.ndk / 'source.properties')},
+                'licenses': {name: {'sha256': v.digest(licenses / name),
+                                    'bytes': (licenses / name).stat().st_size} for name in v.LICENSE_FILES},
+                'runtime_capability': 'not_tested'}
+
     def write_curl_metadata(self):
-        r = self.runtime
-        value = {'schema': 1, 'scope': r.CURL_SCOPE, 'status': 'built',
-                 'target': {'os': 'android', 'abi': 'x86_64', 'api': 35},
-                 'versions': r.CURL_VERSIONS.copy(),
-                 'sources': {name: {'url': 'https://example.invalid/' + name, 'sha256': digest}
-                             for name, digest in r.CURL_SOURCES.items()},
-                 'ca': {'mode': 'embedded', 'sha256': r.CURL_SOURCES['ca'],
-                        'bytes': r.CURL_CA_BYTES, 'cert_count': r.CURL_CA_CERTS,
-                        'runtime_bundle': False, 'system_store': False},
-                 'builder_sha256': r.SIM.digest(ROOT / 'scripts/prepare-android-public-curl.sh'),
-                 'curl_sha256': r.SIM.digest(self.curl), 'curl_bytes': self.curl.stat().st_size,
-                 'elf': r.curl_elf(self.curl),
-                 'toolchain': {'ndk_source_properties_sha256': r.SIM.digest(self.ndk / 'source.properties')}}
+        value = self.curl_metadata(self.curl, 'x86_64')
         (self.curl_dir / 'build-provenance.json').write_text(json.dumps(value))
         return value
 
@@ -491,7 +518,8 @@ class PublicRuntimeContract(unittest.TestCase):
                 entry = zipfile.ZipInfo(name, (2026, 1, 2, 3, 4, 6))
                 entry.create_system = 3
                 kind = stat.S_IFLNK if name in self.archive_links else stat.S_IFREG
-                entry.external_attr = (kind | 0o755) << 16
+                mode = 0o644 if name.startswith('licenses/curl/') else 0o755
+                entry.external_attr = (kind | mode) << 16
                 archive.writestr(entry, content)
 
     def cp(self, text="", rc=0):
@@ -543,14 +571,20 @@ class PublicRuntimeContract(unittest.TestCase):
         work.mkdir()
         archive, expected = self.runtime.current_archive(work)
         with zipfile.ZipFile(work / 'MagicNet-base-x86_64.zip') as baseline, zipfile.ZipFile(archive) as public:
+            self.assertEqual(len(public.namelist()), len(set(public.namelist())))
+            self.assertEqual(public.namelist().count('bin/curl'), 1)
             self.assertEqual(set(public.namelist()) - set(baseline.namelist()),
-                             {'bin/curl', self.runtime.PUBLIC_PROVENANCE})
+                             {self.runtime.PUBLIC_PROVENANCE})
             for name in baseline.namelist():
                 self.assertEqual(public.read(name), baseline.read(name))
             original_marker = json.loads(public.read(self.runtime.SIM.PROVENANCE))
             self.assertEqual(original_marker['payload_sha256'], expected['payload_sha256'])
-            self.assertNotIn('bin/curl', expected['payload_sha256'])
-            self.assertEqual(expected['extra_payload_sha256'], {'bin/curl': self.runtime.SIM.digest(self.curl)})
+            self.assertEqual(expected['payload_sha256']['bin/curl'], self.runtime.SIM.digest(self.curl))
+            self.assertEqual(expected['extra_payload_sha256'], {})
+            self.assertEqual(original_marker['metadata_sha256'], expected['metadata_sha256'])
+            native_build = json.loads(public.read(self.verifier.PROVENANCE))
+            self.assertEqual(native_build['target'], {'os': 'android', 'abi': 'x86_64', 'api': 21})
+            self.assertEqual(native_build['curl_sha256'], expected['payload_sha256']['bin/curl'])
             addon = public.read(self.runtime.PUBLIC_PROVENANCE).decode()
             for private in ('://', 'compiler', str(self.root), 'config.json'):
                 self.assertNotIn(private, addon)
@@ -571,9 +605,9 @@ class PublicRuntimeContract(unittest.TestCase):
             self.runtime.validate_offline(offline, expected)
 
     def test_public_supplement_collisions_or_write_failure_leave_no_final_zip(self):
-        for name in ('bin/curl', self.runtime.PUBLIC_PROVENANCE):
+        for name in (self.runtime.PUBLIC_PROVENANCE,):
             with self.subTest(collision=name):
-                self.source_entries[name] = self.curl.read_bytes() if name == 'bin/curl' else b'{}'
+                self.source_entries[name] = b'{}'
                 self.write_archive()
                 work = self.root / ('collision-' + name.replace('/', '-'))
                 work.mkdir()
@@ -590,10 +624,19 @@ class PublicRuntimeContract(unittest.TestCase):
         base = work / 'base.zip'
         with zipfile.ZipFile(base, 'w') as stream:
             stream.writestr('original', b'unchanged')
+            entry = zipfile.ZipInfo('bin/curl')
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFREG | 0o755) << 16
+            stream.writestr(entry, self.curl.read_bytes())
         destination = work / 'public.zip'
         with patch.object(self.runtime.zipfile.ZipFile, 'writestr', side_effect=OSError('write unavailable')):
             with self.assertRaises(OSError):
                 self.runtime.augment_public_archive(base, destination, self.curl, {'schema': 1})
+        self.assertFalse(destination.exists())
+        self.assertFalse(list(work.glob('*.partial')))
+        self.curl.write_bytes(self.curl.read_bytes() + b'changed-after-baseline')
+        with self.assertRaisesRegex(RuntimeError, 'production_curl_identity_mismatch'):
+            self.runtime.augment_public_archive(base, destination, self.curl, {'schema': 1})
         self.assertFalse(destination.exists())
         self.assertFalse(list(work.glob('*.partial')))
 
@@ -650,8 +693,11 @@ class PublicRuntimeContract(unittest.TestCase):
         self.write_curl_metadata()
         after = self.runtime.manifest_for_current()
         self.assertNotEqual(before, after)
-        self.assertEqual(before['payload_sha256'], after['payload_sha256'])
-        self.assertNotEqual(before['extra_payload_sha256'], after['extra_payload_sha256'])
+        self.assertNotEqual(before['payload_sha256']['bin/curl'], after['payload_sha256']['bin/curl'])
+        self.assertEqual({k: v for k, v in before['payload_sha256'].items() if k != 'bin/curl'},
+                         {k: v for k, v in after['payload_sha256'].items() if k != 'bin/curl'})
+        self.assertNotEqual(before['metadata_sha256'], after['metadata_sha256'])
+        self.assertEqual(before['extra_payload_sha256'], after['extra_payload_sha256'])
 
     def test_runtime_rejects_missing_curl_permissions_or_ca_override_before_capability_requests(self):
         curl = self.runtime.SIM.MOD + '/bin/curl'
@@ -1045,7 +1091,8 @@ class PublicRuntimeContract(unittest.TestCase):
         for section, replacement in (
             ('source_sha', 'b' * 40), ('production_zip_sha256', 'b' * 64),
             ('fixture_zip_sha256', 'b' * 64), ('payload_sha256', {}),
-            ('base_fixture_zip_sha256', 'b' * 64), ('extra_payload_sha256', {}),
+            ('base_fixture_zip_sha256', 'b' * 64), ('extra_payload_sha256', {'bin/curl': 'b' * 64}),
+            ('metadata_sha256', {}),
             ('curl_build', {}), ('public_marker_sha256', 'b' * 64),
             ('static_files_sha256', {}), ('marker_sha256', 'b' * 64),
             ('ksud_sha256', 'b' * 64), ('probe_apk_sha256', 'b' * 64),

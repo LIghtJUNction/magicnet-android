@@ -21,3 +21,6 @@ if [ "$_fixture_checkers" = 1 ] && [ -n "$_fixture_target" ]; then
     "${MAGICNET_TEST_HOST_CP:?}" "${MAGICNET_TEST_HOST_JQ:?}" "$_fixture_target/bin/jq"
     "$MAGICNET_TEST_HOST_CP" "${MAGICNET_TEST_HOST_SINGBOX:?}" "$_fixture_target/bin/sing-box"
 fi
+if [ -n "$_fixture_target" ] && [ -f "$_fixture_target/bin/curl" ]; then
+    "${MAGICNET_TEST_HOST_CP:?}" "${MAGICNET_TEST_HOST_CURL:?}" "$_fixture_target/bin/curl"
+fi

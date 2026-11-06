@@ -57,7 +57,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertLess(names.index(init['name']), names.index('Test simulation safety and workflow wiring'))
 
     def test_simulation_is_not_optional_or_cached(self):
-        simulation = self.step('Exercise offline Android KernelSU lifecycle')
+        simulation = self.step('Exercise Android KernelSU lifecycle')
         self.assertNotIn('if', simulation)
         self.assertNotIn('continue-on-error', simulation)
         self.assertEqual(simulation['run'], 'python3 scripts/android-device-simulation.py')
@@ -67,30 +67,31 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('continue-on-error', self.jobs['android-kernelsu'])
 
     def test_public_proxy_is_explicit_opt_in_after_simulation(self):
-        curl_build = self.step('Build verified Android curl for public runtime')
+        curl_build = self.step('Build production Android curl for AVD')
         preparation = self.step('Prepare public benchmark runtime')
         benchmark = self.step('Install and benchmark MagicNet in KernelSU AVD')
         self.assertIn("github.event_name == 'workflow_dispatch'", benchmark['if'])
         self.assertIn('inputs.public_benchmark == true', benchmark['if'])
         self.assertEqual(self.flow['on']['workflow_dispatch']['inputs']['public_benchmark']['default'], 'false')
         names = [s.get('name') for s in self.steps]
-        self.assertLess(names.index('Exercise offline Android KernelSU lifecycle'),
-                        names.index(curl_build['name']))
-        self.assertLess(names.index(curl_build['name']),
-                        names.index(preparation['name']))
+        self.assertLess(names.index(curl_build['name']), names.index('Exercise Android KernelSU lifecycle'))
+        self.assertLess(names.index('Exercise Android KernelSU lifecycle'), names.index(preparation['name']))
         self.assertLess(names.index(preparation['name']),
                         names.index('Install and benchmark MagicNet in KernelSU AVD'))
         self.assertIn('android-public-benchmark', benchmark['env']['MAGICNET_ANDROID_REPORT_DIR'])
         self.assertEqual(preparation['id'], 'public_prepare')
         self.assertEqual(preparation['if'], benchmark['if'])
-        self.assertEqual(curl_build['if'], preparation['if'])
+        self.assertNotIn('if', curl_build)
         self.assertNotIn('continue-on-error', curl_build)
         self.assertEqual(curl_build['timeout-minutes'], '15')
-        self.assertEqual(curl_build['run'], 'bash scripts/prepare-android-public-curl.sh "$MAGICNET_PUBLIC_CURL_DIR"')
-        self.assertEqual(curl_build['env']['MAGICNET_PUBLIC_CURL_NDK_SHA256'], '${{ steps.toolchain.outputs.ndk }}')
-        for step in (curl_build, preparation, benchmark):
-            self.assertEqual(step['env']['MAGICNET_PUBLIC_CURL_DIR'], '${{ runner.temp }}/magicnet-public-curl')
-        self.assertNotIn('MAGICNET_PUBLIC_CURL_DIR', self.step('Exercise offline Android KernelSU lifecycle')['env'])
+        self.assertIn('bash scripts/build-android-curl.sh x86_64 "$MAGICNET_ANDROID_CURL_DIR"', curl_build['run'])
+        self.assertIn('android-curl-artifact.py verify', curl_build['run'])
+        self.assertEqual(curl_build['env']['MAGICNET_CURL_NDK_SHA256'], '${{ steps.toolchain.outputs.ndk }}')
+        for step in (preparation, benchmark):
+            self.assertEqual(step['env']['MAGICNET_PUBLIC_CURL_DIR'], '${{ runner.temp }}/magicnet-curl-runtime')
+        for step in (curl_build, preparation, benchmark, self.step('Exercise Android KernelSU lifecycle')):
+            self.assertEqual(step['env']['MAGICNET_ANDROID_CURL_DIR'], '${{ runner.temp }}/magicnet-curl-runtime')
+        self.assertNotIn('MAGICNET_PUBLIC_CURL_DIR', self.step('Exercise Android KernelSU lifecycle')['env'])
         self.assertTrue(any('test-android-public-curl-proof.py' in step.get('run', '')
                             for step in self.jobs['harness']['steps']))
         self.assertNotIn('continue-on-error', preparation)
@@ -100,7 +101,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(benchmark['env']['MAGICNET_PUBLIC_RUNTIME'], 'prepared')
         self.assertIn('artifacts/android-public-benchmark/runtime',
                       benchmark['env']['MAGICNET_PREPARED_RUNTIME_DIR'])
-        for key, value in self.step('Exercise offline Android KernelSU lifecycle')['env'].items():
+        for key, value in self.step('Exercise Android KernelSU lifecycle')['env'].items():
             self.assertEqual(preparation['env'][key], value)
             self.assertEqual(benchmark['env'][key], value)
         self.assertIn('scripts/android-public-runtime.py prepare', preparation['run'])
@@ -232,7 +233,11 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn('ELF built', result.stdout)
 
     def test_public_curl_build_cannot_inherit_make_flag_overrides(self):
-        source = (ROOT / 'scripts/prepare-android-public-curl.sh').read_text()
+        wrapper = (ROOT / 'scripts/prepare-android-public-curl.sh').read_text()
+        self.assertIn('exec bash "$ROOT/scripts/build-android-curl.sh" x86_64 "$OUT"', wrapper)
+        self.assertNotIn('android35-clang', wrapper)
+        self.assertNotIn('./configure', wrapper)
+        source = (ROOT / 'scripts/build-android-curl.sh').read_text()
         block = 'unset CFLAGS' + source.split('unset CFLAGS', 1)[1].split('export ANDROID_NDK_ROOT', 1)[0]
         names = block.replace('\\\n', ' ').split()
         self.assertEqual(names.pop(0), 'unset')

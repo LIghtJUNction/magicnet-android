@@ -49,6 +49,7 @@ check_group() {
         cached components release-gates python3 scripts/test-release-gates.py
         cached components android-release-gate python3 scripts/test-android-release-gate.py
         cached components component-archive-safety python3 scripts/test-component-archive-safety.py
+        cached components android-curl-artifact python3 scripts/test-android-curl-artifact.py
         # The cache must never attest to its own correctness.
         python3 scripts/test-ci-test-cache.py
         python3 scripts/test-ci-quality.py

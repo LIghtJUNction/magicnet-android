@@ -21,6 +21,11 @@ import zipfile
 
 MANIFEST = "components.json"
 HELPER = "bin/magicnet-components"
+CURL_RUNTIME_FILES = (
+    "bin/curl", "licenses/curl/build-provenance.json",
+    "licenses/curl/curl-COPYING.txt", "licenses/curl/OpenSSL-LICENSE.txt",
+    "licenses/curl/zlib-README.txt", "licenses/curl/Mozilla-CA-NOTICE.txt",
+)
 # Fail closed if a future hook accidentally puts large payloads back in the core.
 MAX_CORE_BYTES = 12 * 1024 * 1024
 MAX_UNCOMPRESSED = 1 << 30
@@ -156,7 +161,8 @@ def validate_core_links(entries: dict[str, tuple[zipfile.ZipInfo, Payload]]) -> 
 def component_for(name: str) -> str | None:
     if name.startswith("bin/") and name.count("/") == 1:
         return "bin-" + name[4:]
-    for prefix, component in (("webroot/", "webui"),
+    for prefix, component in (("licenses/curl/", "bin-curl"),
+                              ("webroot/", "webui"),
                               (".config/sing-box/zashboard/", "zashboard"),
                               (".config/sing-box/rules/", "rules")):
         if name.startswith(prefix):
@@ -251,9 +257,14 @@ def split(source: Path, helper: Path, output: Path, repository: str, arch: str) 
                 raise ValueError(f"Missing core entry: {required}")
         if "bin-magicnet-mcp-server" in groups:
             raise ValueError("Retired standalone MCP component is present")
-        for required in ("bin-sing-box", "bin-magicnet-cli"):
+        for required in ("bin-sing-box", "bin-magicnet-cli", "bin-curl"):
             if required not in groups:
                 raise ValueError(f"Missing runtime component: {required}")
+        for required in CURL_RUNTIME_FILES:
+            if required not in groups["bin-curl"]:
+                raise ValueError(f"Missing curl runtime/license payload: {required}")
+        if set(groups["bin-curl"]) != set(CURL_RUNTIME_FILES):
+            raise ValueError("Unexpected curl runtime/license payload")
         prop = dict(line.split("=", 1) for line in read_payload(scaffold["module.prop"][1]).decode().splitlines()
                     if "=" in line and not line.startswith("#"))
         if prop.get("id") != "MagicNet" or not re.fullmatch(r"v\d+\.\d+\.\d+", prop.get("version", "")):

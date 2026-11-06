@@ -245,7 +245,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends binutils busybox-static file jq ripgrep unzip zip python3-yaml shellcheck
+          sudo apt-get install -y --no-install-recommends binutils busybox-static file jq ripgrep unzip zip python3-yaml shellcheck openssl pkg-config
 
       - name: Validate acceptance harness
         shell: bash
@@ -324,6 +324,15 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Build production Android curl for AVD
+        timeout-minutes: 15
+        env:
+          MAGICNET_ANDROID_CURL_DIR: ${{ runner.temp }}/magicnet-curl-runtime
+          MAGICNET_CURL_NDK_SHA256: ${{ steps.toolchain.outputs.ndk }}
+        run: |
+          bash scripts/build-android-curl.sh x86_64 "$MAGICNET_ANDROID_CURL_DIR"
+          python3 scripts/android-curl-artifact.py verify "$MAGICNET_ANDROID_CURL_DIR" --abi x86_64 --ndk-sha256 "$MAGICNET_CURL_NDK_SHA256"
 
       - name: Build application-UID network probe
         shell: bash
@@ -499,7 +508,7 @@ jobs:
             >artifacts/android-kernelsu/emulator.log 2>&1 &
           echo $! >artifacts/android-kernelsu/emulator.pid
 
-      - name: Exercise offline Android KernelSU lifecycle
+      - name: Exercise Android KernelSU lifecycle
         timeout-minutes: 25
         env:
           MAGICNET_DISPOSABLE_AVD: "1"
@@ -507,25 +516,21 @@ jobs:
           MAGICNET_X86_CLI: ${{ runner.temp }}/magicnet-x86/magicnet-cli
           MAGICNET_X86_SINGBOX: ${{ runner.temp }}/magicnet-x86/sing-box
           MAGICNET_X86_TOOLS: ${{ runner.temp }}/magicnet-x86-tools
+          MAGICNET_ANDROID_CURL_DIR: ${{ runner.temp }}/magicnet-curl-runtime
+          MAGICNET_CURL_NDK_SHA256: ${{ steps.toolchain.outputs.ndk }}
           MAGICNET_NETWORK_PROBE_APK: ${{ runner.temp }}/magicnet-network-probe.apk
         run: python3 scripts/android-device-simulation.py
 
-      - name: Build verified Android curl for public runtime
-        if: github.event_name == 'workflow_dispatch' && inputs.public_benchmark == true
-        timeout-minutes: 15
-        env:
-          MAGICNET_PUBLIC_CURL_DIR: ${{ runner.temp }}/magicnet-public-curl
-          MAGICNET_PUBLIC_CURL_NDK_SHA256: ${{ steps.toolchain.outputs.ndk }}
-        run: bash scripts/prepare-android-public-curl.sh "$MAGICNET_PUBLIC_CURL_DIR"
-
-      # Offline acceptance must finish all cases, including uninstall, first.
+      # Lifecycle acceptance must finish all cases, including uninstall, first.
       # Reinstall the complete x86 fixture once through the same KernelSU lifecycle.
       - name: Prepare public benchmark runtime
         id: public_prepare
         if: github.event_name == 'workflow_dispatch' && inputs.public_benchmark == true
         timeout-minutes: 10
         env:
-          MAGICNET_PUBLIC_CURL_DIR: ${{ runner.temp }}/magicnet-public-curl
+          MAGICNET_PUBLIC_CURL_DIR: ${{ runner.temp }}/magicnet-curl-runtime
+          MAGICNET_ANDROID_CURL_DIR: ${{ runner.temp }}/magicnet-curl-runtime
+          MAGICNET_CURL_NDK_SHA256: ${{ steps.toolchain.outputs.ndk }}
           MAGICNET_DISPOSABLE_AVD: "1"
           MAGICNET_KSUD_HOST: ${{ env.KSU_RUNTIME }}/ksud-x86_64-linux-android
           MAGICNET_X86_CLI: ${{ runner.temp }}/magicnet-x86/magicnet-cli
@@ -542,7 +547,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.public_benchmark == true
         timeout-minutes: 20
         env:
-          MAGICNET_PUBLIC_CURL_DIR: ${{ runner.temp }}/magicnet-public-curl
+          MAGICNET_PUBLIC_CURL_DIR: ${{ runner.temp }}/magicnet-curl-runtime
+          MAGICNET_ANDROID_CURL_DIR: ${{ runner.temp }}/magicnet-curl-runtime
+          MAGICNET_CURL_NDK_SHA256: ${{ steps.toolchain.outputs.ndk }}
           MAGICNET_KSUD_HOST: ${{ env.KSU_RUNTIME }}/ksud-x86_64-linux-android
           MAGICNET_X86_CLI: ${{ runner.temp }}/magicnet-x86/magicnet-cli
           MAGICNET_X86_SINGBOX: ${{ runner.temp }}/magicnet-x86/sing-box

@@ -50,6 +50,7 @@ class KernelSUInstallerLifecycleTest(unittest.TestCase):
                 ".config/sing-box/config.json": b"{}\n",
                 "bin/sing-box": b"sing-box",
                 "bin/magicnet-cli": b"cli",
+                **{name: b"curl fixture; never executed\n" for name in PACKAGE.CURL_RUNTIME_FILES},
             }
             PACKAGE.write_zip(
                 source,
@@ -150,6 +151,7 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
 ''',
             "bin/magicnet-cli": b"#!/bin/sh\nexit 0\n",
             "lib/kamfw/tests/installer-fixture-canary.sh": b"#!/bin/sh\nexit 1\n",
+            **{name: b"curl fixture; never executed\n" for name in PACKAGE.CURL_RUNTIME_FILES},
         }
         for file in (module / "lib").rglob("*"):
             if file.is_file() and (file.suffix in (".sh", ".jq") or file.name == ".kamfwrc"):

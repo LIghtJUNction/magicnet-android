@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local TLS controls for the guarded public-CI Android curl fixture.
+"""Local TLS controls for the installed production Android curl.
 
 The caller owns disposable-AVD, installed-byte and process attestation. This
 module changes no module config, selector, core or trust store. A host-loopback
@@ -12,6 +12,7 @@ import hashlib
 import http.server
 import os
 from pathlib import Path
+import re
 import secrets
 import shlex
 import shutil
@@ -83,6 +84,14 @@ def capabilities(device, budget):
                       code='curl_version_unknown')
     lines = version.splitlines()
     require(lines and lines[0].startswith('curl '), 'curl_version_unknown')
+    versions = {}
+    for name, pattern in (('curl', r'^curl ([0-9]+(?:\.[0-9]+){2})(?:\s|$)'),
+                          ('libcurl', r'\blibcurl/([0-9]+(?:\.[0-9]+){2})(?:\s|$)'),
+                          ('openssl', r'\bOpenSSL/([0-9]+(?:\.[0-9]+){2})(?:\s|$)'),
+                          ('zlib', r'\bzlib/([0-9]+(?:\.[0-9]+){2})(?:\s|$)')):
+        match = re.search(pattern, lines[0])
+        require(match is not None, 'curl_version_unknown')
+        versions[name] = match[1]
     protocols = [line.split(':', 1)[1].split() for line in lines if line.startswith('Protocols:')]
     features = [line.split(':', 1)[1].split() for line in lines if line.startswith('Features:')]
     require(len(protocols) == len(features) == 1 and 'https' in protocols[0]
@@ -93,13 +102,15 @@ def capabilities(device, budget):
     require({'--resolve', '--compressed', '--max-filesize', '--proto', '--proto-redir'} <= options,
             'curl_options_missing')
     inspect_embedded_ca(device, budget)
+    return versions
 
 
 def inspect_embedded_ca(device, budget):
     ca = checked(device.kshell(clean_command(['--dump-ca-embed']),
                               timeout=budget.remaining(5), check=False),
-                 code='curl_embedded_ca_unknown', max_output=1024 * 1024).encode('utf-8')
-    require(len(ca) == EMBEDDED_CA_SIZE and hashlib.sha256(ca).hexdigest() == EMBEDDED_CA_SHA256,
+                 code='curl_embedded_ca_unknown', max_output=256 * 1024).encode('utf-8')
+    require(len(ca) == EMBEDDED_CA_SIZE and hashlib.sha256(ca).hexdigest() == EMBEDDED_CA_SHA256
+            and ca.count(b'-----BEGIN CERTIFICATE-----') == 121,
             'curl_embedded_ca_mismatch')
 
 
@@ -208,7 +219,7 @@ def verify(device):
     failure = None
     counts = []
     try:
-        capabilities(device, budget)
+        versions = capabilities(device, budget)
         with tempfile.TemporaryDirectory(prefix='magicnet-curl-proof-') as directory:
             cert, context = certificate(Path(directory), budget)
             body = ('magicnet-local-tls-' + secrets.token_hex(32) + '\n').encode('ascii')
@@ -332,4 +343,6 @@ def verify(device):
             'gzip': True, 'tls_positive': True, 'hostname_reject': True,
             'default_trust_reject': True, 'cleanup': True,
             'embedded_ca_identity': True, 'embedded_ca_bytes': EMBEDDED_CA_SIZE,
+            'embedded_ca_sha256': EMBEDDED_CA_SHA256, 'embedded_ca_cert_count': 121,
+            'versions': versions,
             'positive_gets': counts[0], 'hostname_reject_gets': counts[1], 'default_reject_gets': counts[2]}

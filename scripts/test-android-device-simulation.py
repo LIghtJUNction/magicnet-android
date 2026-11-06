@@ -45,6 +45,36 @@ def cp(output='', rc=0, stderr=''):
     return subprocess.CompletedProcess(['adb'], rc, output, stderr)
 
 
+def connectivity_value(**changes):
+    return {
+        'target': 'https://www.google.com/generate_204', 'path': 'mixed_proxy',
+        'status': 'unknown', 'reason': 'not_checked', 'primary_reason': 'not_checked',
+        'warning': False, 'checked_at': None, 'next_check_at': None,
+        'retry_in_seconds': None, 'consecutive_failures': 0, 'probe_count': 0,
+        'backoff_seconds': 300, 'latency_ms': None, 'http_status': None,
+        'secondary_status': 'not_run', 'direct_status': 'not_run', 'last_action': 'none',
+        'action_status': 'none', 'last_action_at': None, 'last_refresh_at': None,
+    } | changes
+
+
+def curl_diagnostic_fixture(header):
+    locked = SIM.curl_artifact_verifier().lock()
+    versions = locked['versions']
+    version = {'curl_version': versions['curl'], 'libcurl_version': versions['curl'],
+               'tls_backend': 'OpenSSL', 'tls_version': versions['openssl'],
+               'zlib_version': versions['zlib'], 'network_request': 'not_run',
+               'capabilities': {'https': True, 'tls': True, 'gzip': True}}
+    build = {'schema': 1, 'status': 'available', 'scope': 'production-android-curl',
+             'source': 'packaged_build_record', 'applies_to_selected_path': True,
+             'binary_digest_verification': 'not_run', 'runtime_capability': 'not_tested',
+             'target': {'os': 'android', 'abi': 'x86_64', 'api': 21}, 'versions': versions,
+             'ca': locked['ca'] | {'mode': 'embedded', 'sha256': locked['sources']['ca']['sha256'],
+                                   'runtime_bundle': False, 'system_store': False},
+             'curl_sha256': 'a' * 64, 'curl_bytes': 1234, 'builder_sha256': 'b' * 64}
+    return ('selection=module_bin available=true\nnetwork_request=not_run\n--- version ---\n'
+            + header + json.dumps(version) + '\n--- build provenance ---\n' + json.dumps(build) + '\n')
+
+
 class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -164,6 +194,126 @@ class ArchiveTests(unittest.TestCase):
             self.build()
 
 
+    def test_curl_replaces_existing_production_path_and_provenance_once(self):
+        metadata = {'target': {'os': 'android', 'abi': 'x86_64', 'api': 21},
+                    'curl_sha256': SIM.digest(self.replacements['bin/curl']),
+                    'toolchain': {'ndk_source_properties_sha256': 'a' * 64}}
+        self.archive(self.entries | {SIM.CURL_PROVENANCE: b'{"abi":"arm64 fixture"}',
+                                    'licenses/curl/curl-COPYING.txt': b'unchanged license'})
+        original = self.source.read_bytes()
+        verifier = Mock()
+        verifier.verify_zip.return_value = {'toolchain': metadata['toolchain']}
+        with patch.object(SIM, 'curl_artifact_verifier', return_value=verifier):
+            result = SIM.prepare_archive(self.source, self.output, self.replacements, curl_metadata=metadata)
+        verifier.verify_zip.assert_called_once_with(self.source, 'arm64-v8a')
+        self.assertEqual(self.source.read_bytes(), original)
+        with zipfile.ZipFile(self.output) as archive:
+            self.assertEqual(archive.namelist().count('bin/curl'), 1)
+            self.assertEqual(archive.namelist().count(SIM.CURL_PROVENANCE), 1)
+            self.assertEqual(json.loads(archive.read(SIM.CURL_PROVENANCE)), metadata)
+            self.assertEqual(archive.read('bin/curl'), self.replacements['bin/curl'].read_bytes())
+            self.assertEqual(archive.read('licenses/curl/curl-COPYING.txt'), b'unchanged license')
+            self.assertEqual((archive.getinfo(SIM.CURL_PROVENANCE).external_attr >> 16) & 0o777, 0o644)
+            self.assertEqual(result['metadata_sha256'][SIM.CURL_PROVENANCE],
+                             SIM.hashlib.sha256(archive.read(SIM.CURL_PROVENANCE)).hexdigest())
+
+
+class ProductConnectivityTests(unittest.TestCase):
+    def setUp(self):
+        self.device = Mock()
+        self.calls = []
+        self.snapshots = []
+        self.tick_result = cp()
+        self.evidence = {}
+        self.device.kshell.side_effect = self.command
+
+    def command(self, command, *, timeout, check):
+        self.assertFalse(check)
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, 30)
+        self.calls.append(command)
+        if command == SIM.MOD + '/cli connectivity tick':
+            return self.tick_result
+        self.assertEqual(command, SIM.MOD + '/cli --json connectivity status')
+        self.assertTrue(self.snapshots, 'unexpected extra read or hidden retry')
+        return cp(json.dumps({'schema': 1, 'ok': True, 'command': 'connectivity.status',
+                              'data': self.snapshots.pop(0)}))
+
+    def check(self):
+        with patch.object(SIM.time, 'sleep'):
+            return SIM.product_connectivity_observation(self.device, self.evidence)
+
+    def test_cached_success_never_requests_another_google_probe(self):
+        self.snapshots = [connectivity_value(status='online', reason='https_204', primary_reason='ok',
+            probe_count=1, checked_at=100, latency_ms=12, http_status=204)]
+        result = self.check()
+        self.assertEqual(result['explicit_tick_count'], 0)
+        self.assertEqual(result['observation_source'], 'existing_producer_result')
+        self.assertTrue(result['google_https_204_observed'])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_real_failure_is_preserved_without_chasing_a_204(self):
+        for reason in ('dns_failure', 'proxy_refused', 'timeout', 'tls_failure', 'http_error', 'transport_failure'):
+            with self.subTest(reason=reason):
+                self.calls.clear()
+                self.snapshots = [connectivity_value(), connectivity_value(status='offline', reason=reason,
+                    primary_reason=reason, probe_count=1, consecutive_failures=1, checked_at=100,
+                    warning=True, backoff_seconds=60, secondary_status='failed', direct_status='failed')]
+                result = self.check()
+                self.assertEqual(result['explicit_tick_count'], 1)
+                self.assertEqual(self.calls.count(SIM.MOD + '/cli connectivity tick'), 1)
+                self.assertFalse(result['google_https_204_observed'])
+                self.assertEqual(result['after']['primary_reason'], reason)
+                self.assertEqual(result['explicit_request_upper_bound'], {'google': 1, 'auxiliary': 2})
+
+    def test_existing_failure_does_not_trigger_recovery_or_another_probe(self):
+        self.snapshots = [connectivity_value(status='offline', reason='upstream_unavailable',
+            primary_reason='timeout', probe_count=5, consecutive_failures=5, checked_at=100, warning=True)]
+        result = self.check()
+        self.assertEqual(result['explicit_tick_count'], 0)
+        self.assertEqual(len(self.calls), 1)
+        self.assertFalse(result['google_https_204_observed'])
+
+    def test_pending_producer_is_observed_without_duplicate_tick(self):
+        self.snapshots = [connectivity_value(status='pending', reason='checking'),
+                          connectivity_value(status='pending', reason='checking'),
+                          connectivity_value(status='offline', reason='dns_failure', primary_reason='dns_failure',
+                                             probe_count=1, checked_at=100, warning=True)]
+        result = self.check()
+        self.assertEqual(result['explicit_tick_count'], 0)
+        self.assertEqual(result['status_reads'], 3)
+        self.assertEqual(result['observation_source'], 'pending_producer_result')
+
+    def test_missing_or_invalid_executor_cannot_be_reported_as_network_success(self):
+        for reason in ('probe_unavailable', 'probe_invalid', 'proxy_unavailable', 'no_default_route'):
+            with self.subTest(reason=reason):
+                self.calls.clear()
+                self.snapshots = [connectivity_value(), connectivity_value(status='offline', reason=reason,
+                    primary_reason=reason, probe_count=1, checked_at=100, warning=True)]
+                with self.assertRaisesRegex(RuntimeError, 'no usable observation'):
+                    self.check()
+                self.assertEqual(self.evidence['status'], 'failed')
+                self.assertEqual(self.calls.count(SIM.MOD + '/cli connectivity tick'), 1)
+                self.assertEqual(self.evidence['after']['primary_reason'], reason)
+
+    def test_tick_timeout_is_not_replayed_and_private_output_is_omitted(self):
+        self.snapshots = [connectivity_value()]
+        self.tick_result = cp('private-canary', 124, 'private-canary')
+        with self.assertRaisesRegex(RuntimeError, 'tick did not complete'):
+            self.check()
+        self.assertEqual(self.evidence['tick_exit_code'], 124)
+        self.assertEqual(len(self.calls), 2)
+        self.assertNotIn('private-canary', json.dumps(self.evidence))
+
+    def test_next_due_noop_is_not_bypassed_by_mutating_canonical_state(self):
+        self.snapshots = [connectivity_value(next_check_at=200, retry_in_seconds=60),
+                          connectivity_value(next_check_at=200, retry_in_seconds=60)]
+        with self.assertRaisesRegex(RuntimeError, 'no usable observation'):
+            self.check()
+        self.assertEqual(len(self.calls), 3)
+        self.assertFalse(self.evidence['canonical_state_modified_by_harness'])
+
+
 class ReadinessTests(unittest.TestCase):
     def test_all_independent_readiness_facts_are_required(self):
         self.assertTrue(SIM.is_ready(json.dumps(READY)))
@@ -211,15 +361,7 @@ class InstalledControlsTests(unittest.TestCase):
         self.evidence = {}
         self.calls = []
         self.service = {'supervisors': {'fswatch': '123'}}
-        self.connectivity = {
-            'target': 'https://www.google.com/generate_204', 'path': 'mixed_proxy',
-            'status': 'unknown', 'reason': 'not_checked', 'primary_reason': 'not_checked',
-            'warning': False, 'checked_at': None, 'next_check_at': None,
-            'retry_in_seconds': None, 'consecutive_failures': 0, 'probe_count': 0,
-            'backoff_seconds': 300, 'latency_ms': None, 'http_status': None,
-            'secondary_status': 'not_run', 'direct_status': 'not_run', 'last_action': 'none',
-            'action_status': 'none', 'last_action_at': None, 'last_refresh_at': None,
-        }
+        self.connectivity = connectivity_value()
         self.export_service = {'schema': 1, 'ok': True, 'command': 'service.status', 'data': {
             'core': {'selected': 'sing-box', 'sing_box': {'process_state': 'running', 'running': True,
                       'pid_summary': '123', 'rss_kib': 4096}},
@@ -232,6 +374,7 @@ class InstalledControlsTests(unittest.TestCase):
         }}
         self.capture_header = 'status=ok exit_code=0 timed_out=false output_truncated=false duration_ms=2\n'
         bodies = {'service status': self.capture_header + json.dumps(self.export_service) + '\n',
+                  'curl executor': curl_diagnostic_fixture(self.capture_header),
                   'dns api and mcp': '--- mcp ---\n' + self.capture_header
                       + 'enabled=0\nbind=127.0.0.1\nport=8766\nsecret_set=0\npid=stopped\n'}
         sections = ('platform and versions', 'system resources', 'subscription lifecycle',
@@ -239,7 +382,7 @@ class InstalledControlsTests(unittest.TestCase):
                     'configuration: route', 'configuration: dns', 'service status', 'core resources',
                     'sing-box version', 'sing-box configuration check', 'routes: ipv4 rules',
                     'routes: ipv6 rules', 'routes: ipv4 routes', 'routes: ipv6 routes',
-                    'transparent TUN and eBPF observation', 'dns api and mcp', 'collection summary')
+                    'transparent TUN and eBPF observation', 'dns api and mcp', 'curl executor', 'collection summary')
         self.report = ('MagicNet canonical support bundle\nschema=1\nformat=diagnostic-text-v1\n'
                        'privacy=redacted\nexternal_network_probes=not_run\nstate_mutations=none\n'
                        + ''.join(f'\n[{section}]\n' + bodies.get(section, 'status=available\n') for section in sections)
@@ -308,6 +451,28 @@ class InstalledControlsTests(unittest.TestCase):
         self.assertIsNone(content['service_status']['connectivity']['checked_at'])
         self.assertEqual(content['mcp_status'], {'enabled': False, 'secret_set': False,
                                                'port': 8766, 'running': False})
+        self.assertEqual(content['curl_executor']['selection'], 'module_bin')
+        self.assertEqual(content['curl_executor']['runtime_capability_in_build_record'], 'not_tested')
+        self.assertEqual(content['curl_executor']['network_request'], 'not_run')
+
+    def test_export_curl_requires_real_capabilities_and_shared_build_metadata(self):
+        original = curl_diagnostic_fixture(self.capture_header)
+        for old, new in (('selection=module_bin', 'selection=system'), ('available=true', 'available=false'),
+                         ('"tls": true', '"tls": false'), ('"gzip": true', '"gzip": 1'),
+                         ('"api": 21', '"api": 21.0'), ('"schema": 1', '"schema": true'),
+                         ('"runtime_bundle": false', '"runtime_bundle": 0'),
+                         ('"curl_version": "8.22.0"', '"curl_version": "0.0.0"'),
+                         ('"abi": "x86_64"', '"abi": "arm64-v8a"')):
+            with self.subTest(old=old):
+                self.replace_report_section('curl executor', original.replace(old, new))
+                with self.assertRaises(RuntimeError):
+                    self.check()
+                self.assertEqual(self.evidence['stage'], 'export_content')
+
+    def test_export_curl_declaration_must_match_installed_binary_when_supplied(self):
+        identity = {'curl_sha256': 'c' * 64, 'curl_bytes': 1234, 'builder_sha256': 'b' * 64}
+        with self.assertRaisesRegex(RuntimeError, 'differs from installed build'):
+            SIM.installed_controls(self.device, self.out, self.evidence, curl_identity=identity)
 
     def test_export_rejects_the_observed_whole_line_url_redaction_defect(self):
         self.replace_report_section('service status', self.capture_header + '<redacted-url>\n')
@@ -603,7 +768,55 @@ class DeviceTests(unittest.TestCase):
         self.assertNotIn(SIM.KSUD + ' late-load', calls)
         self.assertFalse(device.late_load_on_reboot)
 
-    def test_reboot_reactivates_late_load_only_after_android_boot(self):
+    def test_native_kernelsu_verification_uses_current_boot_without_replaying_stages(self):
+        device = self.device()
+        device.verified = True
+        stages = ('post-fs-data', 'services', 'boot-completed')
+        def log(codes):
+            return 'Linux version fixture\n' + ''.join(
+                f"init: Service 'exec {i} (/data/adb/ksud {stage})' (pid {i}) exited with status {code}\n"
+                for i, (stage, code) in enumerate(zip(stages, codes), 1))
+        with tempfile.TemporaryDirectory() as directory:
+            device.boot_log = Path(directory) / 'emulator.log'
+            previous = log(['1', '1', '1'])
+            device.boot_log.write_text(previous + log(['0', '0', '0']))
+            device.reboot_log_offset = len(previous.encode())
+            with patch.object(device, 'shell', return_value=cp('Kernel Version: 32389\n')) as shell, \
+                 patch.object(device, 'kshell', side_effect=[cp(SIM.KSU_DOMAIN), cp('Enforcing')]) as kshell, \
+                 patch.object(device, 'check_busybox') as busybox, \
+                 patch.object(device, 'late_load_kernelsu') as replay:
+                evidence = device.verify_native_kernelsu_boot()
+            self.assertEqual(evidence['stages'], dict.fromkeys(stages, 'passed'))
+            self.assertTrue(all(evidence[key] for key in ('kernel_interface', 'domain_verified',
+                                                         'selinux_enforcing', 'busybox_verified')))
+            shell.assert_called_once_with(SIM.KSUD + ' debug version', timeout=10)
+            self.assertEqual([c.args[0] for c in kshell.call_args_list], ['id -Z', 'getenforce'])
+            busybox.assert_called_once_with('activated', activated=True)
+            replay.assert_not_called()
+
+    def test_native_kernelsu_rejects_failed_duplicate_missing_or_old_stage_evidence(self):
+        device = self.device()
+        device.verified = True
+        good = 'Linux version fixture\n' + ''.join(
+            f"init: Service 'exec 1 (/data/adb/ksud {stage})' (pid 1) exited with status 0\n"
+            for stage in ('post-fs-data', 'services', 'boot-completed'))
+        with tempfile.TemporaryDirectory() as directory:
+            device.boot_log = Path(directory) / 'emulator.log'
+            for content, offset in ((good.replace('status 0', 'status 1', 1), 0),
+                                    (good + good.splitlines()[1] + '\n', 0),
+                                    (good + 'Linux version new-boot\n', 0),
+                                    (good, len(good.encode())), ('', 0)):
+                with self.subTest(content=content, offset=offset):
+                    device.boot_log.write_text(content)
+                    device.reboot_log_offset = offset
+                    with patch.object(SIM.time, 'monotonic', side_effect=[0, 10]), \
+                         patch.object(device, 'shell') as shell, patch.object(device, 'kshell') as kshell, \
+                         self.assertRaisesRegex(RuntimeError, 'KernelSU native init'):
+                        device.verify_native_kernelsu_boot()
+                    shell.assert_not_called()
+                    kshell.assert_not_called()
+
+    def test_reboot_verifies_native_init_only_after_android_boot(self):
         device = self.device()
         device.verified = True
         device.late_load_on_reboot = True
@@ -618,12 +831,14 @@ class DeviceTests(unittest.TestCase):
              patch.object(device, 'run', return_value=cp()) as run, \
              patch.object(device, 'wait_boot', side_effect=lambda **_: order.append('boot')), \
              patch.object(device, 'root', side_effect=lambda: order.append('root')), \
-             patch.object(device, 'late_load_kernelsu',
-                          side_effect=lambda: order.append('late-load') or {}) as late:
+             patch.object(device, 'verify_native_kernelsu_boot',
+                          side_effect=lambda: order.append('native-init') or {}) as late, \
+             patch.object(device, 'late_load_kernelsu') as replay:
             device.reboot()
-        self.assertEqual(order, ['boot', 'root', 'late-load'])
+        self.assertEqual(order, ['boot', 'root', 'native-init'])
         self.assertEqual(run.call_args.args, ('reboot',))
         late.assert_called_once_with()
+        replay.assert_not_called()
 
     def test_reboot_timeout_requires_new_boot_and_all_postconditions_without_replay(self):
         device = self.device()
@@ -635,7 +850,8 @@ class DeviceTests(unittest.TestCase):
                   'getenforce': 'Enforcing'}
         with patch.object(device, 'run', return_value=cp('private-canary', 124, 'private-canary')) as run, \
              patch.object(device, 'shell', side_effect=lambda command, **_: cp(values[command])), \
-             patch.object(device, 'root') as root, patch.object(device, 'late_load_kernelsu') as late:
+             patch.object(device, 'root') as root, \
+             patch.object(device, 'verify_native_kernelsu_boot', return_value={}) as late:
             device.reboot()
         run.assert_called_once_with('reboot', check=False)
         root.assert_called_once_with()
@@ -643,7 +859,7 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(device.reboot_checks, [{
             'status': 'passed', 'command_exit_code': 124, 'command_result': 'timeout',
             'new_boot_observed': True, 'root_verified': True, 'selinux_enforcing': True,
-            'kernelsu_reactivation': 'verified',
+            'kernelsu_reactivation': 'verified_native_init', 'kernelsu_native_boot': {},
         }])
         receipt = json.dumps(device.reboot_checks)
         for private in (BOOT, new_boot, 'private-canary'):
@@ -668,7 +884,7 @@ class DeviceTests(unittest.TestCase):
 
                 with patch.object(device, 'run', return_value=cp(rc=124)) as run, \
                      patch.object(device, 'shell', side_effect=shell), \
-                     patch.object(device, 'root') as root, patch.object(device, 'late_load_kernelsu') as late, \
+                     patch.object(device, 'root') as root, patch.object(device, 'verify_native_kernelsu_boot') as late, \
                      patch.object(SIM.time, 'monotonic', side_effect=lambda: elapsed[0]), \
                      patch.object(SIM.time, 'sleep'), self.assertRaisesRegex(RuntimeError, 'boot deadline'):
                     device.reboot()
@@ -712,7 +928,7 @@ class DeviceTests(unittest.TestCase):
                 with patch.object(device, 'run', return_value=cp(rc=124)) as run, \
                      patch.object(device, 'shell', side_effect=shell), \
                      patch.object(device, 'root', side_effect=RuntimeError('root failed') if failure == 'root' else None), \
-                     patch.object(device, 'late_load_kernelsu', side_effect=RuntimeError('KernelSU failed')) as late, \
+                     patch.object(device, 'verify_native_kernelsu_boot', side_effect=RuntimeError('KernelSU failed')) as late, \
                      self.assertRaises(RuntimeError):
                     device.reboot()
                 run.assert_called_once_with('reboot', check=False)

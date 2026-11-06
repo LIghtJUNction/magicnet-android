@@ -18,6 +18,8 @@ const SECTION_LIMIT: usize = 48 * 1024;
 const REPORT_LIMIT: usize = 512 * 1024;
 const CONFIG_LIMIT: u64 = 4 * 1024 * 1024;
 const EXPORT_NAME: &str = "MagicNet-diagnostics.txt";
+const CURL_BUILD_RECORD: &str = "licenses/curl/build-provenance.json";
+const CURL_BUILD_LIMIT: u64 = 16 * 1024;
 static NEXT_EXPORT: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct SupportExport {
@@ -118,6 +120,14 @@ pub(super) fn bundle(app: &App) -> String {
     collector.append("startup state", &super::startup_state_evidence(app));
     collector.append("canonical state", &canonical_states(app));
     collector.append("connectivity history", &connectivity_snapshot(app));
+    let curl_command = crate::trusted_curl(app);
+    let curl_path = PathBuf::from(curl_command.get_program());
+    let curl = collector.command(curl_command, &["--version"], Duration::from_secs(2));
+    if curl.complete && curl_version_evidence(&curl).is_none() {
+        collector.incomplete_commands += 1;
+    }
+    let curl_evidence = curl_executor_evidence(app, &curl_path, &curl, &collector.privacy);
+    collector.append_safe("curl executor", &curl_evidence);
     collector.append("configuration structure", if config.is_some() {
         "status=available\nreferences=stable_report_local_aliases\nsecrets_and_device_identifiers=omitted\narray_entry_limit=128"
     } else { "status=unavailable reason=missing_invalid_or_oversized_config" });
@@ -500,6 +510,193 @@ fn version_identity(capture: &Capture) -> String {
     } else {
         "status=unavailable reason=version_format_unknown".into()
     }
+}
+
+fn public_numeric_version(value: &str) -> Option<&str> {
+    let parts = value.split('.').collect::<Vec<_>>();
+    (value.len() <= 32
+        && (2..=4).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
+    .then_some(value)
+}
+
+fn public_digest(value: &Value) -> Option<&str> {
+    value
+        .as_str()
+        .filter(|text| text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn public_date(value: &Value) -> Option<&str> {
+    value.as_str().filter(|text| {
+        text.len() == 10
+            && text.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 4 | 7) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_digit()
+                }
+            })
+    })
+}
+
+fn curl_version_evidence(capture: &Capture) -> Option<Value> {
+    if !capture.complete || capture.stdout.len() > STREAM_LIMIT {
+        return None;
+    }
+    let first = capture.stdout.lines().next()?;
+    let mut words = first.split_whitespace();
+    if words.next()? != "curl" {
+        return None;
+    }
+    let version = public_numeric_version(words.next()?)?;
+    let library = |name: &str| {
+        first.split_whitespace().find_map(|word| {
+            word.strip_prefix(name)
+                .and_then(|value| value.strip_prefix('/'))
+                .and_then(public_numeric_version)
+        })
+    };
+    let libcurl = library("libcurl")?;
+    let list = |prefix| {
+        let mut lines = capture
+            .stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix(prefix));
+        let line = lines.next()?;
+        lines.next().is_none().then_some(line)
+    };
+    let protocols = list("Protocols:")?;
+    let features = list("Features:")?;
+    let tls = [
+        "OpenSSL", "LibreSSL", "GnuTLS", "mbedTLS", "wolfSSL", "rustls",
+    ]
+    .into_iter()
+    .find_map(|backend| library(backend).map(|version| (backend, version)));
+    Some(json!({
+        "curl_version": version,
+        "libcurl_version": libcurl,
+        "tls_backend": tls.map(|(backend, _)| backend),
+        "tls_version": tls.map(|(_, version)| version),
+        "zlib_version": library("zlib"),
+        "capabilities": {
+            "https": protocols.split_whitespace().any(|word| word == "https"),
+            "tls": features.split_whitespace().any(|word| word == "SSL"),
+            "gzip": features.split_whitespace().any(|word| word == "libz"),
+        },
+        "network_request": "not_run",
+        "unrecognized_version_text": "omitted"
+    }))
+}
+
+fn curl_build_evidence(app: &App, selected_module_binary: bool) -> Value {
+    let invalid = || json!({"status":"unavailable", "reason":"build_record_invalid_or_oversized"});
+    let text = match read_module_text_bounded(app, Path::new(CURL_BUILD_RECORD), CURL_BUILD_LIMIT) {
+        Ok(Some(text)) => text,
+        Ok(None) => return json!({"status":"unavailable", "reason":"build_record_missing"}),
+        Err(_) => return invalid(),
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return invalid();
+    };
+    let target = &value["target"];
+    let versions = &value["versions"];
+    let ca = &value["ca"];
+    let numeric_version = |key: &str| versions[key].as_str().and_then(public_numeric_version);
+    if value["schema"] != 1
+        || value["scope"] != "production-android-curl"
+        || target["os"] != "android"
+        || !matches!(target["abi"].as_str(), Some("arm64-v8a" | "x86_64"))
+        || !target["api"]
+            .as_u64()
+            .is_some_and(|api| (21..=100).contains(&api))
+        || ["curl", "openssl", "zlib"]
+            .iter()
+            .any(|key| numeric_version(key).is_none())
+        || ca["mode"] != "embedded"
+        || public_date(&ca["version"]).is_none()
+        || public_digest(&ca["sha256"]).is_none()
+        || !ca["bytes"]
+            .as_u64()
+            .is_some_and(|bytes| (1..=2 * 1024 * 1024).contains(&bytes))
+        || !ca["cert_count"]
+            .as_u64()
+            .is_some_and(|count| (1..=4096).contains(&count))
+        || ca["runtime_bundle"] != false
+        || ca["system_store"] != false
+        || public_digest(&value["curl_sha256"]).is_none()
+        || !value["curl_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| (1..=32 * 1024 * 1024).contains(&bytes))
+    {
+        return invalid();
+    }
+    // This is a declaration from the packaged build, not runtime attestation.
+    // Select only public, typed fields; never expose source URLs, compiler
+    // strings, arbitrary keys or private data injected into this JSON file.
+    let sources = ["curl", "openssl", "zlib", "ca"]
+        .into_iter()
+        .map(|name| {
+            (
+                name,
+                json!({"sha256":public_digest(&value["sources"][name]["sha256"])}),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    json!({
+        "status": "available",
+        "source": "packaged_build_record",
+        "applies_to_selected_path": selected_module_binary,
+        "binary_digest_verification": "not_run",
+        "schema": 1,
+        "scope": "production-android-curl",
+        "target": {"os":"android", "abi":target["abi"], "api":target["api"]},
+        "versions": {"curl":numeric_version("curl"), "openssl":numeric_version("openssl"), "zlib":numeric_version("zlib")},
+        "ca": {"mode":"embedded", "version":public_date(&ca["version"]),
+            "sha256":public_digest(&ca["sha256"]), "bytes":ca["bytes"],
+            "cert_count":ca["cert_count"], "runtime_bundle":false, "system_store":false},
+        "sources": sources,
+        "curl_sha256": public_digest(&value["curl_sha256"]),
+        "curl_bytes": value["curl_bytes"],
+        "builder_sha256": public_digest(&value["builder_sha256"]),
+        "toolchain": {
+            "ndk_revision":value["toolchain"]["ndk_revision"].as_str().and_then(public_numeric_version),
+            "ndk_source_properties_sha256":public_digest(&value["toolchain"]["ndk_source_properties_sha256"])
+        },
+        "runtime_capability": value["runtime_capability"].as_str().filter(|value| *value == "not_tested"),
+        "other_build_fields": "omitted"
+    })
+}
+
+fn curl_executor_evidence(app: &App, path: &Path, capture: &Capture, privacy: &Privacy) -> String {
+    let module_binary = path == app.moddir.join("bin/curl");
+    let selection = if !path.is_file() {
+        "missing"
+    } else if module_binary {
+        "module_bin"
+    } else if path == app.moddir.join("system/bin/curl") {
+        "module_system"
+    } else {
+        "system"
+    };
+    let version = curl_version_evidence(capture);
+    let mut text = format!(
+        "selection={selection} available={}\nnetwork_request=not_run\n--- version ---\n{}\n{}",
+        version.is_some(),
+        privacy.line(&capture.status),
+        version.unwrap_or_else(|| json!({"omitted":"version_unavailable_or_invalid"}))
+    );
+    if !capture.stderr.is_empty() {
+        text.push_str("\nstderr:\n");
+        for line in capture.stderr.lines() {
+            text.push_str(&privacy.line(line));
+            text.push('\n');
+        }
+    }
+    text.push_str("\n--- build provenance ---\n");
+    text.push_str(&curl_build_evidence(app, module_binary).to_string());
+    text
 }
 
 fn module_text(app: &App, path: &str, limit: u64) -> String {

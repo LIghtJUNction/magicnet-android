@@ -113,7 +113,9 @@ MAGICNET_TEST_HOST_UNZIP="$(command -v unzip)"
 MAGICNET_TEST_HOST_CP="$(command -v cp)"
 MAGICNET_TEST_HOST_JQ="$HOST_JQ"
 MAGICNET_TEST_HOST_SINGBOX="$(command -v sing-box)"
+MAGICNET_TEST_HOST_CURL="$ROOT/scripts/fixtures/host-install-curl.sh"
 export MAGICNET_TEST_HOST_UNZIP MAGICNET_TEST_HOST_CP MAGICNET_TEST_HOST_JQ MAGICNET_TEST_HOST_SINGBOX
+export MAGICNET_TEST_HOST_CURL
 MAGICNET_FAKE_PYTHON="$(command -v python3)"
 export MAGICNET_FAKE_PYTHON
 export MAGICNET_FAKE_KERNEL="$ROOT/scripts/fake-magisk-kernel.py"
@@ -286,6 +288,9 @@ SH
 
     install_customize_fixtures() {
         local tool host_tool
+        if [[ -f "$MODDIR/bin/curl" ]]; then
+            cp "$MAGICNET_TEST_HOST_CURL" "$MODDIR/bin/curl"
+        fi
         # Atomic template publication needs mv even with a module-only PATH.
         for tool in bash chmod cp cut date find grep ln mkdir mv rm sed sh tr unzip; do
             host_tool="$(command -v "$tool")" || {

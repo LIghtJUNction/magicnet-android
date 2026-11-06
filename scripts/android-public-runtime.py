@@ -17,7 +17,6 @@ from pathlib import Path
 import re
 import shlex
 import stat
-import struct
 import tempfile
 import zipfile
 
@@ -29,125 +28,16 @@ SCOPE = 'disposable-x86_64-public-runtime'
 SHA = re.compile(r'[0-9a-f]{64}')
 MAX_REPORT_BYTES = 1024 * 1024
 PUBLIC_PROVENANCE = '.ci-public-fixture.json'
-CURL_SCOPE = 'disposable-x86_64-public-curl'
-CURL_VERSIONS = {'curl': '8.22.0', 'openssl': '3.5.8', 'zlib': '1.3.2'}
-CURL_SOURCES = {
-    'curl': 'f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7',
-    'openssl': 'a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2',
-    'zlib': 'bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16',
-    'ca': 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505',
-}
-CURL_CA_BYTES = 188900
-CURL_CA_CERTS = 121
-
-
-def curl_elf(path):
-    """Inspect target ELF data without executing a host binary or trusting JSON."""
-    require(stat.S_ISREG(path.lstat().st_mode) and os.access(path, os.X_OK)
-            and 64 <= path.stat().st_size <= 32 * 1024 * 1024, 'curl_payload_unknown')
-    data = path.read_bytes()
-    require(SIM.elf_x86_64(data[:64]), 'curl_abi_unknown')
-    offset = struct.unpack_from('<Q', data, 32)[0]
-    size, count = struct.unpack_from('<HH', data, 54)
-    require(size == 56 and 1 <= count <= 256 and offset >= 64
-            and offset + size * count <= len(data), 'curl_elf_unknown')
-    loads, interpreters, dynamic = [], [], []
-    for index in range(count):
-        kind, _, start, address, _, length, memory, _ = struct.unpack_from(
-            '<IIQQQQQQ', data, offset + index * size)
-        require(start + length <= len(data) and length <= memory, 'curl_elf_unknown')
-        if kind == 1:
-            loads.append((address, start, length))
-        elif kind == 3:
-            require(1 <= length <= 128, 'curl_interpreter_unknown')
-            interpreters.append(data[start:start + length])
-        elif kind == 2:
-            require(length % 16 == 0 and length <= 65536, 'curl_dependencies_unknown')
-            dynamic.append(data[start:start + length])
-    require(interpreters == [b'/system/bin/linker64\x00'], 'curl_interpreter_unknown')
-    require(len(dynamic) == 1, 'curl_dependencies_unknown')
-    tags = {}
-    terminated = False
-    for index in range(0, len(dynamic[0]), 16):
-        tag, value = struct.unpack_from('<qQ', dynamic[0], index)
-        if tag == 0:
-            terminated = True
-            break
-        tags.setdefault(tag, []).append(value)
-    require(terminated and 15 not in tags and 29 not in tags
-            and len(tags.get(5, [])) == 1 and len(tags.get(10, [])) == 1,
-            'curl_dependencies_unknown')
-    address, length = tags[5][0], tags[10][0]
-    require(1 <= length <= 1024 * 1024, 'curl_dependencies_unknown')
-    candidates = [start + address - base for base, start, count in loads
-                  if base <= address and address + length <= base + count]
-    require(len(candidates) == 1, 'curl_dependencies_unknown')
-    strings = data[candidates[0]:candidates[0] + length]
-    needed = []
-    for offset in tags.get(1, []):
-        require(offset < len(strings), 'curl_dependencies_unknown')
-        end = strings.find(b'\x00', offset)
-        require(end != -1 and end - offset <= 128, 'curl_dependencies_unknown')
-        needed.append(strings[offset:end].decode('ascii'))
-    require(needed and len(needed) == len(set(needed)) and 'libc.so' in needed
-            and set(needed) <= {'libc.so', 'libm.so', 'libdl.so'},
-            'curl_dependencies_unknown')
-    return {'interpreter': '/system/bin/linker64', 'needed': sorted(needed), 'rpath': False}
+CURL_SCOPE = 'production-android-curl'
 
 
 def public_curl():
-    folder = Path(os.environ['MAGICNET_PUBLIC_CURL_DIR'])
-    curl, ca = folder / 'curl', folder / 'cacert.pem'
-    metadata = read_json(folder / 'build-provenance.json')
-    elf = curl_elf(curl)
-    require(stat.S_ISREG(ca.lstat().st_mode) and ca.stat().st_size == CURL_CA_BYTES
-            and SIM.digest(ca) == CURL_SOURCES['ca'], 'curl_ca_identity_unknown')
-    require(isinstance(metadata, dict) and type(metadata.get('schema')) is int
-            and metadata['schema'] == 1 and metadata.get('scope') == CURL_SCOPE
-            and metadata.get('status') == 'built'
-            and metadata.get('target') == {'os': 'android', 'abi': 'x86_64', 'api': 35}
-            and metadata.get('versions') == CURL_VERSIONS, 'curl_build_unknown')
-    sources = metadata.get('sources')
-    require(isinstance(sources, dict) and set(sources) == set(CURL_SOURCES)
-            and all(isinstance(sources[name], dict)
-                    and sources[name].get('sha256') == digest for name, digest in CURL_SOURCES.items()),
-            'curl_source_mismatch')
-    embedded = metadata.get('ca', {})
-    require(isinstance(embedded, dict) and embedded.get('mode') == 'embedded'
-            and embedded.get('sha256') == CURL_SOURCES['ca']
-            and type(embedded.get('bytes')) is int and embedded['bytes'] == CURL_CA_BYTES
-            and type(embedded.get('cert_count')) is int and embedded['cert_count'] == CURL_CA_CERTS
-            and embedded.get('runtime_bundle') is False and embedded.get('system_store') is False,
-            'curl_ca_identity_unknown')
-    builder = Path(__file__).with_name('prepare-android-public-curl.sh')
-    require(metadata.get('builder_sha256') == SIM.digest(builder)
-            and metadata.get('curl_sha256') == SIM.digest(curl)
-            and type(metadata.get('curl_bytes')) is int and metadata['curl_bytes'] == curl.stat().st_size
-            and metadata.get('elf') == elf and metadata['elf'].get('rpath') is False,
-            'curl_build_identity_mismatch')
-    toolchain = metadata.get('toolchain', {})
-    configured = os.environ.get('ANDROID_NDK_HOME') or os.environ.get('ANDROID_NDK_ROOT')
-    ndk = Path(configured or '/opt/android-ndk')
-    if not configured:
-        versions = Path(os.environ.get('ANDROID_HOME', '/opt/android-sdk')) / 'ndk'
-        if versions.is_dir():
-            choices = [path for path in versions.iterdir()
-                       if path.is_dir() and re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', path.name)]
-            require(choices, 'curl_toolchain_unknown')
-            ndk = max(choices, key=lambda path: tuple(map(int, path.name.split('.'))))
-    require(isinstance(toolchain, dict)
-            and toolchain.get('ndk_source_properties_sha256') == SIM.digest(ndk / 'source.properties'),
-            'curl_toolchain_unknown')
-    # Curate the build evidence: no source URLs, compiler output or host paths.
-    return curl, {'schema': 1, 'scope': CURL_SCOPE, 'versions': CURL_VERSIONS.copy(),
-                  'source_sha256': CURL_SOURCES.copy(), 'ca_embedded': True,
-                  'builder_sha256': SIM.digest(builder),
-                  'ndk_source_properties_sha256': toolchain['ndk_source_properties_sha256'],
-                  'curl_sha256': SIM.digest(curl), 'elf': elf}
+    """Use the same pinned production build/ABI verifier as offline acceptance."""
+    return SIM.verified_curl_build(Path(os.environ['MAGICNET_PUBLIC_CURL_DIR']))
 
 
 def augment_public_archive(base, destination, curl, addon):
-    """Keep the offline ZIP/marker intact; append only the public CI downloader."""
+    """Keep the production curl and offline marker intact; add only public attestation."""
     marker = (json.dumps(addon, sort_keys=True) + '\n').encode()
     require(len(marker) <= MAX_REPORT_BYTES, 'curl_marker_budget')
     temporary = destination.with_name(destination.name + '.partial')
@@ -155,15 +45,20 @@ def augment_public_archive(base, destination, curl, addon):
         with zipfile.ZipFile(base) as source, zipfile.ZipFile(temporary, 'w', zipfile.ZIP_DEFLATED) as output:
             names = source.namelist()
             require(len(names) == len(set(names))
-                    and not {'bin/curl', PUBLIC_PROVENANCE}.intersection(names), 'curl_fixture_collision')
+                    and PUBLIC_PROVENANCE not in names, 'curl_fixture_collision')
+            require(names.count('bin/curl') == 1, 'production_curl_missing')
+            entry = source.getinfo('bin/curl')
+            require(stat.S_ISREG(entry.external_attr >> 16)
+                    and stat.S_IMODE(entry.external_attr >> 16) == 0o755
+                    and entry.file_size == curl.stat().st_size
+                    and hashlib.sha256(source.read(entry)).hexdigest() == SIM.digest(curl),
+                    'production_curl_identity_mismatch')
             for original in source.infolist():
                 output.writestr(copy.copy(original), source.read(original))
-            for name, content, mode in (('bin/curl', curl.read_bytes(), 0o755),
-                                        (PUBLIC_PROVENANCE, marker, 0o644)):
-                entry = zipfile.ZipInfo(name)
-                entry.create_system = 3
-                entry.external_attr = (stat.S_IFREG | mode) << 16
-                output.writestr(entry, content)
+            entry = zipfile.ZipInfo(PUBLIC_PROVENANCE)
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFREG | 0o644) << 16
+            output.writestr(entry, marker)
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -227,15 +122,17 @@ def inputs():
     with zipfile.ZipFile(source) as archive:
         replacements.update({name: tools / Path(name).name for name in SIM.OPTIONAL_PAYLOADS
                              if name in archive.namelist()})
-    return source, replacements, source_sha
+    curl, curl_metadata, curl_build = public_curl()
+    replacements['bin/curl'] = curl
+    return source, replacements, source_sha, curl_metadata, curl_build
 
 
 def current_archive(work):
-    source, replacements, source_sha = inputs()
+    source, replacements, source_sha, curl_metadata, curl_build = inputs()
     baseline = work / 'MagicNet-base-x86_64.zip'
     archive = work / 'MagicNet-public-x86_64.zip'
-    provenance = SIM.prepare_archive(source, baseline, replacements)
-    curl, curl_build = public_curl()
+    provenance = SIM.prepare_archive(source, baseline, replacements, curl_metadata=curl_metadata)
+    curl = replacements['bin/curl']
     with zipfile.ZipFile(baseline) as stream:
         marker_sha = hashlib.sha256(stream.read(SIM.PROVENANCE)).hexdigest()
     addon = {'schema': 1, 'scope': CURL_SCOPE, 'source_sha': source_sha,
@@ -259,7 +156,8 @@ def current_archive(work):
         'base_fixture_zip_sha256': provenance['fixture_zip_sha256'],
         'fixture_zip_sha256': SIM.digest(archive),
         'payload_sha256': provenance['payload_sha256'],
-        'extra_payload_sha256': {'bin/curl': curl_build['curl_sha256']},
+        'extra_payload_sha256': {},
+        'metadata_sha256': provenance['metadata_sha256'],
         'curl_build': curl_build,
         'static_files_sha256': static_files,
         'marker_sha256': marker_sha,
@@ -287,7 +185,7 @@ def validate_offline(path, expected):
     provenance = report.get('provenance', {})
     require(isinstance(provenance, dict)
             and all(provenance.get(key) == expected[key] for key in
-                    ('source_sha', 'production_zip_sha256', 'payload_sha256')),
+                    ('source_sha', 'production_zip_sha256', 'payload_sha256', 'metadata_sha256')),
             'offline_source_mismatch')
     require(provenance.get('kernelsu', {}).get('mode') == 'pinned-kernel-userspace-late-load',
             'offline_kernel_unknown')
@@ -354,7 +252,7 @@ def generation(device):
 
 def observe_runtime(device, expected):
     paths = {SIM.MOD + '/' + key: value for section in
-             ('payload_sha256', 'extra_payload_sha256', 'static_files_sha256')
+             ('payload_sha256', 'extra_payload_sha256', 'metadata_sha256', 'static_files_sha256')
              for key, value in expected[section].items()}
     paths[SIM.MOD + '/' + SIM.PROVENANCE] = expected['marker_sha256']
     paths[SIM.MOD + '/' + PUBLIC_PROVENANCE] = expected['public_marker_sha256']
@@ -410,7 +308,7 @@ def prepare(device, archive, expected, work):
     device.kshell(f'MAGICNET_NONINTERACTIVE=1 {SIM.KSUD} module install {SIM.REMOTE}/module.zip', timeout=180)
     target = device.kshell(f'if [ -d {SIM.STAGED} ]; then echo {SIM.STAGED}; else echo {SIM.MOD}; fi').stdout.strip()
     require(target in (SIM.STAGED, SIM.MOD), 'install_destination_unknown')
-    staged = {target + '/' + key: value for section in ('payload_sha256', 'extra_payload_sha256')
+    staged = {target + '/' + key: value for section in ('payload_sha256', 'extra_payload_sha256', 'metadata_sha256')
               for key, value in expected[section].items()}
     device.kshell(f'test -f {target}/bin/curl && test ! -L {target}/bin/curl && test -x {target}/bin/curl')
     require(read_hashes(device, list(staged), privileged=True) == staged, 'staged_payload_mismatch')

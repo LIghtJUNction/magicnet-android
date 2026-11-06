@@ -65,6 +65,7 @@ class PackageTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.entries = {
+            **{name: b"curl package fixture; never executed\n" for name in package.CURL_RUNTIME_FILES},
             "module.prop": b"id=MagicNet\nversion=v1.4.8\nversionCode=123\n",
             "customize.sh": b"# shellcheck shell=ash\nimport rich\n",
             ".config/sing-box/config.json": b'{"inbounds": []}\n',
@@ -88,7 +89,7 @@ class PackageTests(unittest.TestCase):
         with zipfile.ZipFile(source, "w") as archive:
             for path, data in entries.items():
                 info = zipfile.ZipInfo(path, (2026, 1, 2, 3, 4, 6))
-                info.external_attr = (stat.S_IFREG | 0o700) << 16
+                info.external_attr = (stat.S_IFREG | (0o644 if path.startswith("licenses/") else 0o700)) << 16
                 archive.writestr(info, data)
             info = zipfile.ZipInfo("cli")
             info.create_system = 3
@@ -115,10 +116,13 @@ class PackageTests(unittest.TestCase):
         output, m = self.build()
         with zipfile.ZipFile(output / "MagicNet-core.zip") as core, zipfile.ZipFile(output / "MagicNet-full.zip") as full:
             self.assertNotIn("bin/sing-box", core.namelist())
+            self.assertNotIn("bin/curl", core.namelist())
+            self.assertNotIn("licenses/curl/build-provenance.json", core.namelist())
             self.assertNotIn("bin/magicnet-mcp-server", full.namelist())
             self.assertIn("bin/magicnet-components", core.namelist())
             self.assertIn("components.json", core.namelist())
             self.assertEqual(full.read("bin/sing-box"), b"engine")
+            self.assertEqual(full.read("bin/curl"), self.entries["bin/curl"])
             self.assertEqual(full.read("cli"), b"bin/magicnet-cli")
             self.assertEqual(json.loads(core.read("components.json")), m)
             self.assertEqual(core.read("customize.sh").count(b"# Component bootstrap:"), 1)
@@ -128,6 +132,8 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(blob).hexdigest(), component["sha256"])
             self.assertEqual(len(blob), component["size"])
         subprocess.run(["sha256sum", "-c", "SHA256SUMS"], cwd=output, check=True, stdout=subprocess.DEVNULL)
+        curl = next(component for component in m["components"] if component["id"] == "bin-curl")
+        self.assertEqual({entry["path"] for entry in curl["files"]}, set(package.CURL_RUNTIME_FILES))
 
     def test_unchanged_components_stable_across_module_versions(self):
         first, a = self.build("first")
@@ -160,7 +166,8 @@ class PackageTests(unittest.TestCase):
                 entries = dict(self.entries, **{bad: b"bad"})
                 with self.assertRaises(ValueError):
                     self.build(entries=entries)
-        for required in ("customize.sh", "bin/sing-box", "bin/magicnet-cli", "module.prop"):
+        for required in ("customize.sh", "bin/sing-box", "bin/magicnet-cli", "module.prop",
+                         *package.CURL_RUNTIME_FILES):
             entries = dict(self.entries)
             del entries[required]
             with self.assertRaises(ValueError):
@@ -169,6 +176,8 @@ class PackageTests(unittest.TestCase):
         retired["bin/magicnet-mcp-server"] = b"retired"
         with self.assertRaisesRegex(ValueError, "Retired standalone MCP component"):
             self.build(entries=retired)
+        with self.assertRaisesRegex(ValueError, "Unexpected curl"):
+            self.build(entries=self.entries | {"licenses/curl/unexpected.txt": b"unreviewed payload"})
 
     def test_rejects_duplicate_entries_and_double_split(self):
         output, _ = self.build()
@@ -190,7 +199,24 @@ class PackageTests(unittest.TestCase):
             for f in c["files"]:
                 self.assertEqual((module / f["path"]).read_bytes(), self.entries[f["path"]])
         self.assertEqual((module / "bin/sing-box").stat().st_mode & 0o777, 0o755)
+        self.assertEqual((module / "bin/curl").stat().st_mode & 0o777, 0o755)
+        self.assertEqual((module / "licenses/curl/build-provenance.json").stat().st_mode & 0o777, 0o644)
         self.assertEqual(json.loads((module / "components.installed.json").read_text()), m)
+
+    def test_curl_and_license_provenance_update_as_one_component(self):
+        original, before = self.build("before-curl")
+        old, _ = self.invoke(original, "MagicNet-full.zip", module=self.root / "previous-curl")
+        self.entries["licenses/curl/build-provenance.json"] = b"updated curl source provenance\n"
+        output, after = self.build("after-curl")
+        changed = [a["id"] for a, b in zip(before["components"], after["components"]) if a != b]
+        self.assertEqual(changed, ["bin-curl"])
+        # Identical binary bytes alone cannot reuse stale provenance/notices.
+        _, failed = self.invoke(output, "MagicNet-core.zip", previous=old, ok=False)
+        self.assertIn("bin-curl", failed.stderr)
+        installed, _ = self.invoke(output, "MagicNet-full.zip", previous=old)
+        self.assertEqual((installed / "bin/curl").read_bytes(), self.entries["bin/curl"])
+        self.assertEqual((installed / "licenses/curl/build-provenance.json").read_bytes(),
+                         self.entries["licenses/curl/build-provenance.json"])
 
     def test_core_upgrade_reuses_monolithic_install(self):
         output, _ = self.build()

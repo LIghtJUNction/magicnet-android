@@ -38,8 +38,13 @@ def verify(archive: Path, *, arch: str = "arm64", core: Path | None = None) -> N
         assert manifest["architecture"] == arch
         assert manifest["components"], "Missing runtime components"
         component_ids = {c["id"] for c in manifest["components"]}
-        required = {"bin-sing-box", "bin-magicnet-cli"}
+        required = {"bin-sing-box", "bin-magicnet-cli", "bin-curl"}
         assert required <= component_ids
+        curl = next(component for component in manifest["components"] if component["id"] == "bin-curl")
+        assert len(curl["files"]) == 6 and {"bin/curl", "licenses/curl/build-provenance.json",
+                "licenses/curl/curl-COPYING.txt", "licenses/curl/OpenSSL-LICENSE.txt",
+                "licenses/curl/zlib-README.txt", "licenses/curl/Mozilla-CA-NOTICE.txt"} == {
+                    entry["path"] for entry in curl["files"]}, "Curl component lacks executable/provenance/licenses"
         assert "bin-magicnet-mcp-server" not in component_ids, "Retired MCP binary component returned"
         for component in manifest["components"]:
             assert component["files"], "Empty component"

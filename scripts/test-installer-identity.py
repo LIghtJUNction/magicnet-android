@@ -62,6 +62,7 @@ class InstallerTests(unittest.TestCase):
         self.cache = self.root / "cache"
         self.cache.mkdir()
         self.entries = {
+            **{name: b"curl package fixture; never executed\n" for name in package.CURL_RUNTIME_FILES},
             "module.prop": b"id=MagicNet\nname=MagicNet\nversion=v1.4.11\nversionCode=123\n",
             "customize.sh": b'export SKIPUNZIP=1\nimport rich\n'
                             b'unzip -o "$ZIPFILE" "service.sh" -d "$MODPATH" >&2 || abort "scaffold"\n',

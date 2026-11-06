@@ -27,6 +27,7 @@ class ArchiveSafetyTest(unittest.TestCase):
         self.helper = self.root / 'helper'
         self.helper.write_bytes(b'bootstrap fixture, not executed')
         self.entries = {name: packager.zip_entry(name, data, 0o755) for name, data in {
+            **{name: b'curl package fixture; never executed\n' for name in packager.CURL_RUNTIME_FILES},
             'module.prop': b'id=MagicNet\nversion=v1.4.8\nversionCode=148\n',
             'customize.sh': b'#!/bin/sh\nimport rich\n',
             '.config/sing-box/config.json': b'{}',

@@ -47,6 +47,7 @@ check() {
 
 check python3 scripts/test-website-probe.py
 check python3 scripts/test-hook-utils.py
+check python3 scripts/test-android-curl-artifact.py
 python3 scripts/ci-test-cache.py host config-json -- jq empty src/MagicNet/.config/sing-box/config.json
 check bash scripts/test-repository-hygiene.sh
 check bash scripts/test-module-entrypoints.sh

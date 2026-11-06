@@ -53,6 +53,8 @@ require_entry bin/sing-box
 require_entry singbox.version
 require_entry bin/ecapture
 require_entry bin/jq
+require_entry bin/curl
+require_entry licenses/curl/build-provenance.json
 require_entry lib/kamfw/watchdog.sh
 require_entry lib/kamfw/fswatch.sh
 require_entry lib/kamfw/__singbox__.sh
@@ -88,13 +90,17 @@ require_android_arm64_elf() {
         fail "$entry ELF machine is not AArch64"
 }
 
-for entry in cli bin/magicnet-cli bin/sing-box bin/ecapture bin/jq; do
+for entry in cli bin/magicnet-cli bin/sing-box bin/ecapture bin/jq bin/curl; do
     require_executable_entry "$entry"
 done
 
-for entry in cli bin/magicnet-cli bin/sing-box bin/ecapture bin/jq; do
+for entry in cli bin/magicnet-cli bin/sing-box bin/ecapture bin/jq bin/curl; do
     require_android_arm64_elf "$entry"
 done
+
+# Inspect foreign ELF and source/CA/license identities without executing it.
+# Actual TLS behavior is a separate Android runtime acceptance gate.
+python3 "$ROOT/scripts/android-curl-artifact.py" verify-zip "$ZIP_PATH" --abi arm64-v8a
 
 singbox_build_info="$(go version -m "$elf_tmp/bin/sing-box" 2>&1)" ||
     fail "could not read packaged sing-box Go build metadata: $singbox_build_info"

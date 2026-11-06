@@ -211,7 +211,13 @@ class CurlProofTests(unittest.TestCase):
                                 'resolve': True, 'gzip': True, 'tls_positive': True,
                                 'hostname_reject': True, 'default_trust_reject': True, 'cleanup': True,
                                 'embedded_ca_identity': True, 'embedded_ca_bytes': 188900,
+                                'embedded_ca_sha256': PROOF.EMBEDDED_CA_SHA256,
+                                'embedded_ca_cert_count': 121, 'versions': result['versions'],
                                 'positive_gets': 1, 'hostname_reject_gets': 0, 'default_reject_gets': 0})
+        self.assertEqual(set(result['versions']), {'curl', 'libcurl', 'openssl', 'zlib'})
+        self.assertEqual(result['versions']['curl'], result['versions']['libcurl'])
+        self.assertTrue(all(re.fullmatch(r'[0-9]+(?:\.[0-9]+){2}', value)
+                            for value in result['versions'].values()))
         self.assertEqual(self.device.curled, 3)
         self.assert_clean()
 

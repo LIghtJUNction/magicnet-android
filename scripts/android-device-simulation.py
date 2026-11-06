@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Destructive, offline lifecycle acceptance for a disposable KernelSU x86_64 AVD.
+"""Destructive lifecycle acceptance for a disposable KernelSU x86_64 AVD.
 
 This runs real Android/ksud/module code, not command stubs. The test ZIP replaces
 all bundled ABI-specific executables and removes the build-only download caches already
 excluded by the production component packager. A provenance record covers both.
 A local standalone config is seeded after installation, before the first module
-boot. No public proxy feed or subscription credential is used.
+boot. No public proxy feed or subscription credential is used. One bounded
+product connectivity tick may observe public reachability; Internet success is
+not an acceptance prerequisite. Diagnostic export remains a cached observation.
 """
 from __future__ import annotations
 
@@ -43,7 +45,8 @@ BB = '/data/adb/ksu/bin/busybox'
 SUPPORT_EXPORT = '/sdcard/Download/MagicNet/MagicNet-diagnostics.txt'
 SUPPORT_LIMIT = 512 * 1024
 PROVENANCE = '.ci-fixture.json'
-PAYLOADS = ('bin/magicnet-cli', 'bin/sing-box', 'bin/jq', 'bin/yq')
+PAYLOADS = ('bin/magicnet-cli', 'bin/sing-box', 'bin/jq', 'bin/yq', 'bin/curl')
+CURL_PROVENANCE = 'licenses/curl/build-provenance.json'
 # Optional components must be replaced when present, never silently omitted.
 OPTIONAL_PAYLOADS = ('bin/ecapture', 'bin/proxylink')
 PHASES = (
@@ -94,7 +97,57 @@ def elf_x86_64(data: bytes) -> bool:
             and struct.unpack_from('<H', data, 18)[0] == 62)
 
 
-def prepare_archive(source: Path, destination: Path, replacements: dict[str, Path]) -> dict:
+def curl_artifact_verifier():
+    spec = importlib.util.spec_from_file_location(
+        'magicnet_curl_artifact', ROOT / 'scripts/android-curl-artifact.py')
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    return verifier
+
+
+def verified_curl_build(folder: Path) -> tuple[Path, dict, dict]:
+    """Attest the shared production build without executing target ELF on host."""
+    verifier = curl_artifact_verifier()
+    binary, metadata_file, ca = folder / 'curl', folder / 'build-provenance.json', folder / 'cacert.pem'
+    require(stat.S_ISREG(metadata_file.lstat().st_mode)
+            and 0 < metadata_file.stat().st_size <= 65536, 'curl_build_unknown')
+    metadata = json.loads(metadata_file.read_text(), object_pairs_hook=unique_keys)
+    configured = os.environ.get('ANDROID_NDK_HOME') or os.environ.get('ANDROID_NDK_ROOT')
+    ndk = Path(configured or '/opt/android-ndk')
+    if not configured:
+        versions = Path(os.environ.get('ANDROID_HOME', '/opt/android-sdk')) / 'ndk'
+        if versions.is_dir():
+            choices = [path for path in versions.iterdir()
+                       if path.is_dir() and re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', path.name)]
+            require(choices, 'curl_toolchain_unknown')
+            ndk = max(choices, key=lambda path: tuple(map(int, path.name.split('.'))))
+    expected_ndk = digest(ndk / 'source.properties')
+    declared_ndk = os.environ.get('MAGICNET_CURL_NDK_SHA256')
+    require(declared_ndk is None or declared_ndk == expected_ndk, 'curl_toolchain_unknown')
+    try:
+        verifier.verify(binary, metadata, folder / 'licenses', 'x86_64', expected_ndk)
+    except (ValueError, OSError, KeyError, TypeError):
+        raise RuntimeError('curl_build_identity_mismatch') from None
+    inputs = verifier.lock()
+    require(stat.S_ISREG(ca.lstat().st_mode) and ca.stat().st_size == inputs['ca']['bytes']
+            and digest(ca) == inputs['sources']['ca']['sha256']
+            and ca.read_bytes().count(b'-----BEGIN CERTIFICATE-----') == inputs['ca']['cert_count'],
+            'curl_ca_identity_unknown')
+    # Public evidence excludes source URLs, compiler text and host paths.
+    identity = {'schema': 1, 'scope': verifier.SCOPE, 'target': metadata['target'].copy(),
+                'versions': metadata['versions'].copy(),
+                'source_sha256': {name: value['sha256'] for name, value in inputs['sources'].items()},
+                'ca_embedded': True, 'ca_sha256': inputs['sources']['ca']['sha256'],
+                'builder_sha256': metadata['builder_sha256'],
+                'verifier_sha256': metadata['verifier_sha256'], 'lock_sha256': metadata['lock_sha256'],
+                'ndk_source_properties_sha256': expected_ndk,
+                'curl_sha256': digest(binary), 'curl_bytes': binary.stat().st_size,
+                'elf': metadata['elf'].copy()}
+    return binary, metadata, identity
+
+
+def prepare_archive(source: Path, destination: Path, replacements: dict[str, Path],
+                    *, curl_metadata: dict | None = None) -> dict:
     require(source.resolve() != destination.resolve(), 'never overwrite the production ZIP')
     require(set(PAYLOADS) <= set(replacements) <= set(PAYLOADS + OPTIONAL_PAYLOADS),
             'required ABI replacements missing or unknown replacement supplied')
@@ -107,6 +160,20 @@ def prepare_archive(source: Path, destination: Path, replacements: dict[str, Pat
                 'payload_sha256': {name: digest(path) for name, path in replacements.items()},
                 'excluded_build_cache_sha256': {},
                 'compatibility_aliases': {}}
+    metadata_bytes = None
+    if curl_metadata is not None:
+        # Both ABIs must originate from the exact same locked production build.
+        # The ABI replacement is already explicit in this disposable fixture.
+        verifier = curl_artifact_verifier()
+        production_curl = verifier.verify_zip(source, 'arm64-v8a')
+        require(curl_metadata.get('target') == {'os': 'android', 'abi': 'x86_64', 'api': 21}
+                and curl_metadata.get('curl_sha256') == digest(replacements['bin/curl'])
+                and production_curl['toolchain']['ndk_source_properties_sha256']
+                    == curl_metadata['toolchain']['ndk_source_properties_sha256'],
+                'curl ABI replacement identity mismatch')
+        metadata_bytes = (json.dumps(curl_metadata, sort_keys=True, indent=2) + '\n').encode()
+        require(len(metadata_bytes) <= 65536, 'curl metadata exceeds fixture budget')
+        manifest['metadata_sha256'] = {CURL_PROVENANCE: hashlib.sha256(metadata_bytes).hexdigest()}
     # Write atomically; failed fixture preparation must not leave a usable ZIP.
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_name(destination.name + '.partial')
@@ -117,6 +184,8 @@ def prepare_archive(source: Path, destination: Path, replacements: dict[str, Pat
             require(len(names) == len(set(names)), 'duplicate ZIP members')
             require(PROVENANCE not in names, 'refuse to repackage an existing fixture')
             require(set(replacements).issubset(names), 'production ZIP is missing runtime payloads')
+            require(metadata_bytes is None or CURL_PROVENANCE in names,
+                    'production ZIP is missing curl provenance')
             require(set(names).intersection(OPTIONAL_PAYLOADS) <= set(replacements),
                     'bundled optional tool has no ABI replacement')
             require('customize.sh' in names and 'module.prop' in names, 'not a module ZIP')
@@ -175,6 +244,11 @@ def prepare_archive(source: Path, destination: Path, replacements: dict[str, Pat
                     data = replacements[item.filename].read_bytes()
                     item.create_system = 3
                     item.external_attr = (stat.S_IFREG | 0o755) << 16
+                elif item.filename == CURL_PROVENANCE and metadata_bytes is not None:
+                    require(stat.S_IFMT(mode) in (0, stat.S_IFREG), 'curl provenance must be a regular file')
+                    data = metadata_bytes
+                    item.create_system = 3
+                    item.external_attr = (stat.S_IFREG | 0o644) << 16
                 elif data.startswith(b'\x7fELF'):
                     require(elf_x86_64(data[:64]), f'unreplaced foreign ELF: {item.filename}')
                 output.writestr(item, data)
@@ -257,6 +331,101 @@ def connectivity_snapshot(connectivity: dict) -> dict:
     )}
 
 
+def product_connectivity_observation(device, evidence: dict | None = None) -> dict:
+    """Accept an existing producer result or invoke one ordinary, deduplicated tick.
+
+    Never edit canonical state, bypass next_due, retry the tick or chase a 204.
+    A first failed attempt may make the product's two differential requests;
+    no subscription or recovery action is needed to establish executor use.
+    """
+    deadline = time.monotonic() + 40
+    if evidence is None:
+        evidence = {}
+    evidence.update({'schema': 1, 'status': 'failed', 'explicit_tick_count': 0,
+                'explicit_request_upper_bound': {'google': 1, 'auxiliary': 2},
+                'canonical_state_modified_by_harness': False,
+                'google_https_204_observed': False, 'status_reads': 0})
+
+    def status():
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'connectivity observation deadline exceeded')
+        value = device.kshell(MOD + '/cli --json connectivity status',
+                              timeout=min(5, remaining), check=False)
+        require(value.returncode == 0 and len(value.stdout.encode()) <= 65536,
+                'connectivity observation unavailable')
+        evidence['status_reads'] += 1
+        return connectivity_snapshot(decode_status(value.stdout, 'connectivity.status'))
+
+    def executed(value):
+        return (value['probe_count'] > 0 and (value['checked_at'] or 0) > 0
+                and value['primary_reason'] in ('ok', 'dns_failure', 'proxy_refused', 'timeout',
+                                                'tls_failure', 'http_error', 'transport_failure')
+                and value['status'] in ('online', 'degraded', 'offline'))
+
+    before = status()
+    evidence['before'] = before
+    current = before
+    if executed(before):
+        evidence['observation_source'] = 'existing_producer_result'
+    elif before['status'] == 'pending':
+        # A background worker already owns the request. Observe, never duplicate.
+        evidence['observation_source'] = 'pending_producer_result'
+    else:
+        require(before['probe_count'] == 0 and before['consecutive_failures'] == 0,
+                'connectivity executor has no usable observation')
+        evidence['observation_source'] = 'single_product_tick'
+        evidence['explicit_tick_count'] = 1
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'connectivity observation deadline exceeded')
+        tick = device.kshell(MOD + '/cli connectivity tick', timeout=min(30, remaining), check=False)
+        evidence['tick_exit_code'] = bounded_exit_code(tick.returncode)
+        require(tick.returncode == 0, 'connectivity tick did not complete')
+        current = status()
+    while not executed(current) and current['status'] == 'pending':
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
+        current = status()
+    evidence['after'] = current
+    require(executed(current), 'connectivity executor has no usable observation')
+    evidence['google_https_204_observed'] = (current['status'] == 'online'
+                                           and current['http_status'] == 204
+                                           and current['primary_reason'] == 'ok')
+    evidence['status'] = 'observed'
+    return evidence
+
+
+def module_curl_controls(device, out: Path, evidence: dict, identity: dict,
+                         system_curl_available: bool) -> None:
+    """Prove packaged execution and local TLS, then observe bounded product probing."""
+    started = time.monotonic()
+    evidence.update({'schema': 1, 'status': 'failed', 'stage': 'installed_identity',
+                     'system_curl_available': system_curl_available,
+                     'selected_path': MOD + '/bin/curl', 'build': identity})
+    try:
+        require(system_curl_available is False, 'clean AVD unexpectedly provides system curl')
+        actual = device.kshell(BB + ' sha256sum ' + MOD + '/bin/curl', timeout=5).stdout.split()
+        require(len(actual) == 2 and actual == [identity['curl_sha256'], MOD + '/bin/curl'],
+                'installed curl digest differs from production build')
+        evidence['installed_binary_verified'] = True
+        evidence['stage'] = 'local_tls_controls'
+        spec = importlib.util.spec_from_file_location(
+            'magicnet_installed_curl_proof', ROOT / 'scripts/android-public-curl-proof.py')
+        proof = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(proof)
+        runtime = proof.verify(device)
+        require(runtime['versions'] == identity['versions'] | {'libcurl': identity['versions']['curl']},
+                'installed curl runtime version differs from production build')
+        require(runtime['embedded_ca_sha256'] == identity['ca_sha256'],
+                'installed curl trust roots differ from production build')
+        evidence['local_tls'] = runtime
+        evidence['stage'] = 'product_connectivity'
+        evidence['connectivity'] = {}
+        product_connectivity_observation(device, evidence['connectivity'])
+        evidence.update({'stage': 'complete', 'status': 'passed'})
+    finally:
+        evidence['seconds'] = round(time.monotonic() - started, 3)
+        (out / 'module-curl-controls.json').write_text(json.dumps(evidence, indent=2) + '\n')
+
+
 def diagnostic_capture(body: str) -> str:
     header, separator, content = body.partition('\n')
     fields = dict(item.split('=', 1) for item in header.split() if '=' in item)
@@ -277,11 +446,69 @@ def diagnostic_status(body: str, command: str) -> dict:
         raise RuntimeError('invalid diagnostic ' + command + ' JSON') from None
 
 
-def diagnostic_content(text: str) -> dict:
+def diagnostic_curl(body: str, identity: dict | None = None) -> dict:
+    header, version_marker, rest = body.partition('--- version ---\n')
+    require(version_marker and header.splitlines() ==
+            ['selection=module_bin available=true', 'network_request=not_run'],
+            'diagnostic module curl selection was lost')
+    version_text, build_marker, build_text = rest.partition('--- build provenance ---\n')
+    require(build_marker, 'diagnostic curl build record was lost')
+    try:
+        content = diagnostic_capture(version_text)
+        version, end = json.JSONDecoder(object_pairs_hook=unique_keys).raw_decode(content)
+        trailing = content[end:].strip()
+        require(not trailing or trailing.startswith('stderr:\n'), 'extra diagnostic curl version output')
+        build = json.loads(build_text.strip(), object_pairs_hook=unique_keys)
+    except (ValueError, TypeError, RuntimeError):
+        raise RuntimeError('invalid diagnostic curl JSON') from None
+    locked = curl_artifact_verifier().lock()
+    versions = locked['versions']
+    require(isinstance(version, dict) and version.get('curl_version') == versions['curl']
+            and version.get('libcurl_version') == versions['curl']
+            and version.get('tls_backend') == 'OpenSSL' and version.get('tls_version') == versions['openssl']
+            and version.get('zlib_version') == versions['zlib']
+            and version.get('network_request') == 'not_run', 'diagnostic curl runtime versions were lost')
+    capabilities = version.get('capabilities')
+    require(isinstance(capabilities, dict) and all(capabilities.get(key) is True
+            for key in ('https', 'tls', 'gzip')), 'diagnostic curl TLS capability was lost')
+    require(isinstance(build, dict) and type(build.get('schema')) is int and build['schema'] == 1
+            and build.get('scope') == 'production-android-curl' and build.get('status') == 'available'
+            and build.get('source') == 'packaged_build_record'
+            and build.get('applies_to_selected_path') is True
+            and build.get('binary_digest_verification') == 'not_run'
+            and build.get('runtime_capability') == 'not_tested'
+            and build.get('target') == {'os': 'android', 'abi': 'x86_64', 'api': 21}
+            and type(build['target']['api']) is int and build.get('versions') == versions,
+            'diagnostic curl production identity was lost')
+    ca = build.get('ca')
+    require(isinstance(ca, dict) and ca.get('mode') == 'embedded'
+            and ca.get('version') == locked['ca']['version']
+            and ca.get('sha256') == locked['sources']['ca']['sha256']
+            and type(ca.get('bytes')) is int and ca['bytes'] == locked['ca']['bytes']
+            and type(ca.get('cert_count')) is int and ca['cert_count'] == locked['ca']['cert_count']
+            and ca.get('runtime_bundle') is False and ca.get('system_store') is False,
+            'diagnostic curl trust-root identity was lost')
+    require(isinstance(build.get('curl_sha256'), str)
+            and re.fullmatch(r'[0-9a-f]{64}', build['curl_sha256']) is not None
+            and type(build.get('curl_bytes')) is int and 0 < build['curl_bytes'] <= 32 * 1024 * 1024,
+            'diagnostic curl binary declaration was lost')
+    if identity is not None:
+        require(build['curl_sha256'] == identity['curl_sha256'] and build['curl_bytes'] == identity['curl_bytes']
+                and build.get('builder_sha256') == identity['builder_sha256'],
+                'diagnostic curl declaration differs from installed build')
+    return {'selection': 'module_bin', 'available': True, 'network_request': 'not_run',
+            'versions': versions.copy(), 'https': True, 'tls': True, 'gzip': True,
+            'embedded_ca_sha256': ca['sha256'], 'curl_sha256': build['curl_sha256'],
+            'curl_bytes': build['curl_bytes'], 'target': build['target'],
+            'runtime_capability_in_build_record': 'not_tested',
+            'binary_digest_verification_by_export': 'not_run'}
+
+
+def diagnostic_content(text: str, curl_identity: dict | None = None) -> dict:
     parts = re.split(r'^\[([^\]\n]+)\]\n', text, flags=re.M)
     sections = {parts[index]: parts[index + 1] for index in range(1, len(parts) - 1, 2)}
     require(len(sections) == (len(parts) - 1) // 2, 'duplicate diagnostic section')
-    require('service status' in sections and 'dns api and mcp' in sections,
+    require('service status' in sections and 'dns api and mcp' in sections and 'curl executor' in sections,
             'missing diagnostic status content')
     service = diagnostic_status(sections['service status'], 'service.status')
     for key in ('core', 'api', 'readiness', 'supervisors', 'transparent', 'subscription'):
@@ -317,10 +544,11 @@ def diagnostic_content(text: str) -> dict:
                 'core_running': True, 'api_ready': True, 'dataplane_ready': True, 'overall_ready': True,
                 'fswatch_running': True, 'rss_kib': core['rss_kib'], 'connectivity': connectivity},
             'mcp_status': {'enabled': mcp['enabled'] == '1', 'secret_set': mcp['secret_set'] == '1',
-                           'port': int(port), 'running': pid != 'stopped'}}
+                           'port': int(port), 'running': pid != 'stopped'},
+            'curl_executor': diagnostic_curl(sections['curl executor'], curl_identity)}
 
 
-def installed_controls(device, out: Path, evidence: dict) -> None:
+def installed_controls(device, out: Path, evidence: dict, *, curl_identity: dict | None = None) -> None:
     """Check installed CLI contracts without requesting any fresh network probe."""
     started = time.monotonic()
     evidence.update({'schema': 1, 'status': 'failed',
@@ -391,7 +619,7 @@ def installed_controls(device, out: Path, evidence: dict) -> None:
                 and text.endswith('end_of_report=true\n'), 'diagnostic export is incomplete or invalid')
         evidence['support_export'].update({'artifact': destination.name, 'sha256': digest(destination),
                                            'required_sections': list(required_sections),
-                                           'content': diagnostic_content(text)})
+                                           'content': diagnostic_content(text, curl_identity)})
         evidence.update({'stage': 'complete', 'status': 'passed'})
     finally:
         evidence['seconds'] = round(time.monotonic() - started, 3)
@@ -508,6 +736,7 @@ class Device:
         self.root_checks = []
         self.reboot_checks = []
         self.stop_checks = []
+        self.reboot_log_offset = 0
         self.boot_log = ROOT / 'artifacts/android-kernelsu/emulator.log'
 
     def boot_failure(self, offset: int = 0) -> str | None:
@@ -710,7 +939,9 @@ class Device:
         # integrated. Do not attempt to inject an LKM into an arbitrary stock
         # emulator kernel: current x86_64 KernelSU requires kernel-side syscall
         # hardening compatibility patches. late-load is still useful here to
-        # install userspace and execute KernelSU lifecycle stages after each boot.
+        # install userspace for the initial bootstrap. Later boots execute the
+        # integrated kernel's native init stages; replaying late-load would both
+        # repeat module hooks and overwrite a possibly executing ksud (ETXTBSY).
         before = self.shell(KSUD + ' debug version', timeout=30, check=False).stdout.strip()
         require(re.fullmatch(r'Kernel Version: [1-9][0-9]*', before) is not None,
                 'pinned KernelSU kernel is not active before userspace late-load')
@@ -737,6 +968,56 @@ class Device:
         return {'mode': 'pinned-kernel-userspace-late-load', 'kmi': current,
                 'kernel_version': version}
 
+    def verify_native_kernelsu_boot(self) -> dict:
+        require(self.verified, 'device identity not verified')
+        evidence = {'mode': 'pinned-kernel-native-init', 'stages': {},
+                    'kernel_interface': False, 'domain_verified': False,
+                    'selinux_enforcing': False, 'busybox_verified': False}
+        if self.reboot_checks:
+            self.reboot_checks[-1]['kernelsu_native_boot'] = evidence
+        # Serial evidence is independent of the module under test. Inspect only
+        # the newest boot and cap each read, retaining no device identifiers.
+        # A completed property may precede the boot-completed process exit by a
+        # few milliseconds; only read observations are retried, never stages.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                with self.boot_log.open('rb') as stream:
+                    size = stream.seek(0, 2)
+                    stream.seek(max(self.reboot_log_offset, size - 1024 * 1024))
+                    text = stream.read(1024 * 1024).decode('utf-8', errors='replace')
+            except OSError:
+                text = ''
+            boot = text.rfind('Linux version ')
+            current = text[boot:] if boot >= 0 else ''
+            stages = {}
+            for stage in ('post-fs-data', 'services', 'boot-completed'):
+                pattern = (r"init: Service 'exec [0-9]+ \(/data/adb/ksud "
+                           + re.escape(stage) + r"\)' \(pid [0-9]+\) exited with status ([0-9]+)")
+                matches = re.findall(pattern, current)
+                require(len(matches) <= 1 and all(code == '0' for code in matches),
+                        'KernelSU native init stage failed or was replayed: ' + stage)
+                stages[stage] = 'passed' if matches == ['0'] else 'pending'
+            evidence['stages'] = stages
+            if all(value == 'passed' for value in stages.values()):
+                break
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, 'KernelSU native init evidence incomplete')
+            time.sleep(min(0.25, remaining))
+        version = self.shell(KSUD + ' debug version', timeout=10).stdout.strip()
+        require(re.fullmatch(r'Kernel Version: [1-9][0-9]*', version) is not None,
+                'KernelSU native init lost the kernel interface')
+        evidence['kernel_interface'] = True
+        require(self.kshell('id -Z', timeout=10).stdout.strip() == KSU_DOMAIN,
+                'real KernelSU SELinux domain required after native init')
+        evidence['domain_verified'] = True
+        require(self.kshell('getenforce', timeout=10).stdout.strip() == 'Enforcing',
+                'KernelSU native init changed SELinux enforcement')
+        evidence['selinux_enforcing'] = True
+        self.check_busybox('activated', activated=True)
+        evidence['busybox_verified'] = True
+        return evidence
+
     def reboot(self):
         require(self.verified, 'device identity not verified')
         evidence = {'status': 'failed', 'command_exit_code': None, 'command_result': 'not_run',
@@ -746,6 +1027,10 @@ class Device:
         self.reboot_checks.append(evidence)
         old = self.shell('cat /proc/sys/kernel/random/boot_id').stdout.strip()
         require(re.fullmatch(r'[0-9a-f-]{36}', old) is not None, 'missing old boot identity')
+        try:
+            self.reboot_log_offset = self.boot_log.stat().st_size
+        except OSError:
+            self.reboot_log_offset = 0
         # ADB may lose its reply when the old daemon exits. A timeout is unknown,
         # not success: issue exactly one reboot and require an independently
         # observed new, fully booted Android instance before any continuation.
@@ -761,8 +1046,8 @@ class Device:
         require(self.shell('getenforce').stdout.strip() == 'Enforcing', 'SELinux changed across reboot')
         evidence['selinux_enforcing'] = True
         if self.late_load_on_reboot:
-            self.late_load_kernelsu()
-            evidence['kernelsu_reactivation'] = 'verified'
+            evidence['kernelsu_native_boot'] = self.verify_native_kernelsu_boot()
+            evidence['kernelsu_reactivation'] = 'verified_native_init'
         evidence['status'] = 'passed'
 
     def ready(self, timeout: float = 90):
@@ -1155,11 +1440,15 @@ def main() -> int:
                 replacements = {name: Path(os.environ[key]) for name, key in keys.items()}
                 tools = Path(os.environ['MAGICNET_X86_TOOLS'])
                 replacements.update({f'bin/{name}': tools / name for name in ('jq', 'yq')})
+                curl_binary, curl_metadata, curl_identity = verified_curl_build(
+                    Path(os.environ['MAGICNET_ANDROID_CURL_DIR']))
+                replacements['bin/curl'] = curl_binary
                 with zipfile.ZipFile(source) as production:
                     replacements.update({name: tools / Path(name).name for name in OPTIONAL_PAYLOADS
                                          if name in production.namelist()})
                 archive = work / 'MagicNet-ci-x86_64.zip'
-                report.provenance = prepare_archive(source, archive, replacements)
+                report.provenance = prepare_archive(source, archive, replacements, curl_metadata=curl_metadata)
+                report.provenance['curl_build'] = curl_identity
                 device.identify()
                 report.provenance['device'] = device_resources(device)
                 report.provenance['system_curl_available'] = device.shell(
@@ -1178,7 +1467,8 @@ def main() -> int:
                 target = device.kshell(f'if [ -d {STAGED} ]; then echo {STAGED}; else echo {MOD}; fi').stdout.strip()
                 require(target in (STAGED, MOD), 'unexpected install destination')
                 device.kshell(f'test -f {target}/module.prop && test -f {target}/{PROVENANCE}')
-                for name, expected in report.provenance['payload_sha256'].items():
+                for name, expected in (report.provenance['payload_sha256']
+                                       | report.provenance['metadata_sha256']).items():
                     value = device.kshell(f'{BB} sha256sum {target}/{name}').stdout.split()
                     require(bool(value) and value[0] == expected, 'installer changed a fixture binary')
                 config = work / 'config.json'
@@ -1193,9 +1483,13 @@ def main() -> int:
                 device.ready()
                 device.kshell(f'p=$({BB} pidof sing-box) && test -n "$p" && '
                               f'for n in $p; do test "$(cat /proc/$n/attr/current)" = {KSU_DOMAIN} || exit 1; done')
+                curl_controls = {}
+                report.provenance['module_curl_controls'] = curl_controls
+                module_curl_controls(device, out, curl_controls, curl_identity,
+                                     report.provenance['system_curl_available'])
                 controls = {}
                 report.provenance['installed_controls'] = controls
-                installed_controls(device, out, controls)
+                installed_controls(device, out, controls, curl_identity=curl_identity)
             with report.phase('app-uid-tun-controls'):
                 tun_controls(device, out, 'app-uid-tun-controls')
             with report.phase('invalid-config-rollback'):

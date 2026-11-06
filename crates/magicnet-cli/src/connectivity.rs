@@ -323,10 +323,17 @@ impl State {
             } else {
                 "offline"
             };
-            if self.secondary == "online" {
-                self.reason = "endpoint_specific";
-            } else if self.direct == "failed" {
-                self.reason = "upstream_unavailable";
+            // A missing or malformed local executor is not evidence that an
+            // endpoint or the uplink failed. Keep that actionable cause even
+            // when the same executor also fails the direct control.
+            if !matches!(primary.reason, "probe_unavailable" | "probe_invalid") {
+                if self.secondary == "online" {
+                    self.reason = "endpoint_specific";
+                } else if direct.is_some_and(|probe| {
+                    !probe.ok && !matches!(probe.reason, "probe_unavailable" | "probe_invalid")
+                }) {
+                    self.reason = "upstream_unavailable";
+                }
             }
             self.next_uptime = clock.uptime.saturating_add(backoff(self.failures));
         }
@@ -338,6 +345,7 @@ impl State {
             || self.secondary != "failed"
             || self.direct != "online"
             || self.reason == "no_default_route"
+            || matches!(self.primary_reason, "probe_unavailable" | "probe_invalid")
             || (self.action_uptime > 0
                 && clock.uptime.saturating_sub(self.action_uptime) < ACTION_COOLDOWN)
         {
