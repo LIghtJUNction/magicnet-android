@@ -549,7 +549,7 @@ fn set_file_rejects_more_than_five_singbox_subscription_lines() {
 #[test]
 fn candidate_activation_failure_never_writes_the_active_url() {
     let app = temp_app();
-    let directory = app.moddir.join(".tmp/subscription-candidates");
+    let directory = app.moddir.join(".cache/subscription-candidates");
     let error = with_subscription_candidate(&app, "https://example.com/sub\n", |candidate_fd| {
         assert_eq!(
             fs::read_to_string(format!("/proc/self/fd/{candidate_fd}")).unwrap(),
@@ -595,7 +595,7 @@ fn anonymous_subscription_candidate_is_private_and_readable_by_a_child() {
     let app = temp_app();
     let candidate = write_subscription_candidate(&app, "https://example.com/private\n").unwrap();
     let metadata = candidate.file.metadata().expect("stat anonymous candidate");
-    let directory = app.moddir.join(".tmp/subscription-candidates");
+    let directory = app.moddir.join(".cache/subscription-candidates");
 
     assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     assert_eq!(
@@ -634,12 +634,12 @@ fn candidate_temp_root_symlink_is_rejected_without_creating_outside_files() {
     let outside = app.moddir.join("outside");
     fs::create_dir_all(&app.moddir).expect("create module directory");
     fs::create_dir_all(&outside).expect("create outside directory");
-    symlink(&outside, app.moddir.join(".tmp")).expect("create temporary-root symlink");
+    symlink(&outside, app.moddir.join(".cache")).expect("create temporary-root symlink");
 
     assert!(write_subscription_candidate(&app, "https://example.com/sub\n").is_err());
     assert!(
         !outside.join("subscription-candidates").exists(),
-        "candidate setup must not traverse a .tmp symlink"
+        "candidate setup must not traverse a .cache symlink"
     );
 }
 
@@ -647,7 +647,7 @@ fn candidate_temp_root_symlink_is_rejected_without_creating_outside_files() {
 fn candidate_temp_directory_symlink_is_rejected_without_creating_outside_files() {
     let app = temp_app();
     let outside = app.moddir.join("outside");
-    let parent = app.moddir.join(".tmp");
+    let parent = app.moddir.join(".cache");
     fs::create_dir_all(&parent).expect("create candidate parent");
     fs::create_dir_all(&outside).expect("create outside directory");
     symlink(&outside, parent.join("subscription-candidates"))

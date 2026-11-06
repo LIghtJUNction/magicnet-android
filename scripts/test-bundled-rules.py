@@ -57,7 +57,7 @@ class BundledRuleTests(unittest.TestCase):
         self.assertNotIn("forbidden-network", result.stderr)
 
     def state(self):
-        files = list((self.module / ".local/state/sing-box-rules").glob("*.hash"))
+        files = list((self.module / ".state/sing-box-rules").glob("*.hash"))
         self.assertEqual(len(files), 1)
         return files[0].read_text()
 

@@ -48,3 +48,4 @@ unset _kamfw_rc
 
 import __runtime__
 . "${MODDIR}/lib/magicnet.sh"
+magicnet_prepare_runtime_dirs

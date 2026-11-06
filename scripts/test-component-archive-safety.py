@@ -91,7 +91,7 @@ class ArchiveSafetyTest(unittest.TestCase):
             self.reject_without_output()
 
     def test_removed_build_archive_links_never_reach_runtime(self):
-        name = '.local/state/cache.archive'
+        name = '.state/cache.archive'
         self.entries[name] = packager.zip_entry(name, b'/tmp/build-cache', symlink=True)
         self.write()
         self.split()

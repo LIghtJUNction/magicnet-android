@@ -9,7 +9,7 @@
 MAGIC_ECAPTURE=${MAGIC_ECAPTURE:-1}
 VERSION_FILE="${KAM_MODULE_ROOT}/ecapture.version"
 TARGET_BIN="${KAM_MODULE_ROOT}/bin/ecapture"
-CACHE_FILE="${KAM_MODULE_ROOT}/.local/state/ecapture.archive"
+CACHE_FILE="${KAM_MODULE_ROOT}/.cache/assets/ecapture.archive"
 
 if [ "$MAGIC_ECAPTURE" -eq 0 ]; then
     rm -f "$VERSION_FILE" "$TARGET_BIN"

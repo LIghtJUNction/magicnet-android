@@ -19,7 +19,7 @@ fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/lib/kamfw" "$fixture/lib"
 printf '%s\n' 'import() { :; }' > "$fixture/lib/kamfw/.kamfwrc"
-: > "$fixture/lib/magicnet.sh"
+printf '%s\n' 'magicnet_prepare_runtime_dirs() { :; }' > "$fixture/lib/magicnet.sh"
 
 MODDIR="$fixture" sh -c '. "$1"' entry-test "$ENTRY" || fail 'valid bootstrap fixture did not load'
 

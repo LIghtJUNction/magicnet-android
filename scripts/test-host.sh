@@ -116,6 +116,7 @@ check python3 scripts/test-fake-magisk-curl.py
 check bash scripts/test-process-cgroup-detach.sh
 check bash scripts/test-supervisor-orphan-prefilter.sh
 check bash scripts/test-supervisor-start-policy.sh
+check bash scripts/test-fswatch-lifecycle.sh
 check bash scripts/test-hotspot-watchdog-lifecycle.sh
 check bash scripts/test-tun-interface-safety.sh
 check bash scripts/test-singbox-dataplane-preflight.sh
@@ -128,6 +129,7 @@ check bash scripts/test-config-empty-recovery.sh
 check bash scripts/test-subscription-baseline-safety.sh
 check python3 scripts/test-subscription-core-path.py
 check bash scripts/test-config-lock-safety.sh
+check bash scripts/test-config-lock-ownership.sh
 check bash scripts/test-config-lock-budget.sh
 check bash scripts/test-pid-validation.sh
 check sh scripts/test-runtime-fingerprint-safety.sh

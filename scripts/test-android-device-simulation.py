@@ -962,7 +962,7 @@ class UpgradeFailureContextTests(unittest.TestCase):
             if 'config-editor get' in command:
                 return cp(json.dumps(SIM.fixture_config()))
             if 'payload create' in command:
-                return cp(SIM.MOD + '/.tmp/webui-payload/' + command.split()[-1] + '\n')
+                return cp(SIM.MOD + '/.cache/webui-payload/' + command.split()[-1] + '\n')
             if 'save-file' in command:
                 return cp('private config', 1, 'private failure')
             if 'payload remove' in command:

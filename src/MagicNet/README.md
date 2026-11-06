@@ -160,7 +160,7 @@ MagicNet 只支持显式 `tun|ebpf`，默认 `tun`。CLI 拒绝未知值，不�
 - Android `netd` 在部分设备上会把 Bypass 应用的系统 DNS 请求统一以 UID 0 发出；存在 Bypass UID 时，DNS 捕获链会保守保留 UID 0 的 `RETURN`，避免无法归属的请求重新进入 MagicNet。
 - `Bypass` 不等于断网或阻止访问。应用离开 MagicNet 后会使用系统上游网络；如果上游网络或另一个 VPN 能访问 Google，加入 Bypass 后的 Chrome 仍然可以访问。
 - 要验证 Chrome 没有使用 MagicNet 代理，请在 WebUI“应用策略”中选择 `Direct`，或执行 `cli app add com.android.chrome direct`。只有多 VPN 共存或明确需要完全避开 MagicNet 时才选择 `Bypass`。
-- 默认网络策略是双栈、DNS 优先 IPv4、`mixed` TUN 栈、MTU `1400` 和 UDP 会话超时 `5m`。
+- 默认网络策略是双栈、DNS 优先 IPv4、sing-tun 原生 TUN 栈、MTU `1400` 和 UDP 会话超时 `5m`；sing-box 1.15 起省略已弃用的 `stack` 字段。
 - 可在 WebUI 的“UDP / IPv6”卡片切换，或执行 `cli network set <ipv4_only|prefer_ipv4|prefer_ipv6> <1280-1500> <1m|3m|5m|10m|15m|30m>`。
 - `ipv4_only` 是网络或代理节点不支持 IPv6 时的兼容回退；切回双栈会自动移除 MagicNet 管理的 IPv6 拦截规则。
 - 可用性以 `cli health` 和物理出口抓包为准。

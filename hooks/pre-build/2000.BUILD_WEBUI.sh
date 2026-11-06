@@ -115,6 +115,7 @@ if [ "$USE_CACHED_BUILD" -ne 1 ]; then
 fi
 
 rm -rf "${TARGET_DIR}/assets" "${TARGET_DIR}/index.html"
+rm -f "${TARGET_DIR}/magicnet-network-card.svg"
 mkdir -p "$TARGET_DIR"
 cp -a "${WEBUI_DIST}/." "$TARGET_DIR/"
 # The stamp is a build-cache implementation detail, not module content.

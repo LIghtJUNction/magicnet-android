@@ -233,11 +233,11 @@ fn mark_standalone_config(app: &App) -> Result<(), String> {
 /// payload namespace. Internal config staging uses `trusted_tmp_directory`,
 /// but never broadens this public `save-file` boundary.
 fn open_webui_payload_source(app: &App, tmp: &Path) -> Result<(File, File), String> {
-    let tmp_path = app.moddir.join(".tmp");
+    let tmp_path = app.moddir.join(".cache");
     let webui_payload_path = tmp_path.join("webui-payload");
     if tmp.parent() != Some(webui_payload_path.as_path()) {
         return Err(
-            "config-editor save-file only accepts direct files under $MODDIR/.tmp/webui-payload"
+            "config-editor save-file only accepts direct files under $MODDIR/.cache/webui-payload"
                 .to_string(),
         );
     }
@@ -252,7 +252,7 @@ fn open_webui_payload_source(app: &App, tmp: &Path) -> Result<(File, File), Stri
 fn direct_webui_payload_name(payload_directory: &Path, tmp: &Path) -> Result<OsString, String> {
     if tmp.parent() != Some(payload_directory) {
         return Err(
-            "config-editor save-file only accepts direct files under $MODDIR/.tmp/webui-payload"
+            "config-editor save-file only accepts direct files under $MODDIR/.cache/webui-payload"
                 .to_string(),
         );
     }
@@ -298,7 +298,7 @@ fn open_no_follow_directory(path: &Path, description: &str) -> Result<File, Stri
 
 fn trusted_tmp_directory(app: &App) -> Result<File, String> {
     let root = open_module_root(app)?;
-    ensure_directory_at(&root, OsStr::new(".tmp"), 0o700)
+    ensure_directory_at(&root, OsStr::new(".cache"), 0o700)
 }
 
 fn ensure_directory_at(parent: &File, name: &OsStr, mode: u32) -> Result<File, String> {
@@ -1248,8 +1248,7 @@ fn default_config(_target: &str) -> String {
         "fe80::/10",
         "ff00::/8",
         "fd7a:115c:a1e0::/48"
-      ],
-      "stack": "mixed"
+      ]
     }
   ],
   "outbounds": [
@@ -1428,7 +1427,7 @@ mod tests {
     }
 
     #[test]
-    fn default_sing_box_config_uses_mixed_tun_stack() {
+    fn default_sing_box_config_uses_native_tun_stack() {
         let config: serde_json::Value =
             serde_json::from_str(&default_config("sing-box")).expect("parse default config");
         let tun = config["inbounds"]
@@ -1436,7 +1435,7 @@ mod tests {
             .and_then(|inbounds| inbounds.iter().find(|inbound| inbound["tag"] == "tun-in"))
             .expect("default TUN inbound");
 
-        assert_eq!(tun["stack"].as_str(), Some("mixed"));
+        assert!(tun.get("stack").is_none());
         assert_eq!(tun["exclude_uid"], serde_json::json!([0]));
         assert!(tun["route_exclude_address"]
             .as_array()
@@ -1690,7 +1689,7 @@ mod tests {
     #[test]
     fn save_file_rejects_intermediate_and_final_symlink_escapes() {
         let app = temp_app();
-        let payload_dir = app.moddir.join(".tmp/webui-payload");
+        let payload_dir = app.moddir.join(".cache/webui-payload");
         let outside = app.moddir.join("outside");
         fs::create_dir_all(&payload_dir).expect("create WebUI payload directory");
         fs::create_dir_all(&outside).expect("create outside directory");
@@ -1719,9 +1718,9 @@ mod tests {
     #[test]
     fn save_file_accepts_only_the_webui_payload_temp_namespace() {
         let app = temp_app();
-        let tmp = app.moddir.join(".tmp");
-        let payload_dir = app.moddir.join(".tmp/webui-payload");
-        let subscription_dir = app.moddir.join(".tmp/webui-subscription");
+        let tmp = app.moddir.join(".cache");
+        let payload_dir = app.moddir.join(".cache/webui-payload");
+        let subscription_dir = app.moddir.join(".cache/webui-subscription");
         let nested_dir = payload_dir.join("nested");
         fs::create_dir_all(&payload_dir).expect("create payload directory");
         fs::create_dir_all(&subscription_dir).expect("create subscription directory");
@@ -1742,7 +1741,7 @@ mod tests {
         );
         assert!(
             open_webui_payload_source(&app, &general_tmp).is_err(),
-            "general .tmp files must not be accepted as a config source"
+            "general .cache files must not be accepted as a config source"
         );
         assert!(
             open_webui_payload_source(&app, &subscription).is_err(),
@@ -1758,7 +1757,7 @@ mod tests {
     fn validation_resolves_relative_resources_from_final_config_directory() {
         let app = temp_app();
         let bin_dir = app.moddir.join("bin");
-        let payload_dir = app.moddir.join(".tmp/webui-payload");
+        let payload_dir = app.moddir.join(".cache/webui-payload");
         let rules_dir = app.moddir.join(".config/sing-box/rules");
         fs::create_dir_all(&bin_dir).expect("create bin directory");
         fs::create_dir_all(&payload_dir).expect("create WebUI payload directory");
@@ -1815,7 +1814,7 @@ test "$#" -eq 1 && test -f "$1"
     #[cfg_attr(target_os = "android", ignore = "Termux SELinux forbids hard links")]
     fn save_file_rejects_hard_linked_webui_payloads() {
         let app = temp_app();
-        let payload_dir = app.moddir.join(".tmp/webui-payload");
+        let payload_dir = app.moddir.join(".cache/webui-payload");
         let original = app.moddir.join("original.json");
         let payload = payload_dir.join("candidate.json");
         fs::create_dir_all(&payload_dir).expect("create payload directory");
@@ -1860,7 +1859,7 @@ test "$#" -eq 1 && test -f "$1"
     #[test]
     fn generated_config_input_never_writes_through_a_legacy_stage_symlink() {
         let app = temp_app();
-        let tmp = app.moddir.join(".tmp");
+        let tmp = app.moddir.join(".cache");
         let victim = app.moddir.join("victim");
         let legacy = tmp.join("config-editor-sing-box.tmp");
         fs::create_dir_all(&tmp).expect("create temporary directory");
@@ -1942,7 +1941,7 @@ test "$#" -eq 1 && test -f "$1"
     #[cfg_attr(target_os = "android", ignore = "Termux SELinux forbids hard links")]
     fn save_file_snapshot_is_immutable_after_same_inode_mutation() {
         let app = temp_app();
-        let payload_dir = app.moddir.join(".tmp/webui-payload");
+        let payload_dir = app.moddir.join(".cache/webui-payload");
         fs::create_dir_all(&payload_dir).expect("create WebUI payload directory");
         let candidate = payload_dir.join("candidate.json");
         fs::write(&candidate, "validated contents").expect("write candidate");

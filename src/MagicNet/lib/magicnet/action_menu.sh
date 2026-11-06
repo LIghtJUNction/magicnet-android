@@ -10,7 +10,7 @@ magicnet_action_update_singbox_subscription() {
         _action_update_status=$?
     fi
     if [ "${_action_update_status}" -eq 0 ]; then
-        rm -f "${MODDIR}/.tmp/magicnet-node-list.cache"
+        rm -f "${MODDIR}/.cache/magicnet-node-list.cache"
     fi
     magicnet_refresh_status || true
     return "${_action_update_status}"

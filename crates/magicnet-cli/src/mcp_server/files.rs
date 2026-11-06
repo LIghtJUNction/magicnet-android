@@ -143,11 +143,15 @@ fn private_module_path(relative: &Path) -> bool {
     // Runtime logs, eCapture output, and wifi-policy watch text live under
     // .log. magicnet_log_read is the redacting path; generic file reads
     // must not bypass it.
-    if names.iter().any(|name| name == ".log") {
+    if names
+        .iter()
+        .any(|name| matches!(name.as_str(), ".log" | ".cache" | ".tmp"))
+    {
         return true;
     }
     if names.windows(2).any(|pair| {
-        (pair[0] == ".config" && private_name_or_copy(&pair[1], "sing-box"))
+        (pair[0] == ".local" && pair[1] == "state")
+            || (pair[0] == ".config" && private_name_or_copy(&pair[1], "sing-box"))
             || (pair[0] == ".state"
                 && [
                     "sing-box",
@@ -160,6 +164,7 @@ fn private_module_path(relative: &Path) -> bool {
                     "hotspot",
                     "app-policy",
                     "network-access-recovery",
+                    "directory-migration",
                 ]
                 .iter()
                 .any(|name| private_name_or_copy(&pair[1], name)))
@@ -380,6 +385,13 @@ mod tests {
     fn file_reads_reject_private_recovery_copies_and_preserve_public_state() {
         let (server, root) = test_server("recovery-secrets");
         let private_paths = [
+            ".cache/webui-payload/config.json",
+            ".cache/webui-subscription/source.txt",
+            ".cache/subscription-candidates/candidate.url",
+            ".tmp/webui-payload/legacy.json",
+            ".local/state/private.state",
+            ".state/directory-migration/tmp/payload.json",
+            ".state/directory-migration/local-state/private.state",
             ".config/sing-box/config.json",
             ".config/sing-box/config.json.bak",
             ".config/magicnet/mcp.conf.bak",

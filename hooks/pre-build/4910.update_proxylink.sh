@@ -5,7 +5,7 @@
 MAGIC_PROXYLINK=${MAGIC_PROXYLINK:-1}
 REPO_URL="https://github.com/Fanju6/Proxylink.git"
 PINNED_REV="44929c0984944870297c260dc43a4aa9262f9e1c"
-STATE_DIR="${KAM_MODULE_ROOT}/.local/state/tools"
+STATE_DIR="${KAM_MODULE_ROOT}/.state/tools"
 VERSION_FILE="${STATE_DIR}/proxylink.version"
 TARGET_DIR="${KAM_MODULE_ROOT}/bin"
 TARGET_BIN="${TARGET_DIR}/proxylink"
@@ -36,7 +36,8 @@ fi
 rm -f "$TARGET_BIN" "$VERSION_FILE"
 mkdir -p "$TARGET_DIR" "$STATE_DIR"
 
-TMP_DIR=$(mktemp -d "${KAM_MODULE_ROOT}/.tmp.proxylink.XXXXXX" 2>/dev/null || mktemp -d)
+mkdir -p "${KAM_MODULE_ROOT}/.cache" || exit 1
+TMP_DIR=$(mktemp -d "${KAM_MODULE_ROOT}/.cache/proxylink.XXXXXX") || exit 1
 cleanup() {
     rm -rf "$TMP_DIR" 2>/dev/null || true
 }

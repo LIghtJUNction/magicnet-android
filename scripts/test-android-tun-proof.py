@@ -315,7 +315,7 @@ class TunProofTests(unittest.TestCase):
                 output = 'absent'
             elif args[1:5] == ['webui', 'payload', 'create', 'tmp']:
                 payloads[args[5]] = ''
-                output = proof.MODDIR + '/.tmp/webui-payload/' + args[5]
+                output = proof.MODDIR + '/.cache/webui-payload/' + args[5]
             elif args[1:5] == ['webui', 'payload', 'append', 'tmp']:
                 payloads[args[5]] += args[6]
             elif args[1:5] == ['webui', 'payload', 'remove', 'tmp']:

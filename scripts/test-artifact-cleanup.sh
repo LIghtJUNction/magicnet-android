@@ -34,6 +34,7 @@ removed_entries=(
     '.config/sing-box/helper.pyo'
     '.config/sing-box/rules/sukka-chatgpt-voice.json'
     '.local/state/chatgpt-voice/upstream-revision'
+    '.state/chatgpt-voice/upstream-revision'
     '.pytest_cache/state'
     '.mypy_cache/state'
     '.ruff_cache/state'
@@ -66,6 +67,9 @@ preserved_entries=(
     '.config/sing-box/config.json'
     '.config/sing-box/rules/custom.json'
     '.config/sing-box/rules/meta-openai.srs'
+    '.state/machines/network.state'
+    '.state/chatgpt-voice-custom/upstream-revision'
+    '.local/state/chatgpt-voice-custom/upstream-revision'
     'customize.sh'
     'service.sh'
     'webroot/index.html'
@@ -122,6 +126,10 @@ for entry in "${removed_entries[@]}"; do
 done
 if grep -Eq '(^|/)(tests?|__tests__|fixtures?|__fixtures__|__snapshots__|bench|benches|benchmarks?|coverage|htmlcov|node_modules)/' "$test_root/archive-entries"; then
     echo 'Development directory survived archive cleanup' >&2
+    exit 1
+fi
+if grep -Eq '^(\.state|\.local/state)/chatgpt-voice(/|$)' "$test_root/archive-entries"; then
+    echo 'Retired ChatGPT Voice state directory survived archive cleanup' >&2
     exit 1
 fi
 for entry in "${preserved_entries[@]}"; do

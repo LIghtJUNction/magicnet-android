@@ -42,7 +42,7 @@ const SINGBOX_CONFIG: &str = ".config/sing-box/config.json";
 const TRANSPARENT_MODE_CONF: &str = ".config/magicnet/transparent-mode.conf";
 const SELECTED_CORE_CONF: &str = ".config/magicnet/current-core.conf";
 const SUBSCRIPTION_REFRESH_HOURS: &str = ".config/magicnet/subscription-refresh-hours";
-const MODULE_TRANSACTION_STAGE: &str = ".tmp/magicnet-app-transaction";
+const MODULE_TRANSACTION_STAGE: &str = ".cache/magicnet-app-transaction";
 
 #[derive(Clone, Copy)]
 enum Domain {

@@ -408,7 +408,7 @@ magicnet_block_apply_singbox() {
     [ -f "$_config" ] || return 0
     magicnet_block_ensure_ad_selectors "$_config" || return 1
     _tmp="${_config}.magicnet-block.new"
-    _rules_file="${MODDIR}/.tmp/magicnet-block-singbox.rules"
+    _rules_file="${MODDIR}/.cache/magicnet-block-singbox.rules"
     if ! mkdir -p "${_rules_file%/*}" ||
         ! {
             magicnet_block_allow_singbox_rules &&

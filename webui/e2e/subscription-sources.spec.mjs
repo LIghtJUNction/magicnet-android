@@ -22,7 +22,7 @@ async function mount(page, failClear = false) {
         } else if (command.includes("webui payload create subscription")) {
           fixture.payload = "";
           const basename = command.match(/magicnet-(?:webui|local)-[a-z0-9-]+\.(?:txt|list|b64)/)?.[0];
-          output = `/data/adb/modules/MagicNet/.tmp/webui-subscription/${basename}`;
+          output = `/data/adb/modules/MagicNet/.cache/webui-subscription/${basename}`;
         } else if (command.includes("webui payload append subscription")) {
           // Decode the quoted payload argument, including short URL chunks.
           const innerCommand = command.replaceAll("'\\''", "'");

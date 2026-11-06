@@ -136,7 +136,9 @@ def prepare_archive(source: Path, destination: Path, replacements: dict[str, Pat
                 # downloaded build caches, not installed runtime executables.
                 # Validate path/CRC first and record every omitted member. Do
                 # not weaken the foreign-ELF rejection for any runtime path.
-                if item.filename.startswith('.local/state/') and item.filename.endswith(('.asset', '.archive')):
+                if item.filename.startswith(('.cache/', '.tmp/')) or (
+                        item.filename.startswith(('.state/', '.local/state/'))
+                        and item.filename.endswith(('.asset', '.archive'))):
                     require(stat.S_IFMT(mode) in (0, stat.S_IFREG), 'build cache must be a regular file')
                     manifest['excluded_build_cache_sha256'][item.filename] = hashlib.sha256(data).hexdigest()
                     continue
@@ -713,7 +715,7 @@ def invalid_config_rollback(device: Device, evidence: dict | None = None) -> dic
     evidence = {} if evidence is None else evidence
     evidence['status'] = 'failed'
     proof = load_script('android-tun-proof')
-    bad = MOD + '/.tmp/webui-payload/ci-invalid.json'
+    bad = MOD + '/.cache/webui-payload/ci-invalid.json'
     save = f'{MOD}/cli config-editor save-file sing-box {bad}'
     validator = f'{MOD}/bin/sing-box check -c {bad} -D {MOD}/.config/sing-box'
 
@@ -742,7 +744,7 @@ def invalid_config_rollback(device: Device, evidence: dict | None = None) -> dic
     try:
         # Positive control on the exact same path and command. A permission or
         # path-validation failure must not masquerade as malformed-JSON rejection.
-        command('prepare_payload', f'mkdir -p {MOD}/.tmp/webui-payload && '
+        command('prepare_payload', f'mkdir -p {MOD}/.cache/webui-payload && '
                 f'cp {MOD}/.config/sing-box/config.json {bad} && chmod 0600 {bad}')
         command('valid_save', save, timeout=90)
         evidence['stage'] = 'valid_ready'
@@ -831,7 +833,7 @@ def save_upgrade_candidate(device: Device) -> None:
                         object_pairs_hook=unique_keys)
     candidate = upgrade_candidate(before)
     name = 'ci-upgrade-' + os.urandom(8).hex() + '.json'
-    path = MOD + '/.tmp/webui-payload/' + name
+    path = MOD + '/.cache/webui-payload/' + name
     encoded = base64.b64encode(json.dumps(candidate).encode()).decode('ascii')
     require(len(encoded) <= 6 * 1024 * 1024, 'upgrade fixture exceeds payload budget')
     created = False

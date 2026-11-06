@@ -258,6 +258,7 @@ fn capabilities_value() -> Value {
                 "structured_errors",
                 "redacted_status",
                 "configured_effective_split",
+                "native_tun_stack",
                 "privacy_safe_network_identifiers",
                 "readiness_signals",
                 "transparent_plane_readiness",
@@ -424,10 +425,7 @@ fn network_status_value(app: &App) -> Value {
         .and_then(|dns| dns.get("strategy"))
         .and_then(Value::as_str)
         .unwrap_or("unavailable");
-    let effective_stack = tun
-        .and_then(|tun| tun.get("stack"))
-        .and_then(Value::as_str)
-        .unwrap_or("unavailable");
+    let effective_stack = crate::network::effective_tun_stack(tun);
     let effective_mtu = tun.and_then(|tun| tun.get("mtu")).and_then(Value::as_u64);
     let effective_udp_timeout = tun
         .and_then(|tun| tun.get("udp_timeout"))
@@ -940,6 +938,11 @@ mod tests {
         assert_eq!(value["command"], "machine.capabilities");
         assert_eq!(value["data"]["machine_schema"], 1);
         assert_eq!(value["data"]["read_only"], false);
+        assert!(value["data"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "native_tun_stack"));
         assert_eq!(value["data"]["mutation_commands"][1], "override.set");
         assert_eq!(
             value["data"]["private_commands"],
@@ -1122,6 +1125,24 @@ mod tests {
         assert_eq!(value["data"]["effective"]["dns_capture_port"], 15353);
         assert_eq!(value["data"]["effective"]["tun_inet"], "172.20.0.1/30");
         assert_eq!(value["data"]["effective"]["tun_inet6"], "fd12::2/126");
+        let config_path = root.join(".config/sing-box/config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        config["inbounds"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("stack");
+        fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(
+            network_status_value(&app)["data"]["effective"]["stack"],
+            "default"
+        );
+        config["inbounds"] = serde_json::json!([]);
+        fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(
+            network_status_value(&app)["data"]["effective"]["stack"],
+            "unavailable"
+        );
         fs::remove_dir_all(root).expect("remove fixture");
     }
 

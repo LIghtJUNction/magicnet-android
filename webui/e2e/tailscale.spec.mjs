@@ -41,7 +41,7 @@ async function mount(page, failure = "") {
           else if (command.includes("webui payload create tmp")) {
             const basename = command.match(/tailscale-[0-9]+-[a-z0-9]+\.json/)?.[0];
             fixture.payload = "";
-            output = `/data/adb/modules/MagicNet/.tmp/webui-payload/${basename}`;
+            output = `/data/adb/modules/MagicNet/.cache/webui-payload/${basename}`;
           } else if (command.includes("webui payload append tmp")) {
             const chunks = command.match(/[a-zA-Z0-9+/]{32,}={0,2}/g);
             fixture.payload += new TextDecoder().decode(Uint8Array.from(atob(chunks.at(-1)), (char) => char.charCodeAt(0)));

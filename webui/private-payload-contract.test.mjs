@@ -39,7 +39,7 @@ assert.throws(
   /must be base64/,
 );
 
-const tmpPayloadDirectory = moduleDir + "/.tmp/webui-payload";
+const tmpPayloadDirectory = moduleDir + "/.cache/webui-payload";
 const ownedPath = tmpPayloadDirectory + "/" + basename;
 assert.equal(
   parsePrivatePayloadPath(ownedPath + "\n", moduleDir, "tmp", basename),
@@ -60,7 +60,7 @@ assert.equal(
 );
 assert.equal(
   parsePrivatePayloadPath(
-    moduleDir + "/.tmp/" + basename + "\n",
+    moduleDir + "/.cache/" + basename + "\n",
     moduleDir,
     "tmp",
     basename,
@@ -69,7 +69,7 @@ assert.equal(
 );
 assert.equal(
   parsePrivatePayloadPath(
-    moduleDir + "/.tmp/webui-subscription/" + basename + "\n",
+    moduleDir + "/.cache/webui-subscription/" + basename + "\n",
     moduleDir,
     "tmp",
     basename,

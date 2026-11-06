@@ -73,7 +73,7 @@ rm -f "$fixture/paused" "$fixture/resume"
 (
     printf() {
         case "${2:-}" in
-        "$$" | "$$:"*)
+        [0-9]*:[0-9]*)
             : >"$fixture/paused"
             while [ ! -e "$fixture/resume" ]; do sleep 0.01; done
             ;;
@@ -96,6 +96,7 @@ race_pid=''
     printf 'config lock acquisition stole an unpublished live directory\n' >&2
     exit 1
 }
+magicnet_config_lock_acquire
 magicnet_config_lock_release
 rm -f "$fixture/paused" "$fixture/resume"
 
@@ -124,6 +125,7 @@ magicnet_with_config_lock assert_metadata_guard_released
     fi
     test -s "$MODDIR/.state/config.lock/pid"
 )
+magicnet_config_lock_acquire
 magicnet_config_lock_release
 
 # Malformed metadata must fail before opening a FIFO or following a symlink.

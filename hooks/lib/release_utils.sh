@@ -279,7 +279,8 @@ hook_download_locked_asset() {
 }
 
 hook_make_temp_dir() {
-    mktemp -d "${KAM_MODULE_ROOT}/.tmp.release.XXXXXX" 2>/dev/null || mktemp -d
+    mkdir -p "${KAM_MODULE_ROOT}/.cache" || return 1
+    mktemp -d "${KAM_MODULE_ROOT}/.cache/release.XXXXXX"
 }
 
 hook_validate_archive_member_path() {

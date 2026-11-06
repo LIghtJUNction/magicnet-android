@@ -271,13 +271,15 @@ class WorkflowTests(unittest.TestCase):
         struct.pack_into('<HH', host, 16, 3, 62)
         foreign = bytearray(host)
         struct.pack_into('<H', foreign, 18, 183)
-        caches = {'.local/state/tools/yq.asset': bytes(foreign),
-                  '.local/state/tools/jq.asset': bytes(foreign),
-                  '.local/state/zashboard.archive': b'cached dashboard'}
+        caches = {'.cache/assets/tools/yq.asset': bytes(foreign),
+                  '.cache/assets/tools/jq.asset': bytes(foreign),
+                  '.cache/assets/zashboard.archive': b'cached dashboard',
+                  '.tmp/webui-payload/old.json': b'private payload',
+                  '.local/state/old.archive': b'legacy build cache'}
         for extra, kind in ((None, stat.S_IFREG), ('bin/hidden.asset', stat.S_IFREG),
-                            ('.local/state/tools/runtime-helper', stat.S_IFREG),
-                            ('.local/state/tools/link.asset', stat.S_IFLNK),
-                            ('.local/state/../escape.asset', stat.S_IFREG)):
+                            ('.state/tools/runtime-helper', stat.S_IFREG),
+                            ('.state/tools/link.asset', stat.S_IFLNK),
+                            ('.state/../escape.asset', stat.S_IFREG)):
             with self.subTest(extra=extra), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source, output = root / 'raw.zip', root / 'fixture.zip'
@@ -288,7 +290,7 @@ class WorkflowTests(unittest.TestCase):
                     replacements[name] = path
                 entries = {name: bytes(foreign) for name in simulation.PAYLOADS} | caches | {
                     'module.prop': b'id=MagicNet\n', 'customize.sh': b'export SKIPUNZIP=1\n',
-                    '.local/state/tools/metadata.json': b'{"keep": true}'}
+                    '.state/tools/metadata.json': b'{"keep": true}'}
                 if extra:
                     entries[extra] = bytes(foreign)
                 with zipfile.ZipFile(source, 'w') as z:
@@ -307,7 +309,7 @@ class WorkflowTests(unittest.TestCase):
                         name: hashlib.sha256(data).hexdigest() for name, data in caches.items()})
                     with zipfile.ZipFile(output) as z:
                         self.assertEqual(set(z.namelist()), set(entries) - set(caches) | {simulation.PROVENANCE})
-                        self.assertEqual(z.read('.local/state/tools/metadata.json'), entries['.local/state/tools/metadata.json'])
+                        self.assertEqual(z.read('.state/tools/metadata.json'), entries['.state/tools/metadata.json'])
                         recorded = json.loads(z.read(simulation.PROVENANCE))
                         self.assertEqual(recorded['excluded_build_cache_sha256'], report['excluded_build_cache_sha256'])
                 self.assertEqual(source.read_bytes(), before)

@@ -120,7 +120,7 @@ class ArchiveRegressionTests(unittest.TestCase):
             self.build(entries)
 
     def test_cache_exclusions_and_source_metadata_still_hold(self):
-        cache = '.local/state/tools/yq.asset'
+        cache = '.cache/assets/tools/yq.asset'
         report = self.build(self.entries | {cache: self.entries['bin/yq']})
         self.assertIn(cache, report['excluded_build_cache_sha256'])
         with zipfile.ZipFile(self.source) as source, zipfile.ZipFile(self.output) as fixture:
@@ -272,7 +272,7 @@ class MemoryDevice:
                 raise RuntimeError('injected creation failure')
             self.buffers[args[5]] = ''
             return result('/wrong/path' if self.fault == 'wrong-path'
-                          else SIM.MOD + '/.tmp/webui-payload/' + args[5])
+                          else SIM.MOD + '/.cache/webui-payload/' + args[5])
         if args[:5] == [prefix, 'webui', 'payload', 'append', 'tmp']:
             self.buffers[args[5]] += args[6]
             return result()

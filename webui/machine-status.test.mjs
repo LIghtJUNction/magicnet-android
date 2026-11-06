@@ -58,6 +58,8 @@ test("DNS shape validation is shared and nullable secondary clears stale values"
 
 test("network status preserves configured/effective differences and unknown values", () => {
   assert.deepEqual(parseMachineNetwork(envelope("network.status", network)), network);
+  const native = { ...network, effective: { ...network.effective, stack: "default" } };
+  assert.deepEqual(parseMachineNetwork(envelope("network.status", native)), native);
   const unknown = { ...network, effective: { ipv6_mode: "unavailable", stack: "unavailable", mtu: null, udp_timeout: "unavailable" } };
   assert.deepEqual(parseMachineNetwork(envelope("network.status", unknown)), unknown);
   const pinned = {

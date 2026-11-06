@@ -1514,10 +1514,7 @@ fn tun_network_policy(
                 .iter()
                 .find(|item| item.get("type").and_then(Value::as_str) == Some("tun"))
         });
-    let stack = tun
-        .and_then(|tun| tun.get("stack"))
-        .and_then(Value::as_str)
-        .unwrap_or("unset");
+    let stack = crate::network::effective_tun_stack(tun);
     let mtu = tun
         .and_then(|tun| tun.get("mtu"))
         .and_then(Value::as_u64)
@@ -1537,7 +1534,7 @@ fn tun_network_policy(
         });
     let address_ok = strategy == "ipv4_only" || ipv6_address;
     let ok = strategy_ok
-        && stack == "mixed"
+        && stack == "default"
         && (1280..=1500).contains(&mtu)
         && valid_udp_timeout(udp_timeout)
         && guard_ok

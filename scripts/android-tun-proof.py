@@ -296,7 +296,7 @@ def verify(adb, instrument, component) -> dict:
         # Use the existing private CLI payload API rather than exposing configs
         # through world-readable storage, argv-sized blobs or an ad hoc writer.
         name = 'network-probe-' + secrets.token_hex(8) + '.json'
-        path = MODDIR + '/.tmp/webui-payload/' + name
+        path = MODDIR + '/.cache/webui-payload/' + name
         encoded = base64.b64encode(json.dumps(value, ensure_ascii=False).encode()).decode()
         created = False
         try:

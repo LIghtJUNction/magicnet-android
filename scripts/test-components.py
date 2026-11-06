@@ -74,9 +74,12 @@ class PackageTests(unittest.TestCase):
             "webroot/index.html": b"<html>webui</html>",
             ".config/sing-box/zashboard/index.html": b"dashboard",
             ".config/sing-box/rules/test.srs": b"rules",
-            ".local/state/tools/yq.asset": b"duplicate build cache",
-            ".local/state/zashboard.archive": b"duplicate dashboard cache",
-            ".local/state/tools/yq.version": b"pinned-version",
+            ".cache/assets/tools/yq.asset": b"duplicate build cache",
+            ".cache/assets/zashboard.archive": b"duplicate dashboard cache",
+            ".cache/webui-payload/private.json": b"private runtime payload",
+            ".tmp/webui-subscription/old.txt": b"legacy private runtime payload",
+            ".local/state/old.archive": b"legacy build cache",
+            ".state/tools/yq.version": b"pinned-version",
         }
 
     def build(self, name="out", *, entries=None):
@@ -148,9 +151,8 @@ class PackageTests(unittest.TestCase):
         self.assertGreater(report["removed_build_cache_bytes"], 0)
         for filename in ("MagicNet-core.zip", "MagicNet-full.zip"):
             with zipfile.ZipFile(output / filename) as z:
-                self.assertNotIn(".local/state/tools/yq.asset", z.namelist())
-                self.assertNotIn(".local/state/zashboard.archive", z.namelist())
-                self.assertIn(".local/state/tools/yq.version", z.namelist())
+                self.assertFalse(any(name.startswith((".cache/", ".tmp/", ".local/state/")) for name in z.namelist()))
+                self.assertIn(".state/tools/yq.version", z.namelist())
 
     def test_rejects_unsafe_or_incomplete_source(self):
         for bad in ("../escape", "/absolute", "webroot/../../escape", "bad\\path", ".git/config"):

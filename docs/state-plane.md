@@ -60,7 +60,23 @@ Detailed recovery payloads and runtime evidence may still need their own files. 
 - `.config/`: desired/persistent user intent;
 - `.state/machines/`: normalized observed/recoverable device state;
 - other `.state/` files: migration inputs, transaction journals, caches, checkpoints, owner records, or raw runtime evidence;
+- `.cache/`: private temporary payloads, node-list caches, module-file transaction staging and downloaded build assets;
 - `.log/`: human diagnostic history.
+
+Build metadata and runtime evidence share `.state/`; `.local/state/` is retired.
+The installer preserves and merges the old state tree into `.state/` and the old
+`.tmp/` tree into `.cache/`. Shell entrypoints retry unfinished migration under
+the configuration lock. Existing canonical files win conflicts; differing legacy
+files are retained privately under `.state/directory-migration/` for recovery.
+Only successfully moved or identical entries are removed, so interrupted or
+failed migration can resume. Symlinked inputs and destinations fail closed.
+Successful migration removes the empty legacy roots. Neither consumers nor the
+configuration watcher use the recovery directory as another state source.
+
+Both runtime roots are mode `0700`. WebUI payloads and subscription candidates
+remain descriptor-validated mode `0600` files; the framework receives the module's
+`.cache/` as `TMPDIR`. MCP generic file reads reject `.cache/`, legacy `.tmp/` and
+`.local/state/`, and the directory-migration recovery tree, including aliases.
 
 A persistent user choice must not be hidden in `.state`. Selector choices therefore live at `.config/magicnet/selector-selections.json`. The previous `.state/sing-box/selector-selections.json` path remains a read-compatible migration source; the next successful selector save writes the `.config` path and removes the old file only when every legacy key/value has been preserved.
 

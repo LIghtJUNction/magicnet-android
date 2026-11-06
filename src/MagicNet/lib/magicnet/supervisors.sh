@@ -418,6 +418,31 @@ magicnet_fswatch_prune_names() {
         'sing-box/config.json.transparent-mode.new'
 }
 
+magicnet_fswatch_locked() {
+    magicnet_metadata_guard "${KAM_HOME:-$MODDIR}/.state/fswatch/$(magicnet_fswatch_name).lifecycle.lock" \
+        100 magicnet_fswatch_locked_worker "$@"
+}
+
+magicnet_fswatch_locked_worker() (
+    # The guard-owning parent waits for this worker. A detached watcher must
+    # never inherit the lifecycle descriptor and keep future starts/stops out.
+    exec 8>&-
+    "$@"
+)
+
+magicnet_fswatch_start_unlocked() {
+    # Service and boot-completed can both observe "stopped" before either
+    # launches. Recheck under the lifecycle guard before kamfw's start, which
+    # deliberately replaces a watcher even when an existing one is healthy.
+    if fswatch status "$1" >/dev/null 2>&1; then
+        return 0
+    else
+        _fswatch_status_rc=$?
+    fi
+    [ "$_fswatch_status_rc" -ne 2 ] || return 2
+    PATH="$_fswatch_exec_path" fswatch start "$@"
+}
+
 magicnet_fswatch_start() {
     if magicnet_module_disabled; then
         magicnet_fswatch_stop >/dev/null 2>&1 || true
@@ -438,12 +463,23 @@ magicnet_fswatch_start() {
     magicnet_trim_log_file "${MODDIR}/.log/fswatch.log"
     _fswatch_busybox_bin="$(magicnet_fswatch_busybox_bin 2>/dev/null || true)"
     _fswatch_flock_bin="$(magicnet_trusted_flock 2>/dev/null || true)"
-    if [ -z "$_fswatch_busybox_bin" ] && [ -n "$_fswatch_flock_bin" ] &&
-        ! "$_fswatch_flock_bin" -n -o /dev/null true >/dev/null 2>&1; then
-        magicnet_warn "$(i18n MAGICNET_FSWATCH_FLOCK_INCOMPATIBLE | t "$_fswatch_flock_bin")"
-        set -- 1
-        unset _fswatch_name _fswatch_busybox_bin _fswatch_flock_bin _fw_rc
-        return "$1"
+    if [ -z "$_fswatch_busybox_bin" ] && [ -n "$_fswatch_flock_bin" ]; then
+        # Parallel launchers may contend on this capability probe. A distinct
+        # conflict status proves the options were accepted; it is not an
+        # incompatible flock implementation (such as Android Toybox).
+        if "$_fswatch_flock_bin" -n -E 75 -o /dev/null true >/dev/null 2>&1; then
+            _fswatch_probe_rc=0
+        else
+            _fswatch_probe_rc=$?
+        fi
+        case "$_fswatch_probe_rc" in
+        0 | 75) ;;
+        *)
+            magicnet_warn "$(i18n MAGICNET_FSWATCH_FLOCK_INCOMPATIBLE | t "$_fswatch_flock_bin")"
+            unset _fswatch_name _fswatch_busybox_bin _fswatch_flock_bin _fswatch_probe_rc _fw_rc
+            return 1
+            ;;
+        esac
     fi
     [ -n "$_fswatch_busybox_bin" ] && KAM_FSWATCH_BUSYBOX_BIN="$_fswatch_busybox_bin"
     # kamfw resolves worker commands through PATH. Preserve host fixtures but
@@ -454,20 +490,24 @@ magicnet_fswatch_start() {
     fi
     # These intent files have dedicated controllers. Watching them here would
     # race explicit activation or restart the core for an unrelated MCP edit.
-    PATH="$_fswatch_exec_path" \
-        KAM_FSWATCH_PRUNE_NAMES="$(magicnet_fswatch_prune_names)" \
+    KAM_FSWATCH_PRUNE_NAMES="$(magicnet_fswatch_prune_names)" \
         KAM_FSWATCH_LOG_FILE="${MODDIR}/.log/fswatch.log" \
-        fswatch start "$_fswatch_name" "$(magicnet_fswatch_path)" "$(magicnet_fswatch_interval)" "$(magicnet_fswatch_command)"
+        magicnet_fswatch_locked magicnet_fswatch_start_unlocked \
+        "$_fswatch_name" "$(magicnet_fswatch_path)" "$(magicnet_fswatch_interval)" "$(magicnet_fswatch_command)"
     _fswatch_rc=$?
     if [ "$_fswatch_rc" -ne 0 ]; then
         magicnet_warn "$(i18n "MAGICNET_FSWATCH_START_FAILED" | t "$_fswatch_rc" "${MODDIR}/.log/fswatch.log")"
     fi
     set -- "$_fswatch_rc"
-    unset _fswatch_name _fswatch_rc _fswatch_busybox_bin _fswatch_flock_bin _fswatch_exec_path _fw_rc
+    unset _fswatch_name _fswatch_rc _fswatch_busybox_bin _fswatch_flock_bin _fswatch_exec_path _fswatch_probe_rc _fw_rc
     return "$1"
 }
 
 magicnet_fswatch_stop() {
+    magicnet_fswatch_locked magicnet_fswatch_stop_unlocked
+}
+
+magicnet_fswatch_stop_unlocked() {
     magicnet_supervisor_stop_pidfile "${KAM_HOME:-$MODDIR}/.state/fswatch/$(magicnet_fswatch_name).pid" || return $?
     magicnet_supervisor_kill_orphans fswatch
 }

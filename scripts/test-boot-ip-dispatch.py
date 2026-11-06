@@ -82,7 +82,7 @@ class Fixture:
         features = runtime.split("for _magicnet_lib in", 1)[1].split("; do", 1)[0]
         for name in ["primitives", *features.replace("\\", " ").split()]:
             write(lib / f"{name}.sh", "")
-        for name in ("entry", "lifecycle", "phases"):
+        for name in ("entry", "lifecycle", "phases", "runtime_dirs"):
             shutil.copyfile(SOURCE / f"lib/magicnet/{name}.sh", lib / f"{name}.sh")
         for phase in ("service", "boot-completed"):
             shutil.copyfile(SOURCE / f"{phase}.sh", self.root / f"{phase}.sh")

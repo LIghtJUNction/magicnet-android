@@ -107,10 +107,16 @@ grep -F 'MAGICNET_FSWATCH_FLOCK_INCOMPATIBLE' "$incompatible_output" >/dev/null
 # An explicitly supplied root-tool BusyBox takes precedence over the
 # incompatible system flock and is passed to the fswatch implementation.
 busybox_bin="$fixture/busybox"
+export HOST_TEST_FLOCK
+HOST_TEST_FLOCK=$(command -v flock)
 cat >"$busybox_bin" <<'EOF'
 #!/bin/sh
 if [ "${1:-}" = flock ] && [ "${2:-}" = --help ]; then
     exit 0
+fi
+if [ "${1:-}" = flock ]; then
+    shift
+    exec "$HOST_TEST_FLOCK" "$@"
 fi
 exit 1
 EOF
@@ -127,6 +133,22 @@ fswatch() {
 PATH="$incompatible_bin:/usr/bin:/bin" KAM_FSWATCH_BUSYBOX_BIN="$busybox_bin" \
     magicnet_fswatch_start
 grep -Fx "$busybox_bin" "$busybox_output" >/dev/null
+
+# Contention on the shared /dev/null capability probe is not evidence that
+# util-linux options are unsupported. Keep another open description locked
+# throughout the start to make this distinction deterministic.
+(
+    exec 9>/dev/null
+    "$HOST_TEST_FLOCK" -n 9
+    magicnet_fswatch_busybox_bin() { return 1; }
+    magicnet_trusted_flock() { printf '%s\n' "$HOST_TEST_FLOCK"; }
+    fswatch() {
+        [ "${1:-}" != status ] || return 1
+        : >"$fixture/contended-probe.started"
+    }
+    magicnet_fswatch_start
+    test -f "$fixture/contended-probe.started"
+)
 
 # Android must not execute a PATH decoy busybox/flock after the fixed-path scan.
 android_decoy="$fixture/android-decoy"
@@ -182,7 +204,7 @@ fi
     export trusted_marker decoy_marker
     cat >"$trusted_flock" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$*" >"$trusted_marker"
+printf '%s\n' "$*" >>"$trusted_marker"
 exit 0
 EOF
     cat >"$android_decoy/flock" <<'EOF'
@@ -201,7 +223,7 @@ EOF
         MAGICNET_TEST_FORCE_ANDROID=1 magicnet_fswatch_start
     [ -f "$trusted_marker" ] || { printf '%s\n' 'resolved flock was not invoked' >&2; exit 1; }
     [ ! -e "$decoy_marker" ] || { printf '%s\n' 'launcher executed PATH flock' >&2; exit 1; }
-    grep -Fx -- '-n -o /dev/null true' "$trusted_marker" >/dev/null
+    grep -Fx -- '-n -E 75 -o /dev/null true' "$trusted_marker" >/dev/null
     grep -Fx "$MODDIR/bin:/system/bin:/system/xbin:/vendor/bin" "$worker_path" >/dev/null
 )
 

@@ -495,7 +495,7 @@ fn write_subscription_candidate(app: &App, text: &str) -> Result<SubscriptionCan
 
 fn subscription_candidate_temp_directory(app: &App) -> Result<File, String> {
     let root = open_subscription_module_root(app)?;
-    let tmp = ensure_subscription_directory_at(&root, OsStr::new(".tmp"), 0o700)?;
+    let tmp = ensure_subscription_directory_at(&root, OsStr::new(".cache"), 0o700)?;
     ensure_subscription_directory_at(&tmp, OsStr::new("subscription-candidates"), 0o700)
 }
 

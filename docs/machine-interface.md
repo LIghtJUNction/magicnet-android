@@ -91,6 +91,14 @@ Examples:
 
 ## Readiness semantics
 
+`network.status.data.effective.stack` is `default` when a TUN inbound omits
+the deprecated `stack` field, selecting the native sing-tun stack in the bundled
+sing-box 1.15 core. An explicit legacy field retains its configured value;
+a missing TUN inbound reports `unavailable`. This field describes the effective
+configuration and does not assert network connectivity.
+The `native_tun_stack` capability advertises this default-stack interpretation
+to WebUI and MCP clients; the schema-1 envelope and commands are unchanged.
+
 A running process is not proof that the proxy is ready.
 
 `service.status` therefore reports three layers independently:
@@ -316,7 +324,7 @@ cli --json override apply-file "$PRIVATE_PAYLOAD_PATH"
 ```
 
 The payload path must be a private regular file created by `cli webui payload`
-under `.tmp/webui-payload/`. Preview takes `{ "patch": {} }`; set additionally
+under `.cache/webui-payload/`. Preview takes `{ "patch": {} }`; set additionally
 requires `expected_revision`; reset and apply take only `expected_revision`.
 The manual `cli --json override apply` shorthand explicitly selects the latest
 saved draft. MCP and WebUI always use the revision-checked form. Payload

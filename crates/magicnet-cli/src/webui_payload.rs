@@ -266,7 +266,7 @@ fn unlink_payload_at(directory: &File, name: &OsStr) -> Result<(), String> {
 
 fn payload_directory(app: &App, namespace: PayloadNamespace) -> Result<File, String> {
     let moddir = open_no_follow_directory(&app.moddir)?;
-    let tmp = ensure_private_directory(&moddir, OsStr::new(".tmp"))?;
+    let tmp = ensure_private_directory(&moddir, OsStr::new(".cache"))?;
     ensure_private_directory(&tmp, OsStr::new(namespace.directory_name()))
 }
 
@@ -356,7 +356,7 @@ fn absolute_payload_path(
             .join(&app.moddir)
     };
     Ok(root
-        .join(".tmp")
+        .join(".cache")
         .join(namespace.directory_name())
         .join(name))
 }
@@ -378,7 +378,7 @@ mod tests {
             .expect("create payload");
 
         assert!(path.is_absolute());
-        assert_eq!(path, app.moddir.join(".tmp/webui-payload/config.json"));
+        assert_eq!(path, app.moddir.join(".cache/webui-payload/config.json"));
         assert_eq!(
             fs::metadata(&path)
                 .expect("stat payload")
@@ -419,7 +419,7 @@ mod tests {
         let app = temp_app();
         fs::create_dir_all(&app.moddir).expect("create module directory");
         let directory = payload_directory(&app, PayloadNamespace::Tmp).expect("open namespace");
-        let existing = app.moddir.join(".tmp/webui-payload/existing.json");
+        let existing = app.moddir.join(".cache/webui-payload/existing.json");
         fs::write(&existing, "preserve me").expect("write existing payload");
 
         assert!(create_payload(&app, PayloadNamespace::Tmp, OsStr::new("existing.json")).is_err());
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn namespace_symlink_is_rejected_without_creating_a_target_file() {
         let app = temp_app();
-        let tmp = app.moddir.join(".tmp");
+        let tmp = app.moddir.join(".cache");
         let outside = app.moddir.join("outside");
         fs::create_dir_all(&tmp).expect("create temporary root");
         fs::create_dir_all(&outside).expect("create outside directory");
@@ -480,7 +480,7 @@ mod tests {
         fs::create_dir_all(&app.moddir).expect("create module directory");
         let directory = payload_directory(&app, PayloadNamespace::Tmp).expect("open namespace");
         let victim = app.moddir.join("victim.txt");
-        let link = app.moddir.join(".tmp/webui-payload/link.json");
+        let link = app.moddir.join(".cache/webui-payload/link.json");
         fs::write(&victim, "preserve me").expect("write victim");
         symlink(&victim, &link).expect("create payload symlink");
 
@@ -556,8 +556,8 @@ mod tests {
         let app = temp_app();
         fs::create_dir_all(&app.moddir).expect("create module directory");
         let _directory = payload_directory(&app, PayloadNamespace::Tmp).expect("open namespace");
-        let original = app.moddir.join(".tmp/webui-payload/original.json");
-        let linked = app.moddir.join(".tmp/webui-payload/linked.json");
+        let original = app.moddir.join(".cache/webui-payload/original.json");
+        let linked = app.moddir.join(".cache/webui-payload/linked.json");
         fs::write(&original, "preserve me").expect("write original payload");
         fs::hard_link(&original, &linked).expect("create payload hard link");
 

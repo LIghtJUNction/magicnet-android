@@ -286,7 +286,7 @@ assert_mode() {
     fi
 
     if [ "$expect_tun" = "yes" ]; then
-        jq -e '.inbounds[] | select(.type == "tun" and .tag == "tun-in" and .interface_name == "magicnet0" and .address == ["172.19.0.1/30"] and .stack == "mixed" and .mtu == 1400 and .udp_timeout == "5m")' "$config" >/dev/null
+        jq -e '.inbounds[] | select(.type == "tun" and .tag == "tun-in" and .interface_name == "magicnet0" and .address == ["172.19.0.1/30"] and (has("stack") | not) and .mtu == 1400 and .udp_timeout == "5m")' "$config" >/dev/null
         assert_tun_exclusions "$config" "$mode/$managed_variant second apply"
         jq -e '.route.rules[] | select(.action == "sniff" and (.inbound == ["mixed-in", "tun-in"]))' "$config" >/dev/null
     else
@@ -340,7 +340,7 @@ assert_dual_stack_policy() {
           .type == "tun"
           and .tag == "tun-in"
           and .address == ["172.19.0.1/30", "fdfe:dcba:9876::1/126"]
-          and .stack == "mixed"
+          and (has("stack") | not)
           and .mtu == $mtu
           and .udp_timeout == $timeout
         )] | length) == 1

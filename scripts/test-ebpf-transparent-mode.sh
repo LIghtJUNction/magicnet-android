@@ -78,7 +78,7 @@ write_base_config() {
   "log": {"level": "warn"},
   "inbounds": [
     {"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7892},
-    {"type": "tun", "tag": "tun-in", "interface_name": "magicnet0", "address": ["172.19.0.1/30"], "auto_route": true, "gso": true},
+    {"type": "tun", "tag": "tun-in", "interface_name": "magicnet0", "address": ["172.19.0.1/30"], "auto_route": true, "gso": true, "stack": "mixed"},
     {"type": "direct", "tag": "magicnet-dns-in", "listen": "127.0.0.1", "listen_port": 1053}
   ],
   "route": {"rules": [
@@ -163,8 +163,12 @@ set_mode_file tun
 apply_transparent
 "$HOST_JQ" -e '
   .inbounds[] | select(.tag == "tun-in")
-  | .type == "tun" and .interface_name == "magicnet0" and .gso == true
+  | .type == "tun" and .interface_name == "magicnet0" and .gso == true and (has("stack") | not)
 ' "$MODDIR/.config/sing-box/config.json" >/dev/null
+# Reapplying cached TUN config must not reintroduce the deprecated saved field.
+apply_transparent
+"$HOST_JQ" -e '.inbounds[] | select(.tag == "tun-in") | has("stack") | not' \
+  "$MODDIR/.config/sing-box/config.json" >/dev/null
 set_mode_file ebpf
 apply_transparent
 assert_managed_ebpf hybrid '' '' true

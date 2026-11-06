@@ -75,6 +75,6 @@ jobs:
           expected=$(jq '[.route.rule_set[] | select(.type == "local" and (.path | endswith(".srs"))) | .path] | unique | length' "$KAM_MODULE_ROOT/.config/sing-box/config.json")
           test "$expected" -gt 4
           test "$(find "$KAM_MODULE_ROOT/.config/sing-box/rules" -name '*.srs' | wc -l)" -eq "$expected"
-          test "$(find "$KAM_MODULE_ROOT/.local/state/sing-box-rules" -name '*.hash' | wc -l)" -eq "$expected"
+          test "$(find "$KAM_MODULE_ROOT/.state/sing-box-rules" -name '*.hash' | wc -l)" -eq "$expected"
           git diff --exit-code
           test -z "$(git status --porcelain)"

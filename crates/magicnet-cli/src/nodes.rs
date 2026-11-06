@@ -34,7 +34,7 @@ fn node_list(app: &App) {
         .and_then(|value| value.parse::<usize>().ok())
         .map(|value| value.min(500))
         .unwrap_or(48);
-    let cache = app.moddir.join(".tmp/magicnet-node-list.cache");
+    let cache = app.moddir.join(".cache/magicnet-node-list.cache");
     let cache_enabled = env::var("MAGICNET_NODE_CACHE").unwrap_or_else(|_| "1".to_string()) != "0";
     let names = resolve_node_names(app, limit, cache_enabled, &cache);
     if !names.is_empty() {
@@ -114,7 +114,7 @@ fn test_all_targets(app: &App, args: &[String]) -> Vec<String> {
             .map(ToString::to_string)
             .collect();
     }
-    let cache = app.moddir.join(".tmp/magicnet-node-list.cache");
+    let cache = app.moddir.join(".cache/magicnet-node-list.cache");
     resolve_node_names(app, 16, true, &cache)
 }
 
@@ -344,7 +344,7 @@ mod tests {
             &app,
             48,
             false,
-            &app.moddir.join(".tmp/magicnet-node-list.cache"),
+            &app.moddir.join(".cache/magicnet-node-list.cache"),
         )
     }
 
@@ -369,13 +369,13 @@ mod tests {
     #[test]
     fn stale_cache_does_not_override_current_scan() {
         let app = temp_app();
-        write_file(app.moddir.join(".tmp/magicnet-node-list.cache"), "stale\n");
+        write_file(app.moddir.join(".cache/magicnet-node-list.cache"), "stale\n");
         write_file(
             app.moddir.join(".config/sing-box/config.json"),
             r#"{"outbounds":[{"tag":"current","type":"shadowsocks"}]}"#,
         );
 
-        let cache = app.moddir.join(".tmp/magicnet-node-list.cache");
+        let cache = app.moddir.join(".cache/magicnet-node-list.cache");
         let names = resolve_node_names(&app, 48, true, &cache);
 
         assert_eq!(names, vec!["current".to_string()]);
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn cache_fallback_is_used_when_current_scan_is_empty() {
         let app = temp_app();
-        let cache = app.moddir.join(".tmp/magicnet-node-list.cache");
+        let cache = app.moddir.join(".cache/magicnet-node-list.cache");
         write_file(&cache, "cached\n");
 
         let names = resolve_node_names(&app, 48, true, &cache);

@@ -7,12 +7,12 @@
 . "$KAM_HOOKS_ROOT/lib/release_locks.sh"
 
 TARGET_DIR="${KAM_MODULE_ROOT}/bin"
-STATE_DIR="${KAM_MODULE_ROOT}/.local/state/tools"
+STATE_DIR="${KAM_MODULE_ROOT}/.state/tools"
 
 install_locked_binary() {
     local name="$1"
     local version_file="$STATE_DIR/${name}.version"
-    local cache_file="$STATE_DIR/${name}.asset"
+    local cache_file="${KAM_MODULE_ROOT}/.cache/assets/tools/${name}.asset"
     local target="$TARGET_DIR/$name"
 
     hook_prepare_locked_asset "$name" "$cache_file" "$version_file" || return 1

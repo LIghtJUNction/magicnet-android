@@ -187,7 +187,7 @@ export function parsePrivatePayloadPath(
   const path = lines[0];
   const root = moduleDir.endsWith("/") ? moduleDir.slice(0, -1) : moduleDir;
   const directory = namespace === "tmp" ? "webui-payload" : "webui-subscription";
-  const expected = `${root}/.tmp/${directory}/${basename}`;
+  const expected = `${root}/.cache/${directory}/${basename}`;
   if (!path || /[\s\0]/.test(path) || path !== expected) return null;
   return path;
 }

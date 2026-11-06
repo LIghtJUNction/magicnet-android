@@ -113,7 +113,6 @@ fn network_policy_accepts_dual_stack_and_rejects_stale_ipv6_guard(
               "dns": {"strategy": "prefer_ipv4"},
               "inbounds": [{
                 "type": "tun",
-                "stack": "mixed",
                 "mtu": 1400,
                 "udp_timeout": "5m",
                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"]
@@ -123,6 +122,13 @@ fn network_policy_accepts_dual_stack_and_rejects_stale_ipv6_guard(
     )?;
     let app = App::for_test(root.clone());
     assert!(network_policy_check(&app).0);
+    let mut legacy: serde_json::Value = serde_json::from_str(&fs::read_to_string(&config_path)?)?;
+    legacy["inbounds"][0]["stack"] = serde_json::json!("mixed");
+    fs::write(&config_path, serde_json::to_vec(&legacy)?)?;
+    assert!(
+        !network_policy_check(&app).0,
+        "legacy stack needs migration"
+    );
 
     fs::write(
         &config_path,
@@ -130,7 +136,6 @@ fn network_policy_accepts_dual_stack_and_rejects_stale_ipv6_guard(
               "dns": {"strategy": "prefer_ipv4"},
               "inbounds": [{
                 "type": "tun",
-                "stack": "mixed",
                 "mtu": 1400,
                 "udp_timeout": "5m",
                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"]
@@ -148,7 +153,6 @@ fn network_policy_accepts_dual_stack_and_rejects_stale_ipv6_guard(
               "dns": {"strategy": "prefer_ipv6"},
               "inbounds": [{
                 "type": "tun",
-                "stack": "mixed",
                 "mtu": 1280,
                 "udp_timeout": "10m",
                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"]

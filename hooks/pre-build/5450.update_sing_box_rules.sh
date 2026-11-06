@@ -9,7 +9,7 @@ require_command cmp
 
 CONFIG_FILE="$KAM_MODULE_ROOT/.config/sing-box/config.json"
 RULE_DIR="$KAM_MODULE_ROOT/.config/sing-box/rules"
-STATE_DIR="$KAM_MODULE_ROOT/.local/state/sing-box-rules"
+STATE_DIR="$KAM_MODULE_ROOT/.state/sing-box-rules"
 
 verify_bundled_rule() {
     local file="$1" bundle="$2" manifest="$2/manifest.json"

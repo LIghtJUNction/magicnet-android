@@ -11,7 +11,7 @@ async function mount(page, conflict = false) {
         const envelope=(name,data)=>JSON.stringify({schema:1,ok:true,command:name,data});
         if(command.includes("--json capabilities")) output=envelope("machine.capabilities",{features:["additive_routing_overlay"]});
         else if(command.includes("--json override inspect")) output=envelope("override.inspect",{patch:f.patch,configured_revision:f.revision,pending:false,routing_targets:[{tag:"proxy",type:"selector"},{tag:"direct",type:"direct"},{tag:"block",type:"block"}]});
-        else if(command.includes("webui payload create tmp")) {f.payload="";output=`/data/adb/modules/MagicNet/.tmp/webui-payload/${command.match(/routing-[0-9]+-[a-z0-9]+\.json/)[0]}`;}
+        else if(command.includes("webui payload create tmp")) {f.payload="";output=`/data/adb/modules/MagicNet/.cache/webui-payload/${command.match(/routing-[0-9]+-[a-z0-9]+\.json/)[0]}`;}
         else if(command.includes("webui payload append tmp")) {const chunks=command.match(/[a-zA-Z0-9+/]{16,}={0,2}/g);f.payload+=new TextDecoder().decode(Uint8Array.from(atob(chunks.at(-1)), c=>c.charCodeAt(0)));}
         else if(command.includes("webui payload remove tmp")) f.removals++;
         else if(command.includes("--json override preview-file")) output=envelope("override.preview",{valid:true,configured_revision:f.revision,changed_section_count:2});

@@ -340,6 +340,49 @@ printf '%s\\n' checked >"$MODPATH/core-called"
         self.assertGreater(source.index('magicnet_install_config_template || abort'),
                            source.index('! failed to restore MagicNet migration data:'))
 
+    def test_upgrade_consolidates_preserved_runtime_directories(self):
+        snapshot_start = source.index('if [ -d "$MAGICNET_PREV_DIR" ]; then')
+        snapshot = source[snapshot_start:source.index('\n# Usage & installation messages', snapshot_start)]
+        restore_start = source.index('if [ "$MAGICNET_BACKUP_READY" = 1 ]; then\n  while')
+        restore = source[restore_start:source.index('\n# The repository selector', restore_start)]
+        previous = self.root / 'previous'
+        for relative, content in {
+            '.local/state/tools/yq.version': b'old-version',
+            '.local/state/rule.hash': b'old-digest',
+            '.tmp/webui-payload/config.json': b'private-payload',
+        }.items():
+            path = previous / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            path.chmod(0o600)
+        for index, shell in enumerate(shells):
+            with self.subTest(shell=shell):
+                installed = self.root / f'installed-{index}'
+                for directory in ('lib/magicnet', '.state/tools', 'webroot'):
+                    (installed / directory).mkdir(parents=True)
+                shutil.copyfile(Path(sys.argv[1]) / 'src/MagicNet/lib/magicnet/runtime_dirs.sh',
+                                installed / 'lib/magicnet/runtime_dirs.sh')
+                (installed / '.state/tools/yq.version').write_bytes(b'new-version')
+                artwork = installed / 'webroot/magicnet-network-card.svg'
+                artwork.write_text('obsolete')
+                harness = 'abort() { printf "%s\\n" "$*" >&2; exit 1; };\n'
+                result = subprocess.run(shell + ['-ec', harness + backup_setup + snapshot + restore +
+                                                '\nmagicnet_cleanup_install_backup'],
+                                        env={**os.environ, 'MODPATH': str(installed),
+                                             'MAGICNET_PREV_DIR': str(previous)},
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((installed / '.state/tools/yq.version').read_bytes(), b'new-version')
+                self.assertEqual((installed / '.state/rule.hash').read_bytes(), b'old-digest')
+                self.assertEqual((installed / '.cache/webui-payload/config.json').read_bytes(), b'private-payload')
+                self.assertEqual((installed / '.state/directory-migration/local-state/tools/yq.version').read_bytes(),
+                                 b'old-version')
+                self.assertFalse((installed / '.local/state').exists())
+                self.assertFalse((installed / '.tmp').exists())
+                self.assertFalse(artwork.exists())
+                self.assertEqual(list(installed.glob('.install-backup.*')), [])
+                self.assertEqual((previous / '.tmp/webui-payload/config.json').read_bytes(), b'private-payload')
+
     def test_live_backup_survives_failed_owner_probe(self):
         owner = os.getpid()
         self.assertTrue(Path(f'/proc/{owner}').is_dir())

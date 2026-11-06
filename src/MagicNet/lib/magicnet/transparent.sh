@@ -163,8 +163,8 @@ magicnet_singbox_apply_transparent_mode() {
               "127.0.0.0/8","169.254.0.0/16","224.0.0.0/4","::1/128",
               "fc00::/7","fe80::/10","ff00::/8","fd7a:115c:a1e0::/48"
             ],
-            "stack":"mixed","mtu":$tun_mtu,"udp_timeout":$udp_timeout
-          });
+            "mtu":$tun_mtu,"udp_timeout":$udp_timeout
+          } | del(.stack));
         def ebpf_in:
           ($saved_inbound * {
             "type":"ebpf","tag":"tun-in","mode":"hybrid",

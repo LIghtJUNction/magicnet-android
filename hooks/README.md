@@ -8,7 +8,9 @@ Pre-build hooks are ordered by their four-digit numeric prefix. Prefixes must be
 unique so ordering never depends on filename sorting inside the same slot.
 
 Generated runtime executables go to `bin/`, generated configuration goes to
-`.config/`, and persistent hook state goes to `.local/state/`. Packaged runtime
+`.config/`, persistent hook state goes to `.state/`, and downloaded build assets
+go to `.cache/assets/`. The first hook consolidates legacy directories; temporary
+cache trees are excluded from release packages. Packaged runtime
 binaries must not live under `.local/bin`; the package smoke test rejects that
 legacy layout.
 

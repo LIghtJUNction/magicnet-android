@@ -83,6 +83,9 @@ MAGICNET_INSTALL_MIGRATION_ITEMS='.config/sing-box/config.json
 .state/sing-box/selector-selections.json
 .state/transparent-mode
 .state/network-access-recovery
+.state/directory-migration
+.local/state
+.tmp
 .config/magicnet'
 # The old full config supplies user nodes and a private rollback copy only.
 # install_config.sh rebuilds and validates the active file from the new template.
@@ -163,18 +166,22 @@ if [ -d "$MAGICNET_PREV_DIR" ]; then
   # Snapshot the old full file for node recovery and a private rollback copy.
   while IFS= read -r _item; do
     case "$_item" in *[![:space:]]*) ;; *) continue ;; esac
+    if [ "$_item" = .local/state ] && [ -L "${MAGICNET_PREV_DIR}/.local" ]; then
+      abort "! refusing unsafe legacy state parent in MagicNet migration data"
+    fi
     if [ -L "${MAGICNET_PREV_DIR}/${_item}" ]; then
       abort "! refusing unsafe symlink in MagicNet migration data: $_item"
     fi
     if [ -e "${MAGICNET_PREV_DIR}/${_item}" ]; then
-      mkdir -p "${MAGICNET_BACKUP_DIR}/${_item%/*}" || abort "! failed to prepare MagicNet migration data: $_item"
+      case "$_item" in */*) _migration_parent=${_item%/*} ;; *) _migration_parent=. ;; esac
+      mkdir -p "${MAGICNET_BACKUP_DIR}/${_migration_parent}" || abort "! failed to prepare MagicNet migration data: $_item"
       cp -a "${MAGICNET_PREV_DIR}/${_item}" "${MAGICNET_BACKUP_DIR}/${_item}" || abort "! failed to back up MagicNet migration data: $_item"
     fi
   done <<EOF_MAGICNET_MIGRATION_ITEMS
 $MAGICNET_INSTALL_MIGRATION_ITEMS
 EOF_MAGICNET_MIGRATION_ITEMS
   MAGICNET_BACKUP_READY=1
-  unset _item
+  unset _item _migration_parent
 fi
 
 # Usage & installation messages
@@ -361,15 +368,22 @@ if [ "$MAGICNET_BACKUP_READY" = 1 ]; then
     case "$_item" in *[![:space:]]*) ;; *) continue ;; esac
     [ "$_item" != "$MAGICNET_INSTALL_BACKUP_ONLY_ITEM" ] || continue
     if [ -e "${MAGICNET_BACKUP_DIR}/${_item}" ]; then
-      mkdir -p "${MODPATH}/${_item%/*}" || abort "! failed to prepare restored MagicNet migration data: $_item"
+      case "$_item" in */*) _migration_parent=${_item%/*} ;; *) _migration_parent=. ;; esac
+      mkdir -p "${MODPATH}/${_migration_parent}" || abort "! failed to prepare restored MagicNet migration data: $_item"
       rm -rf "${MODPATH:?}/${_item}" || abort "! failed to replace MagicNet migration data: $_item"
       cp -a "${MAGICNET_BACKUP_DIR}/${_item}" "${MODPATH}/${_item}" || abort "! failed to restore MagicNet migration data: $_item"
     fi
   done <<EOF_MAGICNET_MIGRATION_ITEMS
 $MAGICNET_INSTALL_MIGRATION_ITEMS
 EOF_MAGICNET_MIGRATION_ITEMS
-  unset _item
+  unset _item _migration_parent
 fi
+
+# Preserve legacy metadata and private payloads under the unified roots before
+# any new runtime consumer can write there. Installers run this phase serially.
+. "${MODPATH}/lib/magicnet/runtime_dirs.sh" || abort "! runtime directory helpers missing"
+magicnet_migrate_runtime_dirs "$MODPATH" || abort "! failed to consolidate MagicNet runtime directories"
+rm -f "${MODPATH}/webroot/magicnet-network-card.svg" || abort "! failed to remove obsolete network artwork"
 
 # The repository selector is a new managed setting. Seed it after migration so
 # restoring an older .config/magicnet directory cannot remove the default.

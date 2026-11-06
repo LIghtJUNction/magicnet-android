@@ -737,8 +737,8 @@ fn install_local(app: &App, args: &[String]) -> Result<(), String> {
     let expected_sha256 = args.get(2).map(String::as_str).unwrap_or_default();
     validate_sha256(expected_sha256)?;
     let name = validate_panel_name(args.get(3).map(String::as_str).unwrap_or("zashboard"))?;
-    let tmp = app.moddir.join(".tmp/webui-panel.zip");
-    let staging = app.moddir.join(".tmp/webui-panel-stage");
+    let tmp = app.moddir.join(".cache/webui-panel.zip");
+    let staging = app.moddir.join(".cache/webui-panel-stage");
     let target = app.moddir.join(".config/sing-box/zashboard");
     if let Some(parent) = tmp.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("mkdir {}: {err}", parent.display()))?;

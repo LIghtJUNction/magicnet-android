@@ -59,6 +59,7 @@ require_entry lib/kamfw/__singbox__.sh
 require_entry lib/magicnet_singbox_subscribe.sh
 require_entry lib/magicnet/chain.sh
 require_entry lib/magicnet/transparent.sh
+require_entry lib/magicnet/runtime_dirs.sh
 require_entry .config/sing-box/config.json
 for entry in common fetch parse config proxylink update; do
     require_entry "lib/magicnet/singbox_subscribe/$entry.sh"

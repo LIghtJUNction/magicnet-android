@@ -1311,7 +1311,7 @@ magicnet_route_apply_singbox() {
     _config="${MODDIR}/.config/sing-box/config.json"
     [ -f "$_config" ] || return 0
     _tmp="${_config}.magicnet-route.new"
-    _rules_file="${MODDIR}/.tmp/magicnet-route-singbox.rules"
+    _rules_file="${MODDIR}/.cache/magicnet-route-singbox.rules"
     if ! mkdir -p "${_rules_file%/*}" ||
         ! magicnet_route_singbox_rules >"$_rules_file"; then
         rm -f "$_rules_file" "$_tmp" 2>/dev/null || true

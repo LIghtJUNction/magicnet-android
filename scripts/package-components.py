@@ -166,7 +166,9 @@ def split(source: Path, helper: Path, output: Path, repository: str, arch: str) 
                 raise ValueError("Input is already componentized; use the original KAM archive")
             # Download archives are build caches, not runtime data. Do not ship a
             # second compressed copy of yq/jq/dashboard beside their installed files.
-            if name.startswith(".local/state/") and name.endswith((".asset", ".archive")):
+            if name.startswith((".cache/", ".tmp/")) or (
+                    name.startswith((".state/", ".local/state/"))
+                    and name.endswith((".asset", ".archive"))):
                 removed_bytes += info.file_size
                 continue
             if ".git" in name.split("/"):

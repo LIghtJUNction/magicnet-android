@@ -9,7 +9,7 @@
 MAGIC_SINGBOX=${MAGIC_SINGBOX:-1}
 VERSION_FILE="${KAM_MODULE_ROOT}/zashboard.version"
 TARGET_DIR="${KAM_MODULE_ROOT}/.config/sing-box/zashboard"
-CACHE_FILE="${KAM_MODULE_ROOT}/.local/state/zashboard.archive"
+CACHE_FILE="${KAM_MODULE_ROOT}/.cache/assets/zashboard.archive"
 
 if [ "$MAGIC_SINGBOX" -eq 0 ]; then
     rm -rf "$VERSION_FILE" "$TARGET_DIR"

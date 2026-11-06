@@ -1336,7 +1336,7 @@ pub(crate) fn proc_start_time(stat: &str) -> Option<String> {
 }
 
 pub(crate) fn clear_node_cache(app: &App) {
-    let _ = fs::remove_file(app.moddir.join(".tmp/magicnet-node-list.cache"));
+    let _ = fs::remove_file(app.moddir.join(".cache/magicnet-node-list.cache"));
 }
 
 pub(crate) fn read_kv(path: PathBuf) -> std::collections::HashMap<String, String> {
@@ -1382,7 +1382,7 @@ pub(crate) fn write_kv(
     write_text_file(app, relative, &text)
 }
 
-const MODULE_TRANSACTION_STAGING_PARENT: &str = ".tmp";
+const MODULE_TRANSACTION_STAGING_PARENT: &str = ".cache";
 const MODULE_TRANSACTION_STAGING_DIRECTORY: &str = "magicnet-app-transaction";
 
 /// Replaces ordinary module files as one recoverable transaction. All targets

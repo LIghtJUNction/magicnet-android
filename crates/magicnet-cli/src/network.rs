@@ -346,6 +346,16 @@ pub(crate) fn effective_dns_capture_port(config: Option<&Value>) -> Option<u16> 
         .filter(|port| *port >= 1)
 }
 
+pub(crate) fn effective_tun_stack(tun: Option<&Value>) -> &str {
+    match tun {
+        Some(tun) => match tun.get("stack") {
+            None => "default",
+            Some(stack) => stack.as_str().unwrap_or("unknown"),
+        },
+        None => "unavailable",
+    }
+}
+
 pub(crate) fn effective_tun_addresses(tun: Option<&Value>) -> (Option<String>, Option<String>) {
     let addresses = tun
         .and_then(|tun| tun.get("address"))
@@ -451,12 +461,7 @@ fn print_status(app: &App, policy: &NetworkPolicy) {
         .unwrap_or("unavailable");
     let (effective_inet, effective_inet6) = effective_tun_addresses(tun);
     println!("effective_ipv6_mode={strategy}");
-    println!(
-        "effective_stack={}",
-        tun.and_then(|tun| tun.get("stack"))
-            .and_then(Value::as_str)
-            .unwrap_or("unavailable")
-    );
+    println!("effective_stack={}", effective_tun_stack(tun));
     println!(
         "effective_mtu={}",
         tun.and_then(|tun| tun.get("mtu"))

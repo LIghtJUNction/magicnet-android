@@ -11,7 +11,7 @@
 | `components.json` | 本次发行的组件清单：架构、精确文件路径、权限、大小与 SHA-256。 |
 | `package-sizes.json`、`SHA256SUMS` | 实际包大小及最终发布文件校验和。 |
 
-核心包保留安装脚本、框架、基础配置、组件更新器。`bin/` 中的 sing-box、CLI、ecapture、jq/yq、proxylink 等程序分别打包；MCP 使用同一个 CLI 程序，WebUI、Zashboard、规则集各自打包。删除构建时重复保留的 `.local/state/*.asset` / `*.archive`，不把下载缓存再塞进完整包。
+核心包保留安装脚本、框架、基础配置、组件更新器。`bin/` 中的 sing-box、CLI、ecapture、jq/yq、proxylink 等程序分别打包；MCP 使用同一个 CLI 程序，WebUI、Zashboard、规则集各自打包。构建版本和摘要写入 `.state/`，下载包写入 `.cache/assets/`。打包排除 `.cache/`、旧 `.tmp/` 和历史状态目录中的 `.asset` / `.archive`，避免重复下载包或私密运行载荷进入发行包。
 
 ## 安装与升级
 

@@ -28,12 +28,29 @@ EOF
 write_old_default
 magicnet_migrate_install_config_repository
 
-grep -Fqx 'MAGICNET_SINGBOX_CONFIG_REPO_REF=a12e472c8152e9a40af48cfa1e2d4c4242f33d50' "$REPO_FILE"
-grep -Fqx 'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=35d54f908ccc9cc615fabf06b1037bbfc1f6d1d9712c86ba6c9b5252cc98ae03' "$REPO_FILE"
+grep -Fqx 'MAGICNET_SINGBOX_CONFIG_REPO_REF=dacc776dad4bd2519d5dd0dfbf3839713f9e438c' "$REPO_FILE"
+grep -Fqx 'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=08996a10e24adc6ffb6a75f96d436a543264734d95f50f9952a7a265bb58213e' "$REPO_FILE"
 [ "$(stat -c '%a' "$REPO_FILE")" = 600 ] || {
     printf 'migrated config repository file must remain private\n' >&2
     exit 1
 }
+
+for previous in \
+    a12e472c8152e9a40af48cfa1e2d4c4242f33d50:35d54f908ccc9cc615fabf06b1037bbfc1f6d1d9712c86ba6c9b5252cc98ae03 \
+    6da399473a1ab3f99661556886e0b6701581af24:6365ee9b4144974ced6012dc99b9712ceef3f721f58ae9eb0943024373b81d81 \
+    b1fa62b6912861292c895db58a88b8c5bdff3451:50585d94942620e569ae0569dd475977a35d45797bfe2bfbd6afc6cb14da2355; do
+    printf '%s\n' \
+        'MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/LIghtJUNction/MagicSingBox.git' \
+        "MAGICNET_SINGBOX_CONFIG_REPO_REF=${previous%%:*}" \
+        'MAGICNET_SINGBOX_CONFIG_REPO_PATH=config.json' \
+        "MAGICNET_SINGBOX_CONFIG_REPO_SHA256=${previous#*:}" >"$REPO_FILE"
+    magicnet_migrate_install_config_repository
+    grep -Fqx 'MAGICNET_SINGBOX_CONFIG_REPO_REF=dacc776dad4bd2519d5dd0dfbf3839713f9e438c' "$REPO_FILE"
+    grep -Fqx 'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=08996a10e24adc6ffb6a75f96d436a543264734d95f50f9952a7a265bb58213e' "$REPO_FILE"
+    migrated_before="$(cat "$REPO_FILE")"
+    magicnet_migrate_install_config_repository
+    [ "$(cat "$REPO_FILE")" = "$migrated_before" ]
+done
 
 cat >"$REPO_FILE" <<'EOF'
 MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/example/custom-config.git
