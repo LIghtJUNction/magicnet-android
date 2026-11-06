@@ -19,6 +19,9 @@ use crate::{
 mod export;
 pub(crate) use export::export_bundle;
 
+#[path = "diagnostics_tun.rs"]
+pub(crate) mod tun;
+
 pub(crate) fn health(app: &App) -> Result<(), String> {
     for (key, ok, detail) in health_items(app) {
         print_check(key, &ok, detail);
@@ -787,10 +790,6 @@ fn dns_capture_rule_summary(
     }
 }
 
-fn iface_detail(name: &str) -> String {
-    command_text_timeout("ip", &["addr", "show", name], crate::SHORT_TIMEOUT)
-}
-
 fn dataplane_check(app: &App, mode: &Result<TransparentModeSelection, String>) -> (bool, String) {
     let selection = match mode {
         Ok(selection) => *selection,
@@ -808,6 +807,23 @@ fn dataplane_check(app: &App, mode: &Result<TransparentModeSelection, String>) -
 }
 
 fn tun_dataplane_check(app: &App, source: TransparentModeSource) -> (bool, String) {
+    tun_dataplane_check_with_probe(
+        app,
+        source,
+        Path::new("/sys/class/net/magicnet0").exists(),
+        |inbound| {
+            let (ready, detail) = tun::auto_route_check(inbound);
+            (ready == Some(true), detail)
+        },
+    )
+}
+
+fn tun_dataplane_check_with_probe(
+    app: &App,
+    source: TransparentModeSource,
+    present: bool,
+    route_probe: impl FnOnce(&Value) -> (bool, String),
+) -> (bool, String) {
     let expected = "magicnet0";
     let config = match read_singbox_config(app) {
         Ok(config) => config,
@@ -839,14 +855,13 @@ fn tun_dataplane_check(app: &App, source: TransparentModeSource) -> (bool, Strin
         .unwrap_or("none");
     let configured_ok = inbound.get("type").and_then(Value::as_str) == Some("tun")
         && configured_tun_is_canonical(&[configured.to_string()]);
-    let present = PathBuf::from(format!("/sys/class/net/{expected}")).exists();
     if configured_ok && present {
+        let (routes_ok, routes_detail) = route_probe(inbound);
         return (
-            true,
+            routes_ok,
             format!(
-                "configured=mode:tun source:{} inbound:tun interface:{configured} effective=interface:{expected} probe=present detail={}",
+                "configured=mode:tun source:{} inbound:tun interface:{configured} effective=interface:{expected} probe=present {routes_detail}",
                 source.as_str(),
-                iface_detail(expected)
             ),
         );
     }

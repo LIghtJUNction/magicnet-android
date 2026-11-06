@@ -137,7 +137,9 @@ not_ready
 running_unknown
 ```
 
-For TUN, dataplane readiness requires the configured TUN interface to exist in sysfs. For eBPF, MagicNet refreshes the active-program report and reuses the kernel attachment inspector to verify required cgroup/TC attachments. `transparent.status` exposes the normalized result without returning interface names or other unnecessary network identifiers.
+For running TUN, dataplane readiness requires the canonical `magicnet0` interface and, when `auto_route` is enabled, the necessary live policy-rule group and TUN routes covering the required static address ranges in the configured table for each configured address family. Health and machine snapshots reuse the same bounded read-only observer. Missing required evidence is false; unreadable, timed-out, truncated or unrecognized evidence stays unknown (`null` in machine status). `auto_route=false` does not require automatically generated rules. Stopped and unknown processes keep their existing semantics without probing routes. Static route coverage is derived from each family's configured include ranges (defaulting to the whole family) minus its excludes; connected-subnet residue alone is insufficient. Dynamic route sets in the non-redirect path and excessive prefix inputs remain unknown. This necessary-resource check does not prove complete Android per-UID route selection, network-switch recovery or successful application traffic.
+
+For eBPF, MagicNet refreshes the active-program report and reuses the kernel attachment inspector to verify required cgroup/TC attachments. `transparent.status` exposes the normalized result without returning interface names or other unnecessary network identifiers.
 
 ## Privacy boundary
 
@@ -416,3 +418,9 @@ mutations and their concurrency, rollback, and local-logout contract.
 `--json app inspect`（规范命令 `app.inspect`）是显式私密只读接口，返回 `data.schema=1`、`scope="owner_user"` 和有界 `packages`，每项只有 `packageName`、`appLabel`；最大 4096 项、总输出 512 KiB、等待 15 秒。标签可回退包名；主用户范围不能冒充全部 Android 用户/工作资料。桥接缺失、不安全、不可用或输出无效分别用 `app.catalog_unsupported|catalog_unsafe|catalog_unavailable|catalog_invalid`，不得把未知当空清单成功。WebUI 只有在明确旧版/桥接不可用错误时回退包名读取，不把坏 JSON 当成功；清单不进入通用输出/诊断。
 
 capabilities 的 commands/private_commands 包含 `app.inspect`；features 增加 `additive_routing_overlay`；`routing_overlay_key="$magicnet_routing"`、`routing_overlay_schema=1`，普通 `override_patch_format` 仍为 `json-merge-patch`。新增的结构化扩展与归属/回滚语义见路由配方；原始数组仍具有 Merge Patch 的整段替换语义，不把它冒充增量编辑。
+
+## Subscription recovery and upgrade history
+
+Subscription activation and journal recovery restore the configured connectivity, refresh, Wi-Fi-policy and hotspot supervisors after releasing the configuration lock. The previous fswatch activity is preserved independently; disabling fswatch does not disable the other configured maintenance workers. Confirmed-stopped or unknown cores do not acquire a new supervisor generation. A failed restore records the local fixed reason `supervisor_restore_failed`; public `sub.status` continues to expose only `last.has_reason`, not raw reason text.
+
+Upgrade migration preserves the recorded private `.state/sing-box/subscription-status` history, including its original phase/result/time, but does not restore process owners or update locks. Canonical running state is still reconciled from current evidence. An installation without recorded history stays unrecorded; migration does not invent a successful update.
