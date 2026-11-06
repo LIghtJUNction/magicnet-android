@@ -258,24 +258,32 @@ fn has_remote_dns_detour(config: &Value) -> bool {
         .and_then(Value::as_array)
         .is_none_or(|rules| {
             rules.iter().all(|rule| {
-                let unconditional = rule.as_object().is_some_and(|object| {
-                    object.keys().all(|key| {
-                        matches!(
-                            key.as_str(),
-                            "action"
-                                | "server"
-                                | "tag"
-                                | "strategy"
-                                | "disable_cache"
-                                | "disable_optimistic_cache"
-                                | "rewrite_ttl"
-                                | "timeout"
-                                | "client_subnet"
-                                | "remove_client_subnet"
-                                | "speculative"
-                        )
-                    })
-                });
+                let default_type = rule
+                    .get("type")
+                    .is_none_or(|kind| matches!(kind.as_str(), Some("" | "default")));
+                // The core treats an empty default matcher as unconditional,
+                // including explicit type metadata and either invert value.
+                let unconditional = default_type
+                    && rule.as_object().is_some_and(|object| {
+                        object.keys().all(|key| {
+                            matches!(
+                                key.as_str(),
+                                "type"
+                                    | "invert"
+                                    | "action"
+                                    | "server"
+                                    | "tag"
+                                    | "strategy"
+                                    | "disable_cache"
+                                    | "disable_optimistic_cache"
+                                    | "rewrite_ttl"
+                                    | "timeout"
+                                    | "client_subnet"
+                                    | "remove_client_subnet"
+                                    | "speculative"
+                            )
+                        })
+                    });
                 !unconditional
                     || !matches!(
                         rule.get("action").and_then(Value::as_str),
@@ -493,6 +501,38 @@ mod tests {
             .unwrap()
             .push(serde_json::json!({"type":"https","tag":"remote","server":"223.6.6.6"}));
         assert!(!has_remote_dns_detour(&config));
+    }
+
+    #[test]
+    fn remote_dns_detour_handles_explicit_default_rule_metadata() {
+        let mut config = serde_json::json!({"dns": {
+            "servers": [
+                {"type":"https","tag":"local","server":"223.6.6.6"},
+                {"type":"https","tag":"remote","server":"1.1.1.1","detour":"proxy"}
+            ], "final":"remote"
+        }});
+        for action in ["route", "evaluate"] {
+            for metadata in [
+                serde_json::json!({}),
+                serde_json::json!({"type":""}),
+                serde_json::json!({"type":"default"}),
+                serde_json::json!({"type":"default","invert":false}),
+                serde_json::json!({"invert":true}),
+            ] {
+                let mut rule = metadata;
+                rule["action"] = action.into();
+                rule["server"] = "local".into();
+                config["dns"]["rules"] = serde_json::json!([rule]);
+                assert!(!has_remote_dns_detour(&config), "{config}");
+                config["dns"]["rules"][0]["server"] = "remote".into();
+                assert!(has_remote_dns_detour(&config), "{config}");
+            }
+        }
+        config["dns"]["rules"] = serde_json::json!([
+            {"type":"default","domain_suffix":["cn"],"server":"local"},
+            {"type":"default","invert":false,"clash_mode":"Direct","server":"local"}
+        ]);
+        assert!(has_remote_dns_detour(&config));
     }
 
     #[test]
