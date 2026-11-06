@@ -377,7 +377,7 @@ fn dns_status_value(app: &App) -> Value {
             Some("https://1.0.0.1/dns-query"),
             "doh",
         ),
-        _ => ("bootstrap-local-dns", None, "default"),
+        _ => ("doh-cloudflare", None, "default"),
     };
     envelope(
         "dns.status",
@@ -1090,6 +1090,10 @@ mod tests {
     #[test]
     fn dns_status_uses_canonical_profile_without_exposing_config_text() {
         let (root, app) = fixture();
+        let default = dns_status_value(&app);
+        assert_eq!(default["data"]["profile"], "default");
+        assert_eq!(default["data"]["primary"], "doh-cloudflare");
+        assert_eq!(default["data"]["transport"], "default");
         fs::write(
             root.join(".config/magicnet/dns.conf"),
             "MAGICNET_DNS_PROFILE=doh\nIGNORED_SECRET=do-not-return\n",

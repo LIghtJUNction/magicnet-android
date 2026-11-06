@@ -43,7 +43,8 @@ for previous in \
     a12e472c8152e9a40af48cfa1e2d4c4242f33d50:35d54f908ccc9cc615fabf06b1037bbfc1f6d1d9712c86ba6c9b5252cc98ae03 \
     6da399473a1ab3f99661556886e0b6701581af24:6365ee9b4144974ced6012dc99b9712ceef3f721f58ae9eb0943024373b81d81 \
     b1fa62b6912861292c895db58a88b8c5bdff3451:50585d94942620e569ae0569dd475977a35d45797bfe2bfbd6afc6cb14da2355 \
-    dacc776dad4bd2519d5dd0dfbf3839713f9e438c:08996a10e24adc6ffb6a75f96d436a543264734d95f50f9952a7a265bb58213e; do
+    dacc776dad4bd2519d5dd0dfbf3839713f9e438c:08996a10e24adc6ffb6a75f96d436a543264734d95f50f9952a7a265bb58213e \
+    6b5f68a261818a4ffda6eb9a11b21eef9b755650:cda86a582c15e6976e6b9eb1e3c7a00811b6efea4e604bcf3f44ecae443a3db3; do
     printf '%s\n' \
         'MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/LIghtJUNction/MagicSingBox.git' \
         "MAGICNET_SINGBOX_CONFIG_REPO_REF=${previous%%:*}" \
@@ -58,18 +59,19 @@ for previous in \
 done
 
 # A familiar repository/ref with an operator-supplied digest is still custom.
-cat >"$REPO_FILE" <<'EOF'
-MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/LIghtJUNction/MagicSingBox.git
-MAGICNET_SINGBOX_CONFIG_REPO_REF=dacc776dad4bd2519d5dd0dfbf3839713f9e438c
-MAGICNET_SINGBOX_CONFIG_REPO_PATH=config.json
-MAGICNET_SINGBOX_CONFIG_REPO_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-EOF
-custom_pin_before="$(cat "$REPO_FILE")"
-magicnet_migrate_install_config_repository
-[ "$(cat "$REPO_FILE")" = "$custom_pin_before" ] || {
-    printf 'custom digest on a previous default ref must not be migrated\n' >&2
-    exit 1
-}
+for previous_ref in dacc776dad4bd2519d5dd0dfbf3839713f9e438c 6b5f68a261818a4ffda6eb9a11b21eef9b755650; do
+    printf '%s\n' \
+        'MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/LIghtJUNction/MagicSingBox.git' \
+        "MAGICNET_SINGBOX_CONFIG_REPO_REF=$previous_ref" \
+        'MAGICNET_SINGBOX_CONFIG_REPO_PATH=config.json' \
+        'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >"$REPO_FILE"
+    custom_pin_before="$(cat "$REPO_FILE")"
+    magicnet_migrate_install_config_repository
+    [ "$(cat "$REPO_FILE")" = "$custom_pin_before" ] || {
+        printf 'custom digest on a previous default ref must not be migrated\n' >&2
+        exit 1
+    }
+done
 
 cat >"$REPO_FILE" <<'EOF'
 MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/example/custom-config.git

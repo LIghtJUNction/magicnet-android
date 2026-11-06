@@ -218,20 +218,91 @@ fn singbox_dns_strategy(config: Option<&Value>) -> &'static str {
 }
 
 fn has_remote_dns_detour(config: &Value) -> bool {
-    const REMOTE_DNS_NAMES: [&str; 3] = ["dns.google", "cloudflare-dns.com", "dns.adguard-dns.com"];
+    if !crate::diagnostics_routing::outbound_is_proxy_or_block(config, "proxy") {
+        return false;
+    }
+    let Some(servers) = config.pointer("/dns/servers").and_then(Value::as_array) else {
+        return false;
+    };
+    let final_tag = match config.pointer("/dns/final") {
+        None | Some(Value::Null) => servers.first().and_then(|server| server["tag"].as_str()),
+        Some(Value::String(tag)) if tag.is_empty() => {
+            servers.first().and_then(|server| server["tag"].as_str())
+        }
+        Some(Value::String(tag)) => Some(tag.as_str()),
+        _ => None,
+    };
+    let uses_proxy = |tag: Option<&str>| {
+        let Some(tag) = tag.filter(|tag| !tag.is_empty()) else {
+            return false;
+        };
+        let mut matches = servers
+            .iter()
+            .filter(|server| server["tag"].as_str() == Some(tag));
+        matches.next().is_some_and(|server| {
+            server["detour"].as_str() == Some("proxy")
+                && matches!(
+                    server["type"].as_str(),
+                    Some("udp" | "tcp" | "tls" | "https" | "quic" | "h3")
+                )
+                && server["server"]
+                    .as_str()
+                    .is_some_and(|host| !host.is_empty())
+        }) && matches.next().is_none()
+    };
+    if !uses_proxy(final_tag) {
+        return false;
+    }
+    // A remote server elsewhere in the list cannot protect a direct default
+    // or an unconditional evaluate/route rule ahead of it. Explicit domain,
+    // mode and LAN rules retain their configured resolver choices.
     config
-        .pointer("/dns/servers")
+        .pointer("/dns/rules")
         .and_then(Value::as_array)
-        .is_some_and(|servers| {
-            servers.iter().any(|server| {
-                if server.get("detour").and_then(Value::as_str) != Some("proxy") {
-                    return false;
-                }
-                let host = server.get("server").and_then(Value::as_str);
-                let tls_name = server.pointer("/tls/server_name").and_then(Value::as_str);
-                REMOTE_DNS_NAMES
-                    .iter()
-                    .any(|expected| host == Some(expected) || tls_name == Some(expected))
+        .is_none_or(|rules| {
+            rules.iter().all(|rule| {
+                let default_type = rule
+                    .get("type")
+                    .filter(|kind| !kind.is_null())
+                    .is_none_or(|kind| matches!(kind.as_str(), Some("" | "default")));
+                // The core treats an empty default matcher as unconditional,
+                // including explicit type metadata and either invert value.
+                let unconditional = default_type
+                    && rule.as_object().is_some_and(|object| {
+                        object.iter().all(|(key, value)| {
+                            matches!(
+                                key.as_str(),
+                                "type"
+                                    | "invert"
+                                    | "action"
+                                    | "server"
+                                    | "tag"
+                                    | "strategy"
+                                    | "disable_cache"
+                                    | "disable_optimistic_cache"
+                                    | "rewrite_ttl"
+                                    | "timeout"
+                                    | "client_subnet"
+                                    | "remove_client_subnet"
+                                    | "speculative"
+                                    | "race"
+                                    | "rule_set_ip_cidr_match_source"
+                                    | "rule_set_ipcidr_match_source"
+                                    | "rule_set_ip_cidr_accept_empty"
+                            ) || value.is_null()
+                                || value.as_array().is_some_and(Vec::is_empty)
+                                || value.as_object().is_some_and(|map| map.is_empty())
+                                || value.as_bool() == Some(false)
+                                || key == "clash_mode" && value.as_str() == Some("")
+                                || key == "ip_version" && value.as_u64() == Some(0)
+                        })
+                    });
+                !unconditional
+                    || !matches!(
+                        rule.get("action").and_then(Value::as_str),
+                        None | Some("route" | "evaluate")
+                    )
+                    || uses_proxy(rule.get("server").and_then(Value::as_str))
             })
         })
 }
@@ -262,6 +333,13 @@ mod tests {
 
     fn parsed(json: &str) -> Value {
         serde_json::from_str(json).expect("test JSON must be valid")
+    }
+
+    fn with_proxy_outbound(mut config: Value) -> Value {
+        config["outbounds"] = serde_json::json!([
+            {"tag":"proxy","type":"http","server":"proxy.invalid","server_port":8080}
+        ]);
+        config
     }
 
     fn healthy_config(strategy: &'static str, ipv6_guard: Ipv6GuardStatus) -> SingboxDnsConfig {
@@ -354,7 +432,7 @@ mod tests {
         }
         "#;
 
-        assert!(has_remote_dns_detour(&parsed(config)));
+        assert!(has_remote_dns_detour(&with_proxy_outbound(parsed(config))));
     }
 
     #[test]
@@ -373,15 +451,157 @@ mod tests {
         }
         "#;
 
-        assert!(!has_remote_dns_detour(&parsed(config)));
+        assert!(!has_remote_dns_detour(&with_proxy_outbound(parsed(config))));
     }
 
     #[test]
     fn remote_dns_detour_rejects_fields_split_across_servers() {
-        let config = parsed(
+        let config = with_proxy_outbound(parsed(
             r#"{"dns":{"servers":[{"detour":"proxy","server":"other.invalid"},{"server":"dns.google"}]}}"#,
-        );
+        ));
         assert!(!has_remote_dns_detour(&config));
+    }
+
+    #[test]
+    fn remote_dns_detour_checks_the_selected_default_not_an_unused_server() {
+        let mut config = with_proxy_outbound(serde_json::json!({"dns": {
+            "servers": [
+                {"type":"https","tag":"local","server":"223.6.6.6"},
+                {"type":"https","tag":"remote","server":"9.9.9.9","detour":"proxy"}
+            ], "final":"local"
+        }}));
+        assert!(!has_remote_dns_detour(&config));
+        config["dns"]["final"] = "remote".into();
+        assert!(has_remote_dns_detour(&config));
+        for tag in ["missing", ""] {
+            config["dns"]["final"] = tag.into();
+            assert!(!has_remote_dns_detour(&config));
+        }
+    }
+
+    #[test]
+    fn remote_dns_detour_accepts_proxy_udp_and_arbitrary_resolver_hosts() {
+        for kind in ["https", "tls", "udp", "tcp", "quic", "h3"] {
+            for host in [
+                "1.1.1.1",
+                "2606:4700:4700::1111",
+                "resolver.example.invalid",
+            ] {
+                let config = with_proxy_outbound(serde_json::json!({"dns":{"servers":[
+                    {"type":kind,"tag":"remote","server":host,"detour":"proxy"}
+                ]}}));
+                assert!(has_remote_dns_detour(&config), "{kind} {host}");
+            }
+        }
+    }
+
+    #[test]
+    fn remote_dns_detour_rejects_stale_evaluation_and_duplicate_tags() {
+        let mut config = with_proxy_outbound(serde_json::json!({"dns": {
+            "servers": [
+                {"type":"https","tag":"local","server":"223.6.6.6"},
+                {"type":"https","tag":"remote","server":"1.1.1.1","detour":"proxy"}
+            ], "final":"remote"
+        }}));
+        for action in ["route", "evaluate"] {
+            config["dns"]["rules"] = serde_json::json!([
+                {"action":action,"server":"local","tag":"magicnet-final-dns"}
+            ]);
+            assert!(!has_remote_dns_detour(&config));
+        }
+        config["dns"]["rules"] = serde_json::json!([
+            {"domain_suffix":["cn"],"server":"local"},
+            {"clash_mode":"Direct","server":"local"},
+            {"action":"evaluate","server":"remote","tag":"magicnet-final-dns"},
+            {"match_response":"magicnet-final-dns","action":"respond"}
+        ]);
+        assert!(has_remote_dns_detour(&config));
+        config["dns"]["servers"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"type":"https","tag":"remote","server":"223.6.6.6"}));
+        assert!(!has_remote_dns_detour(&config));
+    }
+
+    #[test]
+    fn remote_dns_detour_handles_explicit_default_rule_metadata() {
+        let mut config = with_proxy_outbound(serde_json::json!({"dns": {
+            "servers": [
+                {"type":"https","tag":"local","server":"223.6.6.6"},
+                {"type":"https","tag":"remote","server":"1.1.1.1","detour":"proxy"}
+            ], "final":"remote"
+        }}));
+        for action in ["route", "evaluate"] {
+            for metadata in [
+                serde_json::json!({}),
+                serde_json::json!({"type":""}),
+                serde_json::json!({"type":"default"}),
+                serde_json::json!({"type":"default","invert":false}),
+                serde_json::json!({"invert":true}),
+                serde_json::json!({"type":null,"domain":[]}),
+                serde_json::json!({"domain_suffix":[],"rule_set":[],"ip_version":0}),
+                serde_json::json!({"network":null,"match_response":false,"clash_mode":""}),
+                serde_json::json!({"interface_address":{},"network_is_expensive":false}),
+            ] {
+                let mut rule = metadata;
+                rule["action"] = action.into();
+                rule["server"] = "local".into();
+                config["dns"]["rules"] = serde_json::json!([rule]);
+                assert!(!has_remote_dns_detour(&config), "{config}");
+                config["dns"]["rules"][0]["server"] = "remote".into();
+                assert!(has_remote_dns_detour(&config), "{config}");
+            }
+        }
+        config["dns"]["rules"] = serde_json::json!([
+            {"type":"default","domain_suffix":["cn"],"server":"local"},
+            {"type":"default","invert":false,"clash_mode":"Direct","server":"local"}
+        ]);
+        assert!(has_remote_dns_detour(&config));
+    }
+
+    #[test]
+    fn remote_dns_detour_resolves_the_proxy_outbound() {
+        let mut config = serde_json::json!({"dns": {
+            "servers":[{"type":"https","tag":"remote","server":"1.1.1.1","detour":"proxy"}],
+            "final":"remote"
+        }});
+        for outbounds in [
+            serde_json::json!([]),
+            serde_json::json!([{"tag":"proxy","type":"direct"}]),
+            serde_json::json!([
+                {"tag":"proxy","type":"selector","outbounds":["direct"],"default":"direct"},
+                {"tag":"direct","type":"direct"}
+            ]),
+            serde_json::json!([
+                {"tag":"proxy","type":"urltest","outbounds":["direct","remote-node"]},
+                {"tag":"direct","type":"direct"},
+                {"tag":"remote-node","type":"http","server":"proxy.invalid","server_port":8080}
+            ]),
+            serde_json::json!([{"tag":"proxy","type":"selector","outbounds":["missing"]}]),
+            serde_json::json!([{"tag":"proxy","type":"selector","outbounds":["proxy"]}]),
+            serde_json::json!([
+                {"tag":"proxy","type":"http","server":"proxy.invalid","server_port":8080},
+                {"tag":"proxy","type":"direct"}
+            ]),
+        ] {
+            config["outbounds"] = outbounds;
+            assert!(!has_remote_dns_detour(&config), "{config}");
+        }
+        for outbounds in [
+            serde_json::json!([{"tag":"proxy","type":"http","server":"proxy.invalid","server_port":8080}]),
+            serde_json::json!([
+                {"tag":"proxy","type":"selector","outbounds":["auto"]},
+                {"tag":"auto","type":"urltest","outbounds":["node"]},
+                {"tag":"node","type":"http","server":"proxy.invalid","server_port":8080}
+            ]),
+            serde_json::json!([
+                {"tag":"proxy","type":"selector","outbounds":["block"]},
+                {"tag":"block","type":"block"}
+            ]),
+        ] {
+            config["outbounds"] = outbounds;
+            assert!(has_remote_dns_detour(&config), "{config}");
+        }
     }
 
     #[test]
@@ -469,6 +689,7 @@ mod tests {
     fn unused_fake_ip_server_is_unhealthy() {
         let config = singbox_dns_config_from_text(
             r#"{
+              "outbounds":[{"tag":"proxy","type":"http","server":"proxy.invalid","server_port":8080}],
               "dns": {
                 "servers": [
                   {"type":"fakeip","tag":"fakeip"},
@@ -491,6 +712,7 @@ mod tests {
     fn real_address_dns_without_fake_ip_is_healthy() {
         let config = singbox_dns_config_from_text(
             r#"{
+              "outbounds":[{"tag":"proxy","type":"http","server":"proxy.invalid","server_port":8080}],
               "dns": {"servers": [
                 {"type":"https","tag":"remote","server":"dns.google","detour":"proxy"}
               ], "strategy":"prefer_ipv4"},

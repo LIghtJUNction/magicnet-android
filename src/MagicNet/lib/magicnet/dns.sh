@@ -59,6 +59,15 @@ magicnet_dns_apply_singbox() {
         {"type":"https","tag":$tag,"server":$server,"server_port":443,"detour":"proxy","path":"/dns-query","tls":{"server_name":"cloudflare-dns.com"}};
       def default_bootstrap:
         {"type":"https","tag":"bootstrap-local-dns","server":$bootstrap_server,"server_port":443,"path":"/dns-query","headers":{"Host":"dns.alidns.com"},"tls":{"server_name":"dns.alidns.com"}};
+      def ensure_default_remote:
+        [.[] | select(.tag == "doh-cloudflare")] as $remote
+        | if ($remote | length) == 0 then . + [cf_https("doh-cloudflare"; "1.1.1.1")]
+          elif ($remote | length) == 1 and $remote[0].type == "https"
+            and $remote[0].detour == "proxy"
+            and (($remote[0].tls.insecure // false) == false)
+            and ($remote[0].server | type == "string" and length > 0) then .
+          else error("default DNS requires one doh-cloudflare HTTPS server with proxy detour and verified TLS")
+          end;
       def server_for($profile; $tag; $server):
         if $profile == "cloudflare-udp" then cf_udp($tag; $server)
         elif $profile == "cloudflare-dot" then cf_tls($tag; $server)
@@ -77,13 +86,16 @@ magicnet_dns_apply_singbox() {
           ($tag != "bootstrap-local-dns" and
            $tag != "cloudflare-profile-dns" and
            $tag != "cloudflare-backup-dns")))
-        | (if $profile == "default" then [default_bootstrap]
+        | if $profile == "default" then [default_bootstrap] + ensure_default_remote
            else [default_bootstrap,
                  server_for($profile; "cloudflare-profile-dns"; "1.1.1.1"),
-                 server_for($profile; "cloudflare-backup-dns"; "1.0.0.1")]
-           end) + .
+                 server_for($profile; "cloudflare-backup-dns"; "1.0.0.1")] + .
+           end
       )
-      | if $profile == "default" then .dns.final = "bootstrap-local-dns"
+      # Unclassified application queries belong to the proxy. The direct
+      # bootstrap resolver remains available to explicit direct rules and
+      # proxy endpoint resolution, never as a fallback when the proxy fails.
+      | if $profile == "default" then .dns.final = "doh-cloudflare"
         else .dns.final = "cloudflare-profile-dns"
         end
       # Use the 1.14 response pipeline explicitly. Mixed domain/IP rule sets
@@ -105,10 +117,11 @@ magicnet_dns_apply_singbox() {
           end
         )
       # sing-box 1.14 requires an explicit outbound domain resolver once there
-      # are multiple DNS servers. Keep a configured resolver; otherwise use
-      # the final resolver selected above, which belongs to this config.
+      # are multiple DNS servers. Managed proxy endpoints must bootstrap
+      # directly: using the proxied final resolver here creates a cycle.
+      # Standalone configs retain their own resolver graph and final server.
       | if ((.route.default_domain_resolver // "") == "" and (.dns.final // "") != "") then
-          .route.default_domain_resolver = .dns.final
+          .route.default_domain_resolver = (if $standalone_dns == 1 then .dns.final else "bootstrap-local-dns" end)
         else . end
       # sing-box 1.14 adds per-query timeout, optimistic DNS caching and DNS
       # cache persistence. Apply conservative defaults only when the user has

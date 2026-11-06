@@ -142,6 +142,7 @@ else
     check bash scripts/test-dns-profile-safety.sh
 fi
 check bash scripts/test-dns-leak-guard-timeout.sh
+check python3 scripts/test-dns-proxy-egress.py
 check python3 scripts/test-dns-capture-fast-path.py
 check python3 scripts/test-dns-output-order.py
 CI_TEST_FORCE=1 check python3 scripts/test-xtables-registration.py

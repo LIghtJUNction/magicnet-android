@@ -297,6 +297,16 @@ struct OutboundResolver<'a> {
     outbounds: &'a [Value],
 }
 
+pub(super) fn outbound_is_proxy_or_block(config: &Value, tag: &str) -> bool {
+    let Some(outbounds) = config.get("outbounds").and_then(Value::as_array) else {
+        return false;
+    };
+    let resolver = OutboundResolver { outbounds };
+    // A node-less managed selector blocks queries instead of leaking them.
+    // This shares the routing diagnostic's configured-path resolution.
+    matches!(resolver.resolve(tag), Resolution::Proxy | Resolution::Block)
+}
+
 impl<'a> OutboundResolver<'a> {
     fn resolve(&self, tag: &'a str) -> Resolution {
         self.resolve_inner(tag, &mut HashSet::new())

@@ -28,6 +28,8 @@ jobs:
           node-version: '24'
       - name: Compile the exact configured core
         run: scripts/build-sing-box.sh linux amd64 "$RUNNER_TEMP/core/sing-box"
+      - name: Verify DNS proxy egress and closed failure with the production core
+        run: python3 scripts/test-dns-proxy-egress.py --core "$RUNNER_TEMP/core/sing-box" --require
       - name: Exercise the exact packaged subscription converter
         run: |
           revision=$(sed -n 's/^PINNED_REV="\(.*\)"/\1/p' hooks/pre-build/4910.update_proxylink.sh)
