@@ -79,7 +79,7 @@ fn dns_status(app: &App) {
             Some("https://1.0.0.1/dns-query"),
             "doh",
         ),
-        _ => ("bootstrap-local-dns", None, "default"),
+        _ => ("doh-cloudflare", None, "default"),
     };
     println!("primary={primary}");
     if let Some(secondary) = secondary {

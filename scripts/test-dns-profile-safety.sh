@@ -60,8 +60,9 @@ assert_profile_uses_proxy_detour() {
         and ([.dns.rules[] | select(.tag == "magicnet-final-dns")] ==
           [{"action":"evaluate","server":"cloudflare-profile-dns","tag":"magicnet-final-dns"}])
         and .dns.rules[-1] == {"match_response":"magicnet-final-dns","action":"respond"}
+        and .route.default_domain_resolver == "bootstrap-local-dns"
         and ([.dns.servers[] | select(.tag == "bootstrap-local-dns")
-          | .type == "https" and .server == "223.5.5.5" and has("detour") | not] | length) == 1
+          | select(.type == "https" and .server == "223.6.6.6" and (has("detour") | not))] | length) == 1
     ' "$MODDIR/.config/sing-box/config.json" >/dev/null || {
     printf 'DNS profile %s must use proxy detour for both managed %s servers\n' \
       "$profile" "$expected_type" >&2
@@ -75,20 +76,22 @@ assert_profile_uses_proxy_detour cloudflare-doh https 443
 
 MAGICNET_DNS_PROFILE=default magicnet_dns_apply_singbox
 jq -e '
-  .dns.final == "bootstrap-local-dns"
+  .dns.final == "doh-cloudflare"
     and ([.dns.rules[] | select(.tag == "magicnet-final-dns")] ==
-      [{"action":"evaluate","server":"bootstrap-local-dns","tag":"magicnet-final-dns"}])
+      [{"action":"evaluate","server":"doh-cloudflare","tag":"magicnet-final-dns"}])
     and .dns.rules[-1] == {"match_response":"magicnet-final-dns","action":"respond"}
     and (.dns.rules | length) == 2
     and ([.dns.servers[] | select(.tag == "cloudflare-profile-dns" or .tag == "cloudflare-backup-dns")] | length) == 0
     and ([.dns.servers[] | select(.tag == "retained-udp") | .routing_mark] == [1073741824])
+    and ([.dns.servers[] | select(.tag == "doh-cloudflare") | .detour] == ["proxy"])
+    and .route.default_domain_resolver == "bootstrap-local-dns"
     and .dns.timeout == "8s"
     and .dns.cache_capacity == 4096
     and .dns.optimistic == {"enabled": true, "timeout": "30m"}
     and .experimental.cache_file.enabled == true
     and .experimental.cache_file.store_dns == true
 ' "$MODDIR/.config/sing-box/config.json" >/dev/null || {
-  printf 'default DNS profile must restore direct bootstrap and conservative sing-box 1.14 cache defaults\n' >&2
+  printf 'default DNS profile must keep proxy fallback, direct bootstrap and conservative cache defaults\n' >&2
   exit 1
 }
 
@@ -112,7 +115,10 @@ cat >"$MODDIR/.config/sing-box/config.json" <<'EOF'
 EOF
 MAGICNET_DNS_PROFILE=default magicnet_dns_apply_singbox
 jq -e '
-  .dns.timeout == "12s"
+  .dns.final == "doh-cloudflare"
+    and ([.dns.servers[] | select(.tag == "doh-cloudflare") | .type == "https" and .detour == "proxy"] == [true])
+    and .route.default_domain_resolver == "bootstrap-local-dns"
+    and .dns.timeout == "12s"
     and .dns.cache_capacity == 2048
     and .dns.optimistic == false
     and .experimental.cache_file.enabled == false
@@ -121,6 +127,24 @@ jq -e '
   printf 'explicit DNS cache and timeout preferences must be preserved\n' >&2
   exit 1
 }
+
+# A conflicting or duplicate reserved fallback must fail atomically. Merely
+# having another proxied DNS server does not make this default path safe.
+cp "$MODDIR/.config/sing-box/config.json" "$WORK/managed-dns.json"
+for mutation in \
+  '(.dns.servers[] | select(.tag == "doh-cloudflare")).detour = "direct"' \
+  '(.dns.servers[] | select(.tag == "doh-cloudflare")).type = "local"' \
+  '(.dns.servers[] | select(.tag == "doh-cloudflare")).server = ""' \
+  '.dns.servers += [.dns.servers[] | select(.tag == "doh-cloudflare")]'; do
+  jq "$mutation" "$WORK/managed-dns.json" >"$WORK/conflicting-dns.json"
+  cp "$WORK/conflicting-dns.json" "$MODDIR/.config/sing-box/config.json"
+  if MAGICNET_DNS_PROFILE=default magicnet_dns_apply_singbox 2>"$WORK/conflicting-dns.log"; then
+    printf 'conflicting default DNS fallback was accepted: %s\n' "$mutation" >&2
+    exit 1
+  fi
+  cmp "$WORK/conflicting-dns.json" "$MODDIR/.config/sing-box/config.json"
+  [ ! -e "$MODDIR/.config/sing-box/config.json.magicnet-dns.new" ]
+done
 
 cat >"$MODDIR/.config/sing-box/config.json" <<'EOF'
 {"dns":{"servers":[{"type":"hosts","tag":"offline","predefined":{"magicnet.test":["198.18.0.42"]}}],

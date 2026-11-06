@@ -218,20 +218,70 @@ fn singbox_dns_strategy(config: Option<&Value>) -> &'static str {
 }
 
 fn has_remote_dns_detour(config: &Value) -> bool {
-    const REMOTE_DNS_NAMES: [&str; 3] = ["dns.google", "cloudflare-dns.com", "dns.adguard-dns.com"];
+    let Some(servers) = config.pointer("/dns/servers").and_then(Value::as_array) else {
+        return false;
+    };
+    let final_tag = match config.pointer("/dns/final") {
+        None | Some(Value::Null) => servers.first().and_then(|server| server["tag"].as_str()),
+        Some(Value::String(tag)) if tag.is_empty() => {
+            servers.first().and_then(|server| server["tag"].as_str())
+        }
+        Some(Value::String(tag)) => Some(tag.as_str()),
+        _ => None,
+    };
+    let uses_proxy = |tag: Option<&str>| {
+        let Some(tag) = tag.filter(|tag| !tag.is_empty()) else {
+            return false;
+        };
+        let mut matches = servers
+            .iter()
+            .filter(|server| server["tag"].as_str() == Some(tag));
+        matches.next().is_some_and(|server| {
+            server["detour"].as_str() == Some("proxy")
+                && matches!(
+                    server["type"].as_str(),
+                    Some("udp" | "tcp" | "tls" | "https" | "quic" | "h3")
+                )
+                && server["server"]
+                    .as_str()
+                    .is_some_and(|host| !host.is_empty())
+        }) && matches.next().is_none()
+    };
+    if !uses_proxy(final_tag) {
+        return false;
+    }
+    // A remote server elsewhere in the list cannot protect a direct default
+    // or an unconditional evaluate/route rule ahead of it. Explicit domain,
+    // mode and LAN rules retain their configured resolver choices.
     config
-        .pointer("/dns/servers")
+        .pointer("/dns/rules")
         .and_then(Value::as_array)
-        .is_some_and(|servers| {
-            servers.iter().any(|server| {
-                if server.get("detour").and_then(Value::as_str) != Some("proxy") {
-                    return false;
-                }
-                let host = server.get("server").and_then(Value::as_str);
-                let tls_name = server.pointer("/tls/server_name").and_then(Value::as_str);
-                REMOTE_DNS_NAMES
-                    .iter()
-                    .any(|expected| host == Some(expected) || tls_name == Some(expected))
+        .is_none_or(|rules| {
+            rules.iter().all(|rule| {
+                let unconditional = rule.as_object().is_some_and(|object| {
+                    object.keys().all(|key| {
+                        matches!(
+                            key.as_str(),
+                            "action"
+                                | "server"
+                                | "tag"
+                                | "strategy"
+                                | "disable_cache"
+                                | "disable_optimistic_cache"
+                                | "rewrite_ttl"
+                                | "timeout"
+                                | "client_subnet"
+                                | "remove_client_subnet"
+                                | "speculative"
+                        )
+                    })
+                });
+                !unconditional
+                    || !matches!(
+                        rule.get("action").and_then(Value::as_str),
+                        None | Some("route" | "evaluate")
+                    )
+                    || uses_proxy(rule.get("server").and_then(Value::as_str))
             })
         })
 }
@@ -381,6 +431,67 @@ mod tests {
         let config = parsed(
             r#"{"dns":{"servers":[{"detour":"proxy","server":"other.invalid"},{"server":"dns.google"}]}}"#,
         );
+        assert!(!has_remote_dns_detour(&config));
+    }
+
+    #[test]
+    fn remote_dns_detour_checks_the_selected_default_not_an_unused_server() {
+        let mut config = serde_json::json!({"dns": {
+            "servers": [
+                {"type":"https","tag":"local","server":"223.6.6.6"},
+                {"type":"https","tag":"remote","server":"9.9.9.9","detour":"proxy"}
+            ], "final":"local"
+        }});
+        assert!(!has_remote_dns_detour(&config));
+        config["dns"]["final"] = "remote".into();
+        assert!(has_remote_dns_detour(&config));
+        for tag in ["missing", ""] {
+            config["dns"]["final"] = tag.into();
+            assert!(!has_remote_dns_detour(&config));
+        }
+    }
+
+    #[test]
+    fn remote_dns_detour_accepts_proxy_udp_and_arbitrary_resolver_hosts() {
+        for kind in ["https", "tls", "udp", "tcp", "quic", "h3"] {
+            for host in [
+                "1.1.1.1",
+                "2606:4700:4700::1111",
+                "resolver.example.invalid",
+            ] {
+                let config = serde_json::json!({"dns":{"servers":[
+                    {"type":kind,"tag":"remote","server":host,"detour":"proxy"}
+                ]}});
+                assert!(has_remote_dns_detour(&config), "{kind} {host}");
+            }
+        }
+    }
+
+    #[test]
+    fn remote_dns_detour_rejects_stale_evaluation_and_duplicate_tags() {
+        let mut config = serde_json::json!({"dns": {
+            "servers": [
+                {"type":"https","tag":"local","server":"223.6.6.6"},
+                {"type":"https","tag":"remote","server":"1.1.1.1","detour":"proxy"}
+            ], "final":"remote"
+        }});
+        for action in ["route", "evaluate"] {
+            config["dns"]["rules"] = serde_json::json!([
+                {"action":action,"server":"local","tag":"magicnet-final-dns"}
+            ]);
+            assert!(!has_remote_dns_detour(&config));
+        }
+        config["dns"]["rules"] = serde_json::json!([
+            {"domain_suffix":["cn"],"server":"local"},
+            {"clash_mode":"Direct","server":"local"},
+            {"action":"evaluate","server":"remote","tag":"magicnet-final-dns"},
+            {"match_response":"magicnet-final-dns","action":"respond"}
+        ]);
+        assert!(has_remote_dns_detour(&config));
+        config["dns"]["servers"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"type":"https","tag":"remote","server":"223.6.6.6"}));
         assert!(!has_remote_dns_detour(&config));
     }
 

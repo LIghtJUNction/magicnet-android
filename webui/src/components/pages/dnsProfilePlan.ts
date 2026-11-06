@@ -71,7 +71,7 @@ function dnsTransport(profile: string): string {
 }
 
 function dnsServers(profile: string): { primary: string; secondary: string } {
-  if (profile === "default") return { primary: "bootstrap-local-dns", secondary: "" };
+  if (profile === "default") return { primary: "doh-cloudflare", secondary: "" };
   if (profile === "cloudflare-doh") return { primary: "https://cloudflare-dns.com/dns-query", secondary: "https://1.0.0.1/dns-query" };
   if (profile === "cloudflare-dot") return { primary: "tls://1.1.1.1", secondary: "tls://1.0.0.1" };
   return { primary: "1.1.1.1", secondary: "1.0.0.1" };

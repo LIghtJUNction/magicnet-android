@@ -363,10 +363,13 @@ if (
 dns_rules = config.get("dns", {}).get("rules", [])
 dns_servers = config.get("dns", {}).get("servers", [])
 route_rules = config.get("route", {}).get("rules", [])
-if config.get("dns", {}).get("final") != "bootstrap-local-dns":
+if config.get("dns", {}).get("final") != "doh-cloudflare":
     raise SystemExit(
-        "packaged unclassified DNS must use local encrypted resolution for destination-based CN routing"
+        "packaged unclassified DNS must use the proxy-detoured doh-cloudflare resolver"
     )
+default_dns = [server for server in dns_servers if server.get("tag") == "doh-cloudflare"]
+if len(default_dns) != 1 or default_dns[0].get("type") != "https" or default_dns[0].get("detour") != "proxy":
+    raise SystemExit("packaged default DNS must resolve through exactly one proxy-detoured HTTPS server")
 if any("package_name" in rule for rule in dns_rules):
     raise SystemExit("packaged DNS policy must not contain application package selectors")
 managed_ipv6_guards = [
