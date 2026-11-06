@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 import unittest
 
+import yaml
+
 SPEC = importlib.util.spec_from_file_location('android_release_gate',
                                             Path(__file__).with_name('require-android-acceptance.py'))
 GATE = importlib.util.module_from_spec(SPEC)
@@ -52,6 +54,57 @@ class AndroidReleaseGateTests(unittest.TestCase):
                                     query=lambda _: {'workflow_runs': []},
                                     clock=lambda: next(times), sleep=sleeps.append)
         self.assertEqual(sleeps, [1])
+
+
+class AndroidReleaseMetadataTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        workflow = Path(__file__).resolve().parents[1] / '.github/workflows/android-kernelsu-acceptance.yml'
+        cls.workflow = yaml.safe_load(workflow.read_text())
+
+    def test_reusable_inputs_keep_versions_optional_and_codes_as_strings(self):
+        triggers = self.workflow.get('on', self.workflow.get(True))
+        inputs = triggers['workflow_call']['inputs']
+        for name in ('source_sha', 'release_version', 'release_version_code'):
+            with self.subTest(name=name):
+                self.assertEqual(inputs[name]['type'], 'string')
+                self.assertEqual(inputs[name]['default'], '')
+                self.assertFalse(inputs[name]['required'])
+        for event in ('push', 'pull_request', 'merge_group', 'workflow_dispatch'):
+            self.assertIn(event, triggers)
+
+    def test_metadata_contracts_run_in_the_uncached_harness(self):
+        harness = self.workflow['jobs']['harness']
+        checks = next(step for step in harness['steps']
+                      if step.get('name') == 'Test simulation safety and workflow wiring')
+        self.assertIn('python3 scripts/test-android-release-gate.py', checks['run'].splitlines())
+        self.assertNotIn('if', checks)
+        self.assertNotIn('continue-on-error', checks)
+        self.assertFalse(any('cache' in step.get('uses', '') for step in harness['steps']))
+
+    def test_both_jobs_stamp_after_sha_verification_before_tool_installation(self):
+        for job, first_tool_step in (('harness', 'Install workflow test dependency'),
+                                     ('android-kernelsu', 'Locate Android SDK tools')):
+            with self.subTest(job=job):
+                steps = self.workflow['jobs'][job]['steps']
+                names = [step['name'] for step in steps]
+                self.assertLess(names.index('Checkout repository'), names.index('Verify implementation commit'))
+                self.assertLess(names.index('Verify implementation commit'), names.index('Stamp release metadata'))
+                self.assertLess(names.index('Stamp release metadata'), names.index(first_tool_step))
+                checkout = steps[names.index('Checkout repository')]
+                self.assertEqual(checkout['with']['ref'], '${{ inputs.source_sha || github.sha }}')
+                self.assertFalse(checkout['with']['persist-credentials'])
+                verify = steps[names.index('Verify implementation commit')]
+                self.assertEqual(verify['env']['SOURCE_SHA'], '${{ inputs.source_sha || github.sha }}')
+                self.assertIn('[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', verify['run'])
+                self.assertIn('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"', verify['run'])
+                stamp = steps[names.index('Stamp release metadata')]
+                self.assertEqual(stamp['if'], "${{ inputs.release_version != '' || inputs.release_version_code != '' }}")
+                self.assertEqual(stamp['env'], {'RELEASE_VERSION': '${{ inputs.release_version }}',
+                                               'RELEASE_VERSION_CODE': '${{ inputs.release_version_code }}'})
+                self.assertEqual(stamp['run'], 'python3 scripts/stamp-release.py --version "$RELEASE_VERSION" --version-code "$RELEASE_VERSION_CODE"')
+                self.assertNotIn('continue-on-error', stamp)
+                self.assertNotIn('continue-on-error', self.workflow['jobs'][job])
 
 
 if __name__ == '__main__':
