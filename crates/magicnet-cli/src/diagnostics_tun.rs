@@ -15,7 +15,11 @@ const SNAPSHOT_LIMIT: usize = 256 * 1024;
 pub(crate) fn auto_route_check(inbound: &Value) -> (Option<bool>, String) {
     let deadline = Instant::now() + crate::SHORT_TIMEOUT;
     auto_route_check_with(inbound, cfg!(target_os = "android"), |args| {
-        let mut command = Command::new("ip");
+        let mut command = Command::new(if cfg!(target_os = "android") {
+            "/system/bin/ip"
+        } else {
+            "ip"
+        });
         command.args(args);
         read_snapshot(
             command,
@@ -72,17 +76,33 @@ pub(crate) fn auto_route_check_with(
     };
     let mut ready = Some(true);
     let table = expected.table.to_string();
+    // iproute2 resolves table names before numbers. Names are read with %s,
+    // so a leading space cannot match a name, while strtoul still reads the ID.
+    // Keep this as one argv value; it must not pass through shell word splitting.
+    let table_arg = format!(" {table}");
     let mut detail = format!("auto_route=enabled table={table} scope=kernel-routes");
     for (family, prefixes) in &expected.families {
-        // Numeric table IDs avoid aliases in rt_tables. A missing/unsupported ip
-        // command is unknown, never an empty rule set that can prove health.
-        let rules = observe(snapshot(&[family.arg(), "-N", "rule", "show"]), |text| {
+        // Android's platform ip does not support -N. Resolve any relevant table
+        // name against a numeric table-filtered dump, never by guessing aliases.
+        let args: &[&str] = if android {
+            &[family.arg(), "rule", "show"]
+        } else {
+            &[family.arg(), "-N", "rule", "show"]
+        };
+        let rule_snapshot = snapshot(args).and_then(|text| {
+            if android {
+                expected.resolve_rule_tables(text, *family, &table_arg, &mut snapshot)
+            } else {
+                Ok(text)
+            }
+        });
+        let rules = observe(rule_snapshot, |text| {
             expected.rules_present(text, *family, prefixes)
         });
         let routes = match routes::expected_ranges(inbound, *family) {
             Ok(required) if required.is_empty() => (Some(true), "not_required".into()),
             Ok(required) => observe(
-                snapshot(&[family.arg(), "route", "show", "table", &table]),
+                snapshot(&[family.arg(), "route", "show", "table", &table_arg]),
                 |text| routes::routes_cover(text, *family, &required),
             ),
             Err(reason) => (None, format!("unknown:{reason}")),
@@ -253,6 +273,63 @@ impl RouteExpectation {
             families,
             redirect,
         }))
+    }
+
+    fn resolve_rule_tables(
+        &self,
+        text: String,
+        family: Family,
+        table_arg: &str,
+        snapshot: &mut impl FnMut(&[&str]) -> Result<String, &'static str>,
+    ) -> Result<String, &'static str> {
+        let mut rules = parse_rules(&text)?;
+        let lookups: Vec<_> = rules
+            .iter()
+            .enumerate()
+            .filter(|(_, rule)| {
+                (self.rule_start..=self.rule_start + 10).contains(&rule.priority)
+                    || self
+                        .redirect
+                        .as_ref()
+                        .is_some_and(|marks| marks.fallback == rule.priority)
+            })
+            .filter_map(|(index, rule)| {
+                rule.fields
+                    .windows(2)
+                    .position(|pair| pair[0] == "lookup")
+                    .map(|lookup| (index, lookup + 1))
+            })
+            .collect();
+        if lookups.is_empty() {
+            return Ok(text);
+        }
+        let table = self.table.to_string();
+        // AOSP iprule.c filters the actual netlink table number before printing
+        // its optional name, which can itself look numeric. Verify every relevant
+        // lookup. Both dumps share the original command deadline.
+        let filtered_text = snapshot(&[family.arg(), "rule", "show", "table", table_arg])?;
+        let filtered = parse_rules(&filtered_text)?;
+        if filtered.iter().any(|rule| {
+            !rule.fields.windows(2).any(|pair| {
+                pair[0] == "lookup" && number(pair[1]).is_none_or(|value| value == self.table)
+            })
+        }) {
+            return Err("rule-table-filter-unverified");
+        }
+        for (index, lookup) in lookups {
+            let rule = &mut rules[index];
+            if !filtered
+                .iter()
+                .any(|other| other.priority == rule.priority && other.fields == rule.fields)
+            {
+                return Err("rule-table-unverified");
+            }
+            rule.fields[lookup] = &table;
+        }
+        Ok(rules
+            .iter()
+            .map(|rule| format!("{}: {}\n", rule.priority, rule.fields.join(" ")))
+            .collect())
     }
 
     fn rules_present(

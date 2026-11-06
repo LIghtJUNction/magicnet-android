@@ -438,8 +438,18 @@ mod tests {
                     || Some(true),
                     |inbound| {
                         crate::diagnostics::tun::auto_route_check_with(inbound, true, |args| {
-                            if args[1] == "-N" {
-                                rules.map(str::to_owned)
+                            if args.contains(&"rule") {
+                                rules.map(|rules| {
+                                    if args.contains(&"table") {
+                                        rules
+                                            .lines()
+                                            .filter(|line| line.ends_with("lookup 2022"))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    } else {
+                                        rules.into()
+                                    }
+                                })
                             } else {
                                 Ok(routes.into())
                             }
