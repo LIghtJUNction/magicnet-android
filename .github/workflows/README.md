@@ -20,51 +20,65 @@ The former `init.yml` was removed. Its `kam validate`, `kam check`, release-work
 subscription-usage and artifact-cleanup tests now run in the Android build job
 before packaging. The Code Quality shell lint remains in place.
 
+The reusable entry also accepts `source_sha`, `release_version`, and
+`release_version_code`. Main-repository releases verify the pinned source SHA
+and inject the same target metadata before the harness and Android build.
+
 ## exec.yml
 
-`exec.yml` builds the module. It runs on `push`, `pull_request`, and manual
-`workflow_dispatch`.
+`exec.yml` builds and verifies the source repository on `push` to `main`,
+`pull_request`, and manual dispatch. It has read-only repository permissions and
+uploads Actions artifacts. Manual `force_tests=true` ignores cached test results;
+`release_quality=true` runs the full build quality suite.
 
-Dispatch on `main` with `bump=patch`, `minor`, or `major` to prepare a version
-bump on a unique review branch and open a pull request. For example, `v1.3.9`
-becomes `v1.3.10`, `v1.4.0`, or `v2.0.0`, respectively. All three metadata files
-(`kam.toml`, `src/MagicNet/module.prop`, `update.json`) are updated together and
-`versionCode` increases by one. The pull request runs the normal quality and
-package checks; merging it to `main` starts the ordinary build/release path.
+The reusable workflow accepts an immutable `source_sha`, a `recipe_sha`, the
+selected `release_version` and `release_version_code`, and `release_quality`.
+It checks out that source commit and stamps the selected metadata in the build
+workspace. The source commit remains unchanged. Its `artifact_id` output lets
+the caller select the exact build artifact.
 
-With `bump=none`, the workflow builds the existing committed version and can
-publish it when `release=true`.
+### Build, verify, or publish a version
 
-With a bump, `release=true` adds a release request to the review branch, so the
-merge to `main` publishes it. `prerelease=true` is preserved in that request and
-requires `release=true`. A version-only bump builds without publishing.
+Use [Build and release MagicNet](https://github.com/LIghtJUNction/MagicNet/actions/workflows/release.yml)
+in the **main MagicNet repository**, selecting **main** in **Run workflow**.
+That workflow owns version selection, release snapshots, GitHub Releases and the
+stable update index. The complete procedure is in the
+[release guide](https://github.com/LIghtJUNction/MagicNet/blob/main/docs/releasing.md).
 
-Reruns whose original commit is no longer the head of `main` fail and require a
-new dispatch.
+| `mode` | Result |
+| --- | --- |
+| `build` | Build and validate packages; upload Actions artifacts. This is the default. |
+| `verify` | Also run every release quality check and Android/KernelSU acceptance; create no Release. |
+| `publish` | Run the same gates, publish a Release, then update the stable index for a stable release. |
 
-There are two ways to publish after review:
+Select `bump=patch`, `minor`, or `major` to increment the newer source/published
+version. To choose an exact version, set `bump=none` and enter `version=1.9.0`
+or `v1.9.0`. With `bump=none` and an empty `version`, use the source-declared version.
 
-- Include `.github/release-request` in the version commit, with the exact version
-  on the first line, for example `v1.3.9`. Pushing it to `main` requests a release
-  only when that file changed in the triggering push's `before..sha` range.
-  The file remains in the repository; later pushes that leave it unchanged
-  do not request another release. Update it to the next exact version for
-  the next release. An optional second line, `prerelease=true`, requests a
-  prerelease. Single-line version markers remain supported; the previous `patch`
-  marker is no longer supported.
-- Dispatch `exec.yml` on `main` with `release=true` to publish the current version.
-  Set `prerelease=true` to mark the release as a prerelease.
-  Keep `bump=none`; the committed version tag must not already exist.
+Leave `version_code` empty for automatic selection: an unchanged version keeps
+the source code; a changed version increments the larger source/published code.
+An explicit code must be an integer from `1` to `2147483647`; publication requires
+a code greater than previously published versions. `build` and `verify` use the
+main repository's stable index as their preview baseline; `publish` also checks
+public GitHub Releases, including prereleases.
 
-Pull requests and ordinary pushes build and upload workflow artifacts without
-publishing a release. Builds and releases do not require a KernelSU developer
-key; final release assets include a verified `SHA256SUMS` manifest.
+Leave `source_ref` empty to use the main repository's pinned source gitlink.
+Set it to `main`, a branch, tag, or full SHA to select another source revision;
+the workflow resolves it to one immutable commit for both build and Android
+acceptance. Select a commit that contains the new reusable workflow and
+`scripts/stamp-release.py`; older source revisions lack this release interface.
 
-Release checks require matching committed version metadata,
-a matching release-request version when used, and a new tag and release.
-Publishing requires successful checksum, artifact and installation checks.
-The release tag targets the exact `GITHUB_SHA` that was built. Existing tags
-or releases are rejected; release assets are never overwritten.
+For example, `mode=verify`, `bump=patch`, `source_ref=main` validates the next patch
+from the latest source. Change `mode` to `publish` to publish it. Set
+`prerelease=true` only with `mode=publish`; prereleases leave the stable update
+index unchanged.
+
+Official packages and download URLs belong to `LIghtJUNction/MagicNet`.
+Artifacts include `update.json`, `build-source.json` with the selected source and
+recipe SHAs, and a verified `SHA256SUMS` manifest. Release tags target the main
+repository's fixed release snapshot. Existing published assets are not
+overwritten; recovery uses the original run and snapshot as described in the
+release guide.
 
 ### Build caches
 

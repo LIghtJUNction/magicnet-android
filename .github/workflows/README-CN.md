@@ -15,47 +15,57 @@
 和产物清理测试已迁入 Android 构建任务，位于打包之前。Code Quality 的 shell lint
 继续保留，没有以减少工作流为由删除这些检查。
 
+可复用入口还接收 `source_sha`、`release_version` 和 `release_version_code`。主仓库
+发起发行验收时，先验证固定源码 SHA，再于 harness 和 Android 构建前注入同一目标
+版本元数据。
+
 ## exec.yml
 
-`exec.yml` 用于构建模块。触发方式包括 `push`、`pull_request` 和手动
-`workflow_dispatch`。
+`exec.yml` 在 `main` 推送、PR 和手动触发时构建并验证源码。它只有仓库读取权限，
+产物上传到 Actions artifacts。手动设置 `force_tests=true` 会忽略缓存的测试结果；
+`release_quality=true` 会执行完整构建质量检查。
 
-在 `main` 上手动运行工作流时，可通过 `bump` 直接提交版本更新：
+可复用接口接收固定的 `source_sha`、`recipe_sha`、目标 `release_version`、
+`release_version_code` 和 `release_quality`。工作流检出指定源码提交，在构建工作区
+注入目标版本元数据，源码提交本身不变。输出 `artifact_id` 供调用方选取本次构建的
+确切产物。
 
-| 输入 | 行为 |
+### 构建、验证和发布版本
+
+统一入口是**主仓库 MagicNet** 的
+[Build and release MagicNet](https://github.com/LIghtJUNction/MagicNet/actions/workflows/release.yml)。
+点击 **Run workflow** 并选择 **main**。版本选择、发行快照、GitHub Release 和稳定更新
+索引均由主仓库管理。完整操作与失败恢复方式见
+[发布指南](https://github.com/LIghtJUNction/MagicNet/blob/main/docs/releasing.md)。
+
+| `mode` | 结果 |
 | --- | --- |
-| `none` | 构建当前已提交版本；勾选 `release` 可直接发布该版本 |
-| `patch` | 补丁号加一，例如 `v1.3.9` → `v1.3.10` |
-| `minor` | 次版本号加一并清零补丁号，例如 `v1.3.9` → `v1.4.0` |
-| `major` | 主版本号加一并清零其余两位，例如 `v1.3.9` → `v2.0.0` |
+| `build` | 构建、校验安装包并上传 Actions artifacts；默认选项。 |
+| `verify` | 进一步执行全部发布质量检查和 Android/KernelSU 验收；不创建 Release。 |
+| `publish` | 通过相同门禁后发布 Release；稳定版随后同步稳定更新索引。 |
 
-选择升级时，工作流同步更新 `kam.toml`、`src/MagicNet/module.prop` 和
-`update.json`，将 `versionCode` 加一，直接提交到 `main`，随后显式触发新提交的构建。
-这是因为 `GITHUB_TOKEN` 推送不会自动触发另一个 `push` 工作流。
-同时勾选 `release` 会写入发布请求，后续构建会发布；`prerelease` 也会保存在请求中，
-且要求同时勾选 `release`。仅升级版本时只构建不发布。
+选择 `bump=patch`、`minor` 或 `major`，以源码声明版本和已公开版本中较新的版本为
+基准递增。自定义版本时，选择 `bump=none`，填写 `version=1.9.0` 或 `v1.9.0`。
+`bump=none` 且 `version` 留空时，采用源码声明版本。
 
-若主分支已前进，旧运行重跑会拒绝操作，请重新从 `main` 发起工作流。
+`version_code` 留空即可自动选择：版本未变时沿用源码 code，版本变化时取源码与
+已公开版本中较大的 code 再加一。手动填写时须为 `1..2147483647` 范围内的整数；
+发行时必须大于已公开版本的 code。`build/verify` 以主仓库稳定索引作为预览基线；
+`publish` 还会查询 GitHub 已公开版本，包括预发布。
 
-审查后可通过两种方式发布：
+`source_ref` 留空时使用主仓库固定的源码 gitlink；填写 `main`、分支、标签或完整 SHA
+可选择另一源码版本。工作流先解析并固定为一个提交，构建与 Android 验收使用同一
+SHA。所选提交必须包含新版可复用工作流和 `scripts/stamp-release.py`；迁移前的旧
+源码提交不具备这个发布接口。
 
-- 在版本更新提交中同时添加或更新 `.github/release-request`，首行为精确版本号，
-  例如 `v1.3.9`。推送到 `main` 后，仅当该文件在本次 push 的 `before..sha`
-  范围内发生变更时，才请求发布。文件会保留在仓库中；后续未修改它的 push
-  不会重复请求发布。发布下一版时，将它更新为下一版的精确版本号。
-  预发布可增加第二行 `prerelease=true`；省略时为正式发布。
-  旧的单行版本标记继续兼容，旧的 `patch` 标记不再支持。
-- 在 `main` 上手动运行 `exec.yml`，选择 `release=true`。
-  手动发布时可选择 `prerelease=true`，将 Release 标记为预发布。
-  此时 `bump` 保持 `none`，且当前版本标签必须尚不存在。
+例如，`mode=verify`、`bump=patch`、`source_ref=main` 会完整验证最新源码的下一个
+补丁版；将 `mode` 改为 `publish` 即执行发布。`prerelease=true` 仅用于
+`mode=publish`，预发布不会修改稳定更新索引。
 
-普通 push 和 pull request 只构建并上传 workflow artifact。构建和发布不需要
-KernelSU 开发者私钥；最终产物附带已验证的 `SHA256SUMS` 校验和清单。
-
-发布前会检查已提交的版本元数据是否一致；使用发布请求文件时，
-其中的版本号也必须一致。目标 tag 和 Release 必须尚不存在。
-发布要求通过校验和、产物内容及安装检查。Release 的 tag 指向实际构建的
-`GITHUB_SHA`。已有 tag 或 Release 会被拒绝，发布资产不会被覆盖。
+官方安装包与下载地址统一属于 `LIghtJUNction/MagicNet`。构建产物包含 `update.json`、
+记录源码和配方 SHA 的 `build-source.json`，以及经过验证的 `SHA256SUMS` 清单。
+发行标签指向主仓库的固定发行快照。已公开的资产不会被覆盖；中断后按发布指南复用
+原运行和快照恢复。
 
 ### 构建缓存
 
