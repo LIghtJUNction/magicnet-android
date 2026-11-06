@@ -411,7 +411,8 @@ def module_curl_controls(device, out: Path, evidence: dict, identity: dict,
             'magicnet_installed_curl_proof', ROOT / 'scripts/android-public-curl-proof.py')
         proof = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(proof)
-        runtime = proof.verify(device)
+        evidence['local_tls_diagnostics'] = {}
+        runtime = proof.verify(device, diagnostics=evidence['local_tls_diagnostics'])
         require(runtime['versions'] == identity['versions'] | {'libcurl': identity['versions']['curl']},
                 'installed curl runtime version differs from production build')
         require(runtime['embedded_ca_sha256'] == identity['ca_sha256'],

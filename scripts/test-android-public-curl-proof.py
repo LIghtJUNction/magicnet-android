@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
@@ -63,6 +65,8 @@ class LocalDevice:
             return self.overrides[command]
         if command == 'id -Z':
             return cp(PROOF.KSU_DOMAIN + '\n')
+        if command == '/system/bin/date -u +%s':
+            return cp(str(int(time.time())) + '\n')
         selector = ('MODDIR=' + shlex.quote(PROOF.MOD) + '; . '
                     + shlex.quote(PROOF.MOD + '/lib/magicnet/primitives.sh') + '; magicnet_trusted_curl')
         if command == selector:
@@ -180,16 +184,29 @@ class CurlProofTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.object(PROOF, 'inspect_embedded_ca', return_value=None))
-        # Guard proof's only host subprocess. Device curl is run through a
-        # separate strict argv adapter; neither path can execute ADB.
+        # Guard the fixed certificate subprocesses. Device curl is run through
+        # a separate strict argv adapter; neither path can execute ADB.
         def host_run(args, **kwargs):
-            if not isinstance(args, list) or args[:2] != [HOST_OPENSSL, 'req']:
+            if not isinstance(args, list) or args[0] != HOST_OPENSSL or args[1] not in ('req', 'ca', 'x509'):
                 raise AssertionError('unexpected host subprocess')
-            key = Path(args[args.index('-keyout') + 1])
-            cert = Path(args[args.index('-out') + 1])
-            self.assertEqual(key.parent, cert.parent)
-            self.assertTrue(key.parent.name.startswith('magicnet-curl-proof-'))
-            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+            if args[1] == 'x509':
+                cert = Path(args[args.index('-in') + 1])
+                self.assertEqual(args, [HOST_OPENSSL, 'x509', '-in', str(cert), '-noout', '-dates'])
+                self.assertTrue(cert.parent.name.startswith('magicnet-curl-proof-'))
+                self.assertEqual(cert.name, 'public-test-ca.pem')
+            else:
+                key = Path(args[args.index('-keyout' if args[1] == 'req' else '-keyfile') + 1])
+                output = Path(args[args.index('-out') + 1])
+                self.assertEqual(key.parent, output.parent)
+                self.assertTrue(key.parent.name.startswith('magicnet-curl-proof-'))
+                self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+                if args[1] == 'ca':
+                    self.assertEqual(kwargs['cwd'], key.parent)
+                    for option, name in (('-in', 'request.pem'), ('-config', 'ca.conf')):
+                        self.assertEqual(Path(args[args.index(option) + 1]), key.parent / name)
+                    self.assertEqual(output.name, 'public-test-ca.pem')
+                    self.assertIn('-selfsign', args)
+                    self.assertIn('-batch', args)
             return REAL_RUN(args, **kwargs)
         self.stack.enter_context(patch.object(PROOF.subprocess, 'run', side_effect=host_run))
 
@@ -201,6 +218,23 @@ class CurlProofTests(unittest.TestCase):
         self.assertIsNone(self.device.mapping)
         self.assertFalse(self.device.ca_host.exists())
         self.assertTrue(all(0 < value <= 9 for value in self.device.timeouts))
+
+    def test_certificate_accepts_bounded_guest_clock_skew(self):
+        self.require_host_tools()
+        issued_at = int(time.time())
+        with tempfile.TemporaryDirectory(prefix='magicnet-curl-proof-') as directory:
+            cert, _ = PROOF.certificate(Path(directory), PROOF.Budget())
+            def verify_at(when):
+                return REAL_RUN([HOST_OPENSSL, 'verify', '-CAfile', str(cert),
+                                 '-verify_hostname', PROOF.HOSTNAME, '-attime', str(when), str(cert)],
+                                capture_output=True, text=True, timeout=5)
+            # Model a guest two minutes behind the certificate issuer without
+            # changing either machine's clock or disabling any TLS check.
+            behind = verify_at(issued_at - 120)
+            self.assertEqual(behind.returncode, 0, behind.stderr)
+            self.assertEqual(verify_at(issued_at).returncode, 0)
+            self.assertNotEqual(verify_at(issued_at - 600).returncode, 0)
+            self.assertNotEqual(verify_at(issued_at + 2 * 86400).returncode, 0)
 
     def test_real_host_tls_three_controls_and_deterministic_private_report(self):
         self.require_host_tools()
@@ -221,6 +255,42 @@ class CurlProofTests(unittest.TestCase):
         self.assertTrue(all(re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,3}', value)
                             for value in result['versions'].values()))
         self.assertEqual(self.device.curled, 3)
+        self.assert_clean()
+
+    def test_failed_tls_keeps_only_bounded_failure_and_clock_observations(self):
+        self.require_host_tools()
+        def mutate(args):
+            return (cp(rc=60, stderr='certificate is not yet valid https://private-canary.invalid/token')
+                    if '--url' in args else args)
+        self.device.curl_mutator = mutate
+        evidence = {}
+        with self.assertRaisesRegex(RuntimeError, '^curl_tls_positive_failed$'):
+            PROOF.verify(self.device, diagnostics=evidence)
+        self.assertEqual(evidence['status'], 'failed')
+        self.assertEqual(evidence['failure_code'], 'curl_tls_positive_failed')
+        self.assertTrue(evidence['cleanup'])
+        self.assertEqual(evidence['controls'], [{'control': 'positive', 'expected_exit_code': 0,
+            'exit_code': 60, 'reported_error': 'certificate_not_yet_valid', 'server_gets': 0,
+            'stderr_present': True}])
+        clock, validity = evidence['clock'], evidence['certificate']
+        self.assertEqual(clock['guest_clock_status'], 'observed')
+        self.assertIsInstance(clock['guest_utc_seconds'], int)
+        self.assertLessEqual(clock['host_before_utc_seconds'], clock['host_after_utc_seconds'])
+        self.assertEqual(validity['not_after_utc_seconds'] - validity['not_before_utc_seconds'], 86700)
+        self.assertNotIn('private-canary', json.dumps(evidence))
+        self.assertNotIn(PROOF.HOSTNAME, json.dumps(evidence))
+        self.assert_clean()
+
+    def test_unknown_guest_clock_does_not_change_tls_acceptance_or_expose_output(self):
+        self.require_host_tools()
+        self.device.overrides['/system/bin/date -u +%s'] = cp('private-clock-canary', rc=1)
+        evidence = {}
+        self.assertEqual(PROOF.verify(self.device, diagnostics=evidence)['status'], 'verified')
+        self.assertEqual(evidence['status'], 'verified')
+        self.assertEqual(evidence['clock']['guest_clock_status'], 'unknown')
+        self.assertIsNone(evidence['clock']['guest_utc_seconds'])
+        self.assertEqual([x['exit_code'] for x in evidence['controls']], [0, 60, 60])
+        self.assertNotIn('private-clock-canary', json.dumps(evidence))
         self.assert_clean()
 
     def test_unverified_device_makes_no_calls_or_host_subprocesses(self):
@@ -281,8 +351,12 @@ class CurlProofTests(unittest.TestCase):
         def mutate(args):
             return cp('invented-success', 0) if '--url' in args else args
         self.device.curl_mutator = mutate
+        evidence = {}
         with self.assertRaisesRegex(RuntimeError, '^curl_tls_positive_failed$'):
-            PROOF.verify(self.device)
+            PROOF.verify(self.device, diagnostics=evidence)
+        self.assertEqual(evidence['controls'][0]['exit_code'], 0)
+        self.assertEqual(evidence['controls'][0]['server_gets'], 0)
+        self.assertEqual(evidence['failure_code'], 'curl_tls_positive_failed')
         self.assert_clean()
 
     def test_cleanup_failure_prevents_pass(self):

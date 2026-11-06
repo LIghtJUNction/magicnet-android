@@ -218,6 +218,56 @@ class ArchiveTests(unittest.TestCase):
                              SIM.hashlib.sha256(archive.read(SIM.CURL_PROVENANCE)).hexdigest())
 
 
+class ModuleCurlControlTests(unittest.TestCase):
+    def run_controls(self, proof, out, evidence):
+        identity = {'curl_sha256': 'a' * 64, 'ca_sha256': 'b' * 64,
+                    'versions': {'curl': '8.22.0', 'openssl': '3.5.8', 'zlib': '1.3.2'}}
+        device = Mock()
+        device.kshell.return_value = cp(identity['curl_sha256'] + '  ' + SIM.MOD + '/bin/curl\n')
+        with patch.object(SIM.importlib.util, 'spec_from_file_location', return_value=Mock()), \
+                patch.object(SIM.importlib.util, 'module_from_spec', return_value=proof), \
+                patch.object(SIM, 'product_connectivity_observation') as connectivity:
+            try:
+                SIM.module_curl_controls(device, out, evidence, identity, False)
+            finally:
+                self.assertEqual(connectivity.call_count, int(evidence.get('status') == 'passed'))
+
+    def test_failed_tls_diagnostics_survive_in_the_existing_artifact(self):
+        proof = Mock()
+        def fail(_device, *, diagnostics):
+            diagnostics.update({'schema': 1, 'status': 'failed',
+                                'controls': [{'exit_code': 60, 'reported_error': 'certificate_not_yet_valid'}]})
+            raise RuntimeError('curl_tls_positive_failed')
+        proof.verify.side_effect = fail
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, out = {}, Path(directory)
+            with self.assertRaisesRegex(RuntimeError, '^curl_tls_positive_failed$'):
+                self.run_controls(proof, out, evidence)
+            saved = json.loads((out / 'module-curl-controls.json').read_text())
+        self.assertEqual(saved['status'], 'failed')
+        self.assertEqual(saved['stage'], 'local_tls_controls')
+        self.assertTrue(saved['installed_binary_verified'])
+        self.assertEqual(saved['local_tls_diagnostics']['controls'][0]['exit_code'], 60)
+        self.assertNotIn('local_tls', saved)
+        self.assertNotIn('connectivity', saved)
+
+    def test_success_keeps_runtime_attestation_and_diagnostics_separate(self):
+        proof = Mock()
+        def passed(_device, *, diagnostics):
+            diagnostics.update({'schema': 1, 'status': 'verified', 'controls': []})
+            return {'versions': {'curl': '8.22.0', 'libcurl': '8.22.0', 'openssl': '3.5.8', 'zlib': '1.3.2'},
+                    'embedded_ca_sha256': 'b' * 64}
+        proof.verify.side_effect = passed
+        with tempfile.TemporaryDirectory() as directory:
+            evidence, out = {}, Path(directory)
+            self.run_controls(proof, out, evidence)
+            saved = json.loads((out / 'module-curl-controls.json').read_text())
+        self.assertEqual(saved['status'], 'passed')
+        self.assertEqual(saved['stage'], 'complete')
+        self.assertEqual(saved['local_tls_diagnostics']['status'], 'verified')
+        self.assertEqual(saved['local_tls']['embedded_ca_sha256'], 'b' * 64)
+
+
 class ProductConnectivityTests(unittest.TestCase):
     def setUp(self):
         self.device = Mock()
