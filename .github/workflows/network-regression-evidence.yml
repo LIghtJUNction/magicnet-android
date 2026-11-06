@@ -50,10 +50,16 @@ jobs:
         run: |
           python3 scripts/profile-core-memory.py --core "$RUNNER_TEMP/core/sing-box" \
             --config src/MagicNet/.config/sing-box/config.json --output artifacts/core-memory.json
+      - name: Measure bounded loopback forwarding with the production core
+        run: |
+          python3 scripts/test-host-connectivity-performance.py \
+            --core "$RUNNER_TEMP/core/sing-box" --output artifacts/host-forwarding.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: core-memory-evidence
-          path: artifacts/core-memory.json
+          path: |
+            artifacts/core-memory.json
+            artifacts/host-forwarding.json
           if-no-files-found: error
   visual-evidence:
     runs-on: ubuntu-24.04

@@ -71,11 +71,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # One routing unit test validates the bundled MagicSingBox source config.
-      # Initialize only that pinned gitlink instead of downloading every build
+      # Rust tests read the bundled routing config and execute kamfw's watchdog.
+      # Initialize only these pinned gitlinks instead of downloading every build
       # submodule (especially the much larger sing-box source repository).
-      - name: Initialize bundled routing config
-        run: git submodule update --init --depth 1 -- src/MagicNet/.config/sing-box
+      - name: Initialize Rust test submodules
+        run: git submodule update --init --depth 1 -- src/MagicNet/.config/sing-box src/MagicNet/lib/kamfw
 
       - name: Restore per-check test results
         uses: ./.github/actions/test-cache

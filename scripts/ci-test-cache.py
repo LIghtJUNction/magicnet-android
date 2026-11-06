@@ -31,8 +31,10 @@ SCOPES = {
         "Cargo.toml", "Cargo.lock", ".cargo", "crates", "rust-toolchain.toml",
         "src/MagicNet/.config/sing-box",
         # Rust integration tests execute this Python fixture and copy/source
-        # shipped shell modules, including subscription lock interoperability.
+        # shipped shell modules and kamfw's watchdog, including subscription
+        # lock interoperability and connectivity recovery lifecycle.
         "scripts/test-transparent-recovery.py", "src/MagicNet/lib/magicnet",
+        "src/MagicNet/lib/kamfw",
     ),
     # Host regressions cover the module/build surface and read these exact Rust
     # lifecycle contracts. Unrelated crate and WebUI edits remain excluded.

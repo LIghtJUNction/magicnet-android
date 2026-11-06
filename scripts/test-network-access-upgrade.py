@@ -24,7 +24,10 @@ class RecoveryUpgradeTests(unittest.TestCase):
         snapshot = source.split("  # Snapshot the old full file for node recovery and a private rollback copy.\n", 1)[1]
         snapshot = snapshot.split("  MAGICNET_BACKUP_READY=1\n", 1)[0]
         restore = source.split('if [ "$MAGICNET_BACKUP_READY" = 1 ]; then\n', 1)[1]
-        restore = restore.split("  unset _item\nfi", 1)[0]
+        # Keep the complete migration loop through its here-document, independent
+        # of which temporary variables the installer unsets after the loop.
+        restore_end = "\nEOF_MAGICNET_MIGRATION_ITEMS\n"
+        restore = restore[:restore.index(restore_end) + len(restore_end)]
         self.command = ('set -eu\nabort() { exit 31; }\n'
                         'MAGICNET_PREV_DIR=$1\nMAGICNET_BACKUP_DIR=$2\nMODPATH=$3\n'
                         + migration_items + snapshot + restore)

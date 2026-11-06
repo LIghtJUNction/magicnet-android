@@ -302,23 +302,26 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(self.count(), 2)
 
     def test_recursive_submodule_revision_and_dirty_bytes_invalidate(self):
-        sub = self.root / 'sub'
-        subprocess.run(['git', 'init', '-q', str(sub)], check=True)
-        self.write('sub/file', 'one')
-        subprocess.run(['git', 'add', '.'], cwd=sub, check=True)
-        def commit():
-            subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
-                            'commit', '-qm', 'fixture'], cwd=sub, check=True)
-        commit()
-        # A real submodule checkout has .git as either a file or directory.
-        subprocess.run(['git', 'add', 'sub'], cwd=self.root, check=True, capture_output=True)
-        self.run_check()
-        self.write('sub/file', 'two')
-        self.run_check()
-        subprocess.run(['git', 'add', '.'], cwd=sub, check=True)
-        commit()
-        self.run_check()
-        self.assertEqual(self.count(), 3)
+        for scope, relative in (('repo', 'sub'), ('rust', 'src/MagicNet/lib/kamfw')):
+            with self.subTest(scope=scope):
+                previous_count = self.count() if (self.root / 'count').exists() else 0
+                sub = self.root / relative
+                subprocess.run(['git', 'init', '-q', str(sub)], check=True)
+                self.write(f'{relative}/watchdog.sh', 'one')
+                subprocess.run(['git', 'add', '.'], cwd=sub, check=True)
+                def commit():
+                    subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.invalid',
+                                    'commit', '-qm', 'fixture'], cwd=sub, check=True)
+                commit()
+                # A real submodule checkout has .git as either a file or directory.
+                subprocess.run(['git', 'add', relative], cwd=self.root, check=True, capture_output=True)
+                self.run_check(scope=scope)
+                self.write(f'{relative}/watchdog.sh', 'two')
+                self.run_check(scope=scope)
+                subprocess.run(['git', 'add', '.'], cwd=sub, check=True)
+                commit()
+                self.run_check(scope=scope)
+                self.assertEqual(self.count(), previous_count + 3)
 
 
 if __name__ == '__main__':
