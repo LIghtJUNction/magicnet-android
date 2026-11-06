@@ -194,32 +194,13 @@ func (o options) rankRoutes(c component, direct string, attempted map[string]boo
 	if len(candidates) == 0 {
 		return nil
 	}
-	type indexedRoute struct {
-		index int
-		route route
-	}
-	jobs := make(chan int, len(candidates))
-	results := make(chan indexedRoute, len(candidates))
-	for i := range candidates {
-		jobs <- i
-	}
-	close(jobs)
-	for i := 0; i < min(routeProbeWorkers, len(candidates)); i++ {
-		go func() {
-			for index := range jobs {
-				r := candidates[index]
-				results <- indexedRoute{index, o.probe(c, r.url, r.name, r.prefix)}
-			}
-		}()
-	}
 	ranked := make([]route, len(candidates))
-	for range candidates {
-		r := <-results
-		ranked[r.index] = r.route
-		// Only the collecting goroutine writes logs, including bytes.Buffer
-		// test writers. A larger pool must not introduce a logger data race.
-		o.reportRoute(r.route)
-	}
+	_ = parallel(len(candidates), routeProbeWorkers, func(index int) error {
+		r := candidates[index]
+		ranked[index] = o.probe(c, r.url, r.name, r.prefix)
+		o.reportRoute(ranked[index]) // printf serializes writers, including test buffers.
+		return nil
+	})
 	return rankedDownloadRoutes(ranked)
 }
 

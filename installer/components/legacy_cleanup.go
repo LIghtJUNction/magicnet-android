@@ -64,24 +64,20 @@ func cleanupLegacyComponentCache(cache string) error {
 		return fmt.Errorf("legacy component cache is busy: %w", err)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	entries, err := os.ReadDir(cache)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !legacyArchiveName.MatchString(entry.Name()) && !legacyDownloadName.MatchString(entry.Name()) {
-			continue
-		}
-		name := filepath.Join(cache, entry.Name())
-		if regular(name) == nil {
-			if err := os.Remove(name); err != nil {
-				return err
+	if err := visitDirectory(cache, func(entry os.DirEntry) error {
+		if legacyArchiveName.MatchString(entry.Name()) || legacyDownloadName.MatchString(entry.Name()) {
+			name := filepath.Join(cache, entry.Name())
+			if regular(name) == nil {
+				return os.Remove(name)
 			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	// Retain the lock when unrecognized contents remain. An empty, retired
 	// cache can disappear completely; no new release writes to it.
-	entries, err = os.ReadDir(cache)
+	entries, err := directoryHead(cache, 2)
 	if err != nil {
 		return err
 	}
@@ -113,22 +109,18 @@ func cleanupLegacyBackups(parent string) error {
 	if !legacyDirectory(parent) {
 		return nil
 	}
-	entries, err := os.ReadDir(parent)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
+	return visitDirectory(parent, func(entry os.DirEntry) error {
 		match := legacyBackupName.FindStringSubmatch(entry.Name())
 		if match == nil {
-			continue
+			return nil
 		}
 		pid, err := strconv.Atoi(match[1])
 		if err != nil || !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
-			continue // A live or inaccessible owner is not stale.
+			return nil // A live or inaccessible owner is not stale.
 		}
 		directory := filepath.Join(parent, entry.Name())
 		if !legacyDirectory(directory) || !legacyExact(filepath.Join(directory, ".magicnet-install-backup-v1"), "magicnet-install-backup-v1\n") {
-			continue
+			return nil
 		}
 		// Old backups preserve read-only directory modes. Walk physically and
 		// change only owned directories, never symlink targets or user files.
@@ -153,8 +145,8 @@ func cleanupLegacyBackups(parent string) error {
 		if err := os.RemoveAll(directory); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func legacyFarewellIdle(directory string) bool {
@@ -162,52 +154,45 @@ func legacyFarewellIdle(directory string) bool {
 	if err != nil || time.Since(st.ModTime()) < 10*time.Minute {
 		return false // The old worker can legitimately live for 480 seconds.
 	}
-	processes, err := os.ReadDir("/proc")
-	if err != nil {
-		return false
-	}
-	for _, process := range processes {
+	needle := []byte(directory + "/")
+	return visitDirectory("/proc", func(process os.DirEntry) error {
 		if _, err := strconv.Atoi(process.Name()); err != nil {
-			continue
+			return nil
 		}
 		command, err := os.ReadFile(filepath.Join("/proc", process.Name(), "cmdline"))
 		if err != nil && !os.IsNotExist(err) {
-			return false
+			return err
 		}
-		if bytes.Contains(command, []byte(directory+"/")) {
-			return false
+		if bytes.Contains(command, needle) {
+			return errors.New("farewell worker is still active")
 		}
-	}
-	return true
+		return nil
+	}) == nil
 }
 
 func cleanupLegacyFarewell(parent string) error {
-	entries, err := os.ReadDir(parent)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
+	return visitDirectory(parent, func(entry os.DirEntry) error {
 		if !legacyFarewellName.MatchString(entry.Name()) {
-			continue
+			return nil
 		}
 		directory := filepath.Join(parent, entry.Name())
 		if !legacyDirectory(directory) || !legacyFarewellIdle(directory) {
-			continue
+			return nil
 		}
 		// These old directories have no owner marker. Require their exact
 		// public worker contract; a matching directory name alone is not proof.
 		worker := "#!/system/bin/sh\nMN_FAREWELL_RUN=${0%/*}\n. \"$MN_FAREWELL_RUN/uninstall.sh\" || exit 1\nmagicnet_farewell_worker \"$MN_FAREWELL_RUN\"\n"
 		if !legacyExact(filepath.Join(directory, "worker.sh"), worker) ||
 			!legacyExact(filepath.Join(directory, "httpd.conf"), "A:127.0.0.1\nD:*\n") {
-			continue
+			return nil
 		}
 		token, err := readBounded(filepath.Join(directory, "token"), 33)
 		if err != nil || !legacyToken.Match(token) {
-			continue
+			return nil
 		}
 		page, err := readBounded(filepath.Join(directory, "www", strings.TrimSpace(string(token)), "index.html"), 256*1024)
 		if err != nil || !bytes.Contains(page, []byte(`id="farewell"`)) {
-			continue
+			return nil
 		}
 		allowed := map[string]bool{}
 		for _, name := range []string{".", "busybox", "uninstall.sh", "launcher.sh", "token", "version", "httpd.conf", "worker.sh", "www", "www/" + strings.TrimSpace(string(token)), "www/" + strings.TrimSpace(string(token)) + "/index.html"} {
@@ -223,13 +208,13 @@ func cleanupLegacyFarewell(parent string) error {
 			}
 			return nil
 		}); err != nil {
-			continue
+			return nil
 		}
 		if err := os.RemoveAll(directory); err != nil {
 			return err
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func cleanupLegacyStorage(moduleDir string) error {

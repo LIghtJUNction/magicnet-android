@@ -4,6 +4,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -122,15 +123,22 @@ func (m manifest) validate() error {
 			}
 		}
 	}
-	// A file may not be the parent of another file, even across components.
+	if name := overlappingPath(names); name != "" {
+		return fmt.Errorf("overlapping component path: %s", name)
+	}
+	return nil
+}
+
+// A payload file cannot also be another payload's parent directory.
+func overlappingPath(names map[string]bool) string {
 	for name := range names {
 		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
 			if names[parent] {
-				return fmt.Errorf("overlapping component path: %s", name)
+				return name
 			}
 		}
 	}
-	return nil
+	return ""
 }
 
 // Validate every existing path component. No extraction/copy/removal follows a
@@ -227,21 +235,17 @@ func zipIndex(z *zip.Reader) (map[string]*zip.File, error) {
 	}
 	return entries, nil
 }
-func stageZip(c component, entries map[string]*zip.File, stage string, exact bool) error {
-	if exact && len(entries) != len(c.Files) {
-		return errors.New("component ZIP contains unexpected files")
-	}
+
+// Local reuse and ZIP extraction share verification and reader ownership.
+// Callers supply only the source validation appropriate to their container.
+func stageFiles(c component, stage string, open func(payloadFile) (io.ReadCloser, error)) error {
 	for _, f := range c.Files {
-		entry := entries[f.Path]
-		if entry == nil || !entry.Mode().IsRegular() || entry.UncompressedSize64 != uint64(f.Size) {
-			return fmt.Errorf("missing/unsafe component entry: %s", f.Path)
-		}
-		r, err := entry.Open()
+		reader, err := open(f)
 		if err != nil {
 			return err
 		}
-		err = copyVerified(r, filepath.Join(stage, f.Path), f)
-		closeErr := r.Close()
+		err = copyVerified(reader, filepath.Join(stage, f.Path), f)
+		closeErr := reader.Close()
 		if err != nil {
 			return err
 		}
@@ -250,6 +254,19 @@ func stageZip(c component, entries map[string]*zip.File, stage string, exact boo
 		}
 	}
 	return nil
+}
+
+func stageZip(c component, entries map[string]*zip.File, stage string, exact bool) error {
+	if exact && len(entries) != len(c.Files) {
+		return errors.New("component ZIP contains unexpected files")
+	}
+	return stageFiles(c, stage, func(f payloadFile) (io.ReadCloser, error) {
+		entry := entries[f.Path]
+		if entry == nil || !entry.Mode().IsRegular() || entry.UncompressedSize64 != uint64(f.Size) {
+			return nil, fmt.Errorf("missing/unsafe component entry: %s", f.Path)
+		}
+		return entry.Open()
+	})
 }
 func hasFiles(c component, entries map[string]*zip.File) bool {
 	for _, f := range c.Files {
@@ -263,30 +280,21 @@ func stageLocal(c component, root, stage string) (bool, error) {
 	if root == "" {
 		return false, nil
 	}
+	// Validate the entire component before staging its first file. A partial
+	// match must not leave files that collide with a later source's payload.
 	for _, f := range c.Files {
 		if !validFile(filepath.Join(root, f.Path), f.Size, f.SHA256) {
 			return false, nil
 		}
 	}
-	for _, f := range c.Files {
+	err := stageFiles(c, stage, func(f payloadFile) (io.ReadCloser, error) {
 		name := filepath.Join(root, f.Path)
 		if err := regular(name); err != nil {
-			return false, err
+			return nil, err
 		}
-		r, err := os.Open(name)
-		if err != nil {
-			return false, err
-		}
-		err = copyVerified(r, filepath.Join(stage, f.Path), f)
-		closeErr := r.Close()
-		if err != nil {
-			return false, err
-		}
-		if closeErr != nil {
-			return false, closeErr
-		}
-	}
-	return true, nil
+		return os.Open(name)
+	})
+	return err == nil, err
 }
 
 // Pure-Go Android builds cannot use libc/netd resolution. Keep bootstrap DNS
@@ -479,23 +487,21 @@ func (o options) cachedRoute(c component, direct string) (route, bool) {
 }
 
 func (o options) rememberRoute(candidate route, c component) {
-	if o.route == nil {
-		return
-	}
-	routeHintMu.Lock()
-	defer routeHintMu.Unlock()
-	*o.route = routeHint{set: true, prefix: candidate.prefix, name: candidate.name,
-		verifiedAt: time.Now(), sampleSize: c.Size}
+	o.rememberRouteSample(candidate, c.Size)
 }
 
 func (o options) rememberProbedRoute(candidate route, c component) {
+	o.rememberRouteSample(candidate, min(c.Size, routeProbeBytes))
+}
+
+func (o options) rememberRouteSample(candidate route, size int64) {
 	if o.route == nil {
 		return
 	}
 	routeHintMu.Lock()
 	defer routeHintMu.Unlock()
 	*o.route = routeHint{set: true, prefix: candidate.prefix, name: candidate.name,
-		verifiedAt: time.Now(), sampleSize: min(c.Size, int64(routeProbeBytes))}
+		verifiedAt: time.Now(), sampleSize: size}
 }
 
 func (o options) invalidateRoute(prefix string) {
@@ -587,43 +593,43 @@ type componentDownload struct {
 	destination string
 }
 
-func (o options) downloadComponents(items []componentDownload) error {
-	if len(items) == 0 {
-		return nil
-	}
-	workers := min(componentDownloadWorkers, len(items))
-	o.printf("[download] fetching %d components with up to %d parallel transfers", len(items), workers)
-	jobs := make(chan componentDownload)
-	var wg sync.WaitGroup
-	var failed atomic.Bool
-	var firstErr error
+// Each worker claims one index at a time. Failure closes admission without
+// abandoning transfers already in flight; waiting here owns every goroutine.
+func parallel(count, limit int, work func(int) error) error {
+	var next atomic.Uint64
+	var stopped atomic.Bool
 	var first sync.Once
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
+	var group sync.WaitGroup
+	var result error
+	for range min(count, limit) {
+		group.Add(1)
 		go func() {
-			defer wg.Done()
-			for item := range jobs {
-				if failed.Load() {
-					continue
+			defer group.Done()
+			for !stopped.Load() {
+				index := int(next.Add(1) - 1)
+				if index >= count {
+					return
 				}
-				if err := o.download(item.component, item.direct, item.destination); err != nil {
-					first.Do(func() {
-						firstErr = err
-						failed.Store(true)
-					})
+				if err := work(index); err != nil {
+					first.Do(func() { result = err; stopped.Store(true) })
+					return
 				}
 			}
 		}()
 	}
-	for _, item := range items {
-		if failed.Load() {
-			break
-		}
-		jobs <- item
+	group.Wait()
+	return result
+}
+
+func (o options) downloadComponents(items []componentDownload) error {
+	if len(items) == 0 {
+		return nil
 	}
-	close(jobs)
-	wg.Wait()
-	return firstErr
+	o.printf("[download] fetching %d components with up to %d parallel transfers", len(items), min(componentDownloadWorkers, len(items)))
+	return parallel(len(items), componentDownloadWorkers, func(index int) error {
+		item := items[index]
+		return o.download(item.component, item.direct, item.destination)
+	})
 }
 
 func run(o options) (err error) {
@@ -802,7 +808,7 @@ func run(o options) (err error) {
 		}
 	}
 	stateFile := payloadFile{Path: "components.installed.json", SHA256: fmt.Sprintf("%x", sha256.Sum256(raw)), Size: int64(len(raw)), Mode: 0o600}
-	if err = copyVerified(strings.NewReader(string(raw)), filepath.Join(stage, stateFile.Path), stateFile); err != nil {
+	if err = copyVerified(bytes.NewReader(raw), filepath.Join(stage, stateFile.Path), stateFile); err != nil {
 		return err
 	}
 	files = append(files, stateFile)

@@ -61,7 +61,7 @@ func prepareWorkspace(root string) (string, error) {
 	if err := physical(stage, true); err != nil {
 		return "", err
 	}
-	entries, err := os.ReadDir(stage)
+	entries, err := directoryHead(stage, 1)
 	if err == nil {
 		if len(entries) > 0 {
 			if _, err := readBounded(filepath.Join(stage, workspaceOwner), 0); err != nil {
@@ -92,7 +92,24 @@ func prepareWorkspace(root string) (string, error) {
 // Remove the ownership marker last. A killed cleanup therefore leaves either
 // an identifiable workspace or an empty directory that is safe to remove.
 func cleanupWorkspace(stage string) error {
-	directory, err := os.Open(stage)
+	if err := visitDirectory(stage, func(entry os.DirEntry) error {
+		if entry.Name() == workspaceOwner {
+			return nil
+		}
+		return os.RemoveAll(filepath.Join(stage, entry.Name()))
+	}); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(stage, workspaceOwner)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Remove(stage)
+}
+
+// Installer cleanup can encounter arbitrarily many old files. Keep directory
+// enumeration bounded, and avoid sorting names whose order has no meaning.
+func visitDirectory(name string, visit func(os.DirEntry) error) error {
+	directory, err := os.Open(name)
 	if err != nil {
 		return err
 	}
@@ -103,20 +120,27 @@ func cleanupWorkspace(stage string) error {
 			return readErr
 		}
 		for _, entry := range entries {
-			if entry.Name() != workspaceOwner {
-				if err := os.RemoveAll(filepath.Join(stage, entry.Name())); err != nil {
-					return err
-				}
+			if err := visit(entry); err != nil {
+				return err
 			}
 		}
 		if readErr == io.EOF {
-			break
+			return nil
 		}
 	}
-	if err := os.Remove(filepath.Join(stage, workspaceOwner)); err != nil && !os.IsNotExist(err) {
-		return err
+}
+
+func directoryHead(name string, count int) ([]os.DirEntry, error) {
+	directory, err := os.Open(name)
+	if err != nil {
+		return nil, err
 	}
-	return os.Remove(stage)
+	defer directory.Close()
+	entries, err := directory.ReadDir(count)
+	if err == io.EOF {
+		err = nil
+	}
+	return entries, err
 }
 
 type promotionChange struct {
@@ -141,12 +165,8 @@ func (j promotionJournal) validate() error {
 		}
 		names[c.Path] = true
 	}
-	for name := range names {
-		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-			if names[parent] {
-				return errors.New("overlapping component promotion journal")
-			}
-		}
+	if overlappingPath(names) != "" {
+		return errors.New("overlapping component promotion journal")
 	}
 	return nil
 }
