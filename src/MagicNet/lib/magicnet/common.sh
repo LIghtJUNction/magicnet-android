@@ -606,9 +606,27 @@ magicnet_recover_interrupted_subscription() (
         magicnet_log "Interrupted subscription journal is owned by a live updater; recovery deferred."
         return 0
     fi
+    # This subshell cannot hand new pending workers back to an outer recovery
+    # coordinator. Keep its journal and the caller's restore intent intact.
+    if [ "${MAGICNET_CONFIG_LOCK_HELD:-0}" = 1 ] ||
+        [ "${MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE:-0}" = 1 ]; then
+        magicnet_warn "Interrupted subscription recovery requires an independent config-lock and supervisor-restore scope."
+        return 2
+    fi
 
     _rc=0
+    MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE=1
+    MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=0
+    MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
     magicnet_with_sub_config_lock magicnet_singbox_recover_interrupted_locked || _rc=$?
+    unset MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE
+    if magicnet_singbox_restore_pending_supervisors; then
+        _recovery_restore_rc=0
+    else
+        _recovery_restore_rc=$?
+        [ "$_rc" -ne 0 ] || _rc="$_recovery_restore_rc"
+    fi
+    unset MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING MAGICNET_SUB_FSWATCH_RESTORE_PENDING
     _finished=$(date +%s 2>/dev/null || printf '%s' 0)
     _elapsed=$((_finished - _started))
     if [ "$_rc" -eq 0 ]; then

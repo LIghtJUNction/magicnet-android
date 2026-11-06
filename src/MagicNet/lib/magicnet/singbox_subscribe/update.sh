@@ -903,6 +903,9 @@ magicnet_singbox_update_cleanup_stage() {
 
 magicnet_singbox_restore_pending_supervisors() {
     [ "${MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING:-0}" -eq 1 ] || return 0
+    # A nested with_config_lock call can return with its caller still holding
+    # the lock. Never start workers or release that caller's lock here.
+    [ "${MAGICNET_CONFIG_LOCK_HELD:-0}" != 1 ] || return 2
     magicnet_singbox_supervisor_restore "${MAGICNET_SUB_FSWATCH_RESTORE_PENDING:-0}"
 }
 
