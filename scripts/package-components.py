@@ -79,8 +79,36 @@ esac
 '''
 
 
-def digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+class ArchiveMember:
+    """Keep immutable ZIP members on disk until their output is being written."""
+
+    def __init__(self, archive: zipfile.ZipFile, info: zipfile.ZipInfo):
+        self.archive, self.info = archive, info
+        self.checksum: str | None = None
+
+    def __len__(self) -> int:
+        return self.info.file_size
+
+
+Payload = bytes | ArchiveMember
+
+
+def read_payload(data: Payload) -> bytes:
+    return data.archive.read(data.info) if isinstance(data, ArchiveMember) else data
+
+
+def digest(data: Payload) -> str:
+    if isinstance(data, bytes):
+        return hashlib.sha256(data).hexdigest()
+    if data.checksum is None:
+        with data.archive.open(data.info) as stream:
+            data.checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+    return data.checksum
+
+
+def file_digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def clean_path(name: str) -> str:
@@ -92,14 +120,14 @@ def clean_path(name: str) -> str:
     return name
 
 
-def validate_core_links(entries: dict[str, tuple[zipfile.ZipInfo, bytes]]) -> None:
+def validate_core_links(entries: dict[str, tuple[zipfile.ZipInfo, Payload]]) -> None:
     links = set()
     for name, (info, data) in entries.items():
         if not stat.S_ISLNK(info.external_attr >> 16):
             continue
         links.add(name)
         try:
-            target = data.decode("utf-8")
+            target = read_payload(data).decode("utf-8")
         except UnicodeDecodeError as error:
             raise ValueError(f"Invalid core symlink target: {name}") from error
         if (not target or target.startswith("/") or "\\" in target or
@@ -123,7 +151,7 @@ def component_for(name: str) -> str | None:
     return None
 
 
-def zip_entry(name: str, data: bytes, mode: int = 0o644, symlink: bool = False):
+def zip_entry(name: str, data: Payload, mode: int = 0o644, symlink: bool = False):
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.create_system = 3
     # Android module managers commonly use BusyBox unzip. BusyBox rejects
@@ -133,12 +161,26 @@ def zip_entry(name: str, data: bytes, mode: int = 0o644, symlink: bool = False):
     return info, data
 
 
-def write_zip(path: Path, entries: dict[str, tuple[zipfile.ZipInfo, bytes]]) -> None:
+def write_zip(path: Path, entries: dict[str, tuple[zipfile.ZipInfo, Payload]]) -> None:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as out:
         for name in sorted(entries):
             info, data = entries[name]
-            # writestr mutates offsets/sizes; keep shared/source ZIP metadata intact.
-            out.writestr(copy.copy(info), data, compresslevel=9)
+            entry = copy.copy(info)
+            if isinstance(data, bytes):
+                out.writestr(entry, data, compresslevel=9)
+            else:
+                # ZipFile.open uses ZipInfo's level (the public property arrived
+                # in Python 3.13); match writestr's level on older build hosts.
+                entry._compresslevel = 9
+                with data.archive.open(data.info) as source, out.open(entry, "w") as target:
+                    if data.checksum is not None:
+                        shutil.copyfileobj(source, target, 1024 * 1024)
+                    else:
+                        checksum = hashlib.sha256()
+                        while chunk := source.read(1024 * 1024):
+                            checksum.update(chunk)
+                            target.write(chunk)
+                        data.checksum = checksum.hexdigest()
 
 
 def split(source: Path, helper: Path, output: Path, repository: str, arch: str) -> dict:
@@ -177,7 +219,7 @@ def split(source: Path, helper: Path, output: Path, repository: str, arch: str) 
             kind = stat.S_IFMT(mode)
             if kind not in (0, stat.S_IFREG, stat.S_IFLNK):
                 raise ValueError(f"Unsupported ZIP entry type: {name}")
-            data = src.read(info)  # CRC is checked, too.
+            data = ArchiveMember(src, info)  # CRC is verified when streamed.
             symlink = kind == stat.S_IFLNK
             permissions = 0o755 if name.startswith("bin/") or mode & 0o111 else 0o644
             entry = zip_entry(name, data, permissions, symlink)
@@ -188,88 +230,88 @@ def split(source: Path, helper: Path, output: Path, repository: str, arch: str) 
                 groups.setdefault(component, {})[name] = entry
             else:
                 scaffold[name] = entry
-    all_entries = dict(scaffold)
-    for entries in groups.values():
-        all_entries.update(entries)
-    validate_core_links(all_entries)
-    for required in ("module.prop", "customize.sh", ".config/sing-box/config.json"):
-        if required not in scaffold:
-            raise ValueError(f"Missing core entry: {required}")
-    if "bin-magicnet-mcp-server" in groups:
-        raise ValueError("Retired standalone MCP component is present")
-    for required in ("bin-sing-box", "bin-magicnet-cli"):
-        if required not in groups:
-            raise ValueError(f"Missing runtime component: {required}")
-    prop = dict(line.split("=", 1) for line in scaffold["module.prop"][1].decode().splitlines()
-                if "=" in line and not line.startswith("#"))
-    if prop.get("id") != "MagicNet" or not re.fullmatch(r"v\d+\.\d+\.\d+", prop.get("version", "")):
-        raise ValueError("Invalid module identity/version")
-    text = scaffold["customize.sh"][1].decode("utf-8")
-    anchor = "import rich\n"
-    if text.count(anchor) != 1:
-        raise ValueError("customize.sh bootstrap anchor changed; review integration")
-    scaffold["customize.sh"] = zip_entry("customize.sh", (text.replace(anchor, anchor + BOOTSTRAP).rstrip() +
-                                                     "\n" + LEGACY_INSTALLER_CLEANUP).encode(), 0o755)
-    scaffold[HELPER] = zip_entry(HELPER, helper.read_bytes(), 0o755)
-    manifest = {"schema": 1, "module": "MagicNet", "version": prop["version"],
-                "architecture": arch, "repository": repository, "components": []}
-    output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".components-", dir=output) as tmp:
-        stage = Path(tmp)
-        for component, entries in sorted(groups.items()):
-            files = [{"path": name, "sha256": digest(data), "size": len(data),
-                      "mode": (info.external_attr >> 16) & 0o777}
-                     for name, (info, data) in sorted(entries.items())]
-            # Payload ZIPs have normalized timestamps/order/permissions. Their
-            # identities do NOT contain the MagicNet release version.
-            asset = stage / "payload.zip"
-            write_zip(asset, entries)
-            checksum = digest(asset.read_bytes())
-            filename = f"MagicNet-component-{component}-{checksum}.zip"
-            asset.rename(stage / filename)
-            manifest["components"].append({"id": component, "sha256": checksum,
-                                            "size": (stage / filename).stat().st_size,
-                                            "asset": filename, "files": files})
-        encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
-        scaffold[MANIFEST] = zip_entry(MANIFEST, encoded)
-        (stage / MANIFEST).write_bytes(encoded)
-        core = dict(scaffold)
-        # KAM can dereference the source cli symlink while building its ZIP.
-        # Do not redownload a second CLI binary with every small core update.
-        # Keep the original full-package entry for legacy ELF smoke checks.
-        cli_payload = groups["bin-magicnet-cli"]["bin/magicnet-cli"][1]
-        if "cli" in core and core["cli"][1] == cli_payload:
-            core["cli"] = zip_entry("cli", b"bin/magicnet-cli", 0o777, symlink=True)
-        write_zip(stage / "MagicNet-core.zip", core)
-        core_bytes = (stage / "MagicNet-core.zip").stat().st_size
-        if core_bytes > MAX_CORE_BYTES:
-            raise ValueError(
-                f"Core archive is {core_bytes} bytes (limit {MAX_CORE_BYTES}); "
-                "move large payloads to components before publishing"
-            )
-        complete = dict(scaffold)
+        all_entries = dict(scaffold)
         for entries in groups.values():
-            complete.update(entries)
-        write_zip(stage / "MagicNet-full.zip", complete)
-        # The public installer IS the MagicNet core. Managers select MODID before
-        # customize.sh runs, so an outer magicnet_installer module cannot become
-        # MagicNet reliably by nesting install_module. Keep download names as
-        # aliases, not separate module identities or another downloaded ZIP.
-        for alias in ("MagicNet.zip", "magicnet_installer.zip"):
-            shutil.copyfile(stage / "MagicNet-core.zip", stage / alias)
-        report = {"version": prop["version"], "removed_build_cache_bytes": removed_bytes,
-                  "core_bytes": core_bytes, "installer_bytes": core_bytes,
-                  "core_limit_bytes": MAX_CORE_BYTES,
-                  "full_bytes": (stage / "MagicNet-full.zip").stat().st_size,
-                  "components": [{"id": c["id"], "bytes": c["size"], "sha256": c["sha256"]}
-                                 for c in manifest["components"]]}
-        (stage / "package-sizes.json").write_text(json.dumps(report, indent=2) + "\n")
-        (stage / "SHA256SUMS").write_text("".join(
-            f"{digest(p.read_bytes())}  {p.name}\n" for p in sorted(stage.iterdir()) if p.is_file()))
-        # Assemble every output before replacing any existing input/output file.
-        for path in stage.iterdir():
-            os.replace(path, output / path.name)
-    return manifest
+            all_entries.update(entries)
+        validate_core_links(all_entries)
+        for required in ("module.prop", "customize.sh", ".config/sing-box/config.json"):
+            if required not in scaffold:
+                raise ValueError(f"Missing core entry: {required}")
+        if "bin-magicnet-mcp-server" in groups:
+            raise ValueError("Retired standalone MCP component is present")
+        for required in ("bin-sing-box", "bin-magicnet-cli"):
+            if required not in groups:
+                raise ValueError(f"Missing runtime component: {required}")
+        prop = dict(line.split("=", 1) for line in read_payload(scaffold["module.prop"][1]).decode().splitlines()
+                    if "=" in line and not line.startswith("#"))
+        if prop.get("id") != "MagicNet" or not re.fullmatch(r"v\d+\.\d+\.\d+", prop.get("version", "")):
+            raise ValueError("Invalid module identity/version")
+        text = read_payload(scaffold["customize.sh"][1]).decode("utf-8")
+        anchor = "import rich\n"
+        if text.count(anchor) != 1:
+            raise ValueError("customize.sh bootstrap anchor changed; review integration")
+        scaffold["customize.sh"] = zip_entry("customize.sh", (text.replace(anchor, anchor + BOOTSTRAP).rstrip() +
+                                                         "\n" + LEGACY_INSTALLER_CLEANUP).encode(), 0o755)
+        scaffold[HELPER] = zip_entry(HELPER, helper.read_bytes(), 0o755)
+        manifest = {"schema": 1, "module": "MagicNet", "version": prop["version"],
+                    "architecture": arch, "repository": repository, "components": []}
+        output.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".components-", dir=output) as tmp:
+            stage = Path(tmp)
+            for component, entries in sorted(groups.items()):
+                # Payload ZIPs have normalized timestamps/order/permissions. Their
+                # identities do NOT contain the MagicNet release version.
+                asset = stage / "payload.zip"
+                write_zip(asset, entries)
+                files = [{"path": name, "sha256": digest(data), "size": len(data),
+                          "mode": (info.external_attr >> 16) & 0o777}
+                         for name, (info, data) in sorted(entries.items())]
+                checksum = file_digest(asset)
+                filename = f"MagicNet-component-{component}-{checksum}.zip"
+                asset.rename(stage / filename)
+                manifest["components"].append({"id": component, "sha256": checksum,
+                                                "size": (stage / filename).stat().st_size,
+                                                "asset": filename, "files": files})
+            encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+            scaffold[MANIFEST] = zip_entry(MANIFEST, encoded)
+            (stage / MANIFEST).write_bytes(encoded)
+            core = dict(scaffold)
+            # KAM can dereference the source cli symlink while building its ZIP.
+            # Do not redownload a second CLI binary with every small core update.
+            # Keep the original full-package entry for legacy ELF smoke checks.
+            cli_payload = groups["bin-magicnet-cli"]["bin/magicnet-cli"][1]
+            if "cli" in core and len(core["cli"][1]) == len(cli_payload) and digest(core["cli"][1]) == digest(cli_payload):
+                core["cli"] = zip_entry("cli", b"bin/magicnet-cli", 0o777, symlink=True)
+            write_zip(stage / "MagicNet-core.zip", core)
+            core_bytes = (stage / "MagicNet-core.zip").stat().st_size
+            if core_bytes > MAX_CORE_BYTES:
+                raise ValueError(
+                    f"Core archive is {core_bytes} bytes (limit {MAX_CORE_BYTES}); "
+                    "move large payloads to components before publishing"
+                )
+            complete = dict(scaffold)
+            for entries in groups.values():
+                complete.update(entries)
+            write_zip(stage / "MagicNet-full.zip", complete)
+            # The public installer IS the MagicNet core. Managers select MODID before
+            # customize.sh runs, so an outer magicnet_installer module cannot become
+            # MagicNet reliably by nesting install_module. Keep download names as
+            # aliases, not separate module identities or another downloaded ZIP.
+            for alias in ("MagicNet.zip", "magicnet_installer.zip"):
+                shutil.copyfile(stage / "MagicNet-core.zip", stage / alias)
+            report = {"version": prop["version"], "removed_build_cache_bytes": removed_bytes,
+                      "core_bytes": core_bytes, "installer_bytes": core_bytes,
+                      "core_limit_bytes": MAX_CORE_BYTES,
+                      "full_bytes": (stage / "MagicNet-full.zip").stat().st_size,
+                      "components": [{"id": c["id"], "bytes": c["size"], "sha256": c["sha256"]}
+                                     for c in manifest["components"]]}
+            (stage / "package-sizes.json").write_text(json.dumps(report, indent=2) + "\n")
+            (stage / "SHA256SUMS").write_text("".join(
+                f"{file_digest(p)}  {p.name}\n" for p in sorted(stage.iterdir()) if p.is_file()))
+            # Assemble every output before replacing any existing input/output file.
+            for path in stage.iterdir():
+                os.replace(path, output / path.name)
+        return manifest
 
 
 def main() -> None:
