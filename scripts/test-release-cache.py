@@ -168,23 +168,19 @@ class ReleaseCacheTest(unittest.TestCase):
         self.write(name, '{"changed":true}\n')
         self.assert_rejected_without_changes()
 
-    def test_version_preparation_is_separate_from_cached_build(self):
+    def test_selected_version_is_verified_and_stamped_before_cache_restore(self):
         jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
-        version_steps = jobs["version-bump"]["steps"]
-        self.assertEqual(version_steps[0]["name"], "Checkout main for version bump")
-        self.assertEqual(version_steps[1]["name"], "Prepare version metadata")
-        self.assertFalse(any("cache" in step.get("uses", "").lower()
-                             for step in version_steps))
-
         steps = jobs["build"]["steps"]
         names = [step["name"] for step in steps]
         restore = [i for i, step in enumerate(steps)
                    if step.get("uses") == "./.github/actions/test-cache"
                    and step.get("with", {}).get("mode") == "restore"]
         self.assertEqual(len(restore), 1)
-        validate = names.index("Validate release request")
+        validate = names.index("Verify selected source and version")
+        stamp = names.index("Stamp selected build version")
         self.assertLess(names.index("Checkout repository"), validate)
-        self.assertLess(validate, restore[0])
+        self.assertLess(validate, stamp)
+        self.assertLess(stamp, restore[0])
         self.assertLess(restore[0], names.index("Verify pinned build submodules"))
 
 

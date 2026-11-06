@@ -291,25 +291,23 @@ class PackageTests(unittest.TestCase):
 
 
 class GateTests(unittest.TestCase):
-    def test_release_requires_same_checkout_quality_success(self):
+    def test_reusable_artifact_requires_same_checkout_quality_success(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/exec.yml").read_text())
-        self.assertEqual(set(workflow["jobs"]), {"version-bump", "release-android", "build"})
-        version_steps = workflow["jobs"]["version-bump"]["steps"]
-        self.assertFalse(any(s.get("name") == "Create GitHub release" for s in version_steps))
+        self.assertEqual(set(workflow["jobs"]), {"build"})
         steps = workflow["jobs"]["build"]["steps"]
         gate = next(s for s in steps if s.get("id") == "release_quality")
-        release = next(s for s in steps if s.get("name") == "Create GitHub release")
-        self.assertLess(steps.index(gate), steps.index(release))
-        self.assertIn("steps.release_quality.outcome == 'success'", release["if"])
-        self.assertNotIn("always()", release["if"])
+        artifact = next(s for s in steps if s.get("id") == "artifact")
+        checksums = next(s for s in steps if s.get("name") == "Generate release checksums")
+        self.assertLess(steps.index(gate), steps.index(checksums))
+        self.assertLess(steps.index(checksums), steps.index(artifact))
+        self.assertNotIn("if", artifact)
+        self.assertEqual(gate["if"], "${{ inputs.release_quality == true }}")
         self.assertNotIn("continue-on-error", gate)
         self.assertIn("bash scripts/quality-gate.sh all", gate["run"])
         self.assertIn("diff -u", gate["run"])
-        self.assertIn("--verify-build", gate["run"])
-        self.assertIn('--target "$RELEASE_COMMIT_SHA"', release["run"])
-        self.assertIn("--draft)", release["run"])
-        self.assertLess(release["run"].index("sha256sum -c"), release["run"].index("gh release create"))
-        self.assertLess(release["run"].index("gh release create"), release["run"].index("--draft=false"))
+        self.assertIn("scripts/stamp-release.py", gate["run"])
+        self.assertIn("--verify", gate["run"])
+        self.assertFalse(any("gh release" in step.get("run", "") for step in steps))
 
     def test_standalone_and_release_use_identical_quality_groups(self):
         quality = (ROOT / ".github/workflows/quality.yml").read_text()
