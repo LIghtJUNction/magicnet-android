@@ -901,6 +901,11 @@ magicnet_singbox_update_cleanup_stage() {
     [ -n "${_sub_stage_dir:-}" ] && rm -rf "$_sub_stage_dir" 2>/dev/null || true
 }
 
+magicnet_singbox_restore_pending_supervisors() {
+    [ "${MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING:-0}" -eq 1 ] || return 0
+    magicnet_singbox_supervisor_restore "${MAGICNET_SUB_FSWATCH_RESTORE_PENDING:-0}"
+}
+
 magicnet_singbox_update_interrupt() {
     _update_interrupt_code="$1"
     trap - EXIT HUP INT TERM
@@ -916,15 +921,10 @@ magicnet_singbox_update_interrupt() {
     fi
     MAGICNET_CONFIG_LOCK_HELD=0
     unset MAGICNET_CONFIG_LOCK_HELD
-    unset MAGICNET_SUB_DEFER_FSWATCH_RESTORE
-    _update_restore_fswatch="${MAGICNET_SUB_FSWATCH_RESTORE_PENDING:-0}"
-    if [ "${MAGICNET_SUB_FSWATCH_WAS_ACTIVE:-0}" = 1 ]; then
-        _update_restore_fswatch=1
-    fi
-    if [ "$_update_restore_fswatch" = 1 ]; then
-        magicnet_singbox_supervisor_restore 1 >/dev/null 2>&1 || true
-    fi
-    unset _update_restore_fswatch _update_interrupt_had_config_lock
+    unset MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE
+    magicnet_singbox_restore_pending_supervisors >/dev/null 2>&1 || true
+    unset _update_interrupt_had_config_lock
+    unset MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING
     unset MAGICNET_SUB_FSWATCH_RESTORE_PENDING MAGICNET_SUB_FSWATCH_WAS_ACTIVE
     magicnet_singbox_update_lock_release || true
     exit "$_update_interrupt_code"
@@ -936,31 +936,35 @@ magicnet_singbox_update_subscription() {
     trap 'magicnet_singbox_update_interrupt 129' HUP
     trap 'magicnet_singbox_update_interrupt 130' INT
     trap 'magicnet_singbox_update_interrupt 143' TERM
+    # Initial journal recovery, activation and failure rollback all hold the
+    # config lock. Restore the shared supervisor set only after every one of
+    # those critical sections has completed.
+    MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE=1
+    MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=0
+    MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
     if ! magicnet_with_config_lock magicnet_singbox_transaction_reconcile; then
+        unset MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE
+        magicnet_singbox_restore_pending_supervisors >/dev/null 2>&1 || true
+        unset MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING MAGICNET_SUB_FSWATCH_RESTORE_PENDING
         trap - EXIT HUP INT TERM
         magicnet_singbox_update_lock_release
         error "Previous subscription transaction recovery failed"
         return 1
     fi
     magicnet_singbox_cleanup_stale_candidates "${MAGICNET_SUB_CANDIDATE_URL_FILE:-${MAGICNET_SUB_CANDIDATE_SOURCE_FILE:-}}"
-    # Read by magicnet_singbox_restart_owned in config.sh.
-    # shellcheck disable=SC2034
-    MAGICNET_SUB_DEFER_FSWATCH_RESTORE=1
-    MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
     magicnet_with_config_lock magicnet_singbox_update_subscription_unlocked
     _update_rc=$?
-    unset MAGICNET_SUB_DEFER_FSWATCH_RESTORE
     if [ "$_update_rc" -ne 0 ]; then
         magicnet_with_config_lock magicnet_singbox_transaction_reconcile >/dev/null 2>&1 || true
         magicnet_singbox_update_cleanup_stage
     fi
-    if [ "${MAGICNET_SUB_FSWATCH_RESTORE_PENDING:-0}" -eq 1 ] &&
-        ! magicnet_singbox_supervisor_restore 1; then
+    unset MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE
+    if ! magicnet_singbox_restore_pending_supervisors; then
         _update_rc=1
-        magicnet_singbox_update_status complete failed fswatch_restore_failed || true
-        error "fswatch failed to restart after subscription update"
+        magicnet_singbox_update_status complete failed supervisor_restore_failed || true
+        error "Maintenance supervisors failed to restart after subscription update"
     fi
-    unset MAGICNET_SUB_FSWATCH_RESTORE_PENDING
+    unset MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING MAGICNET_SUB_FSWATCH_RESTORE_PENDING
     trap - EXIT HUP INT TERM
     if ! magicnet_singbox_update_lock_release; then
         error "Subscription update lock cleanup failed"

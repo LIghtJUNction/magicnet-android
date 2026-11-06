@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-MODDIR="$WORK/module"
+MODDIR="$WORK/module with spaces"
 KAM_HOME="$MODDIR"
 export MODDIR KAM_HOME
 mkdir -p "$MODDIR/.state/fswatch" "$MODDIR/.state/watchdog"
@@ -18,6 +18,9 @@ set_i18n() { :; }
 magicnet_fswatch_name() { printf '%s\n' magicnet-config; }
 magicnet_supervisor_pidfile_matches() {
     printf '%s\n' "$2" >>"$WORK/candidates"
+    # Unrelated module commands may have an unreadable cmdline. They are not
+    # candidates for this supervisor and must never reach its identity probe.
+    case "$2" in 404 | 505 | 606 | 707) return 2 ;; esac
     [ "$2" = 101 ]
 }
 ps() {
@@ -25,6 +28,9 @@ ps() {
 101  sh $MODDIR/.state/fswatch/magicnet-config.loop.sh
 202  com.example.unrelated
 303  $MODDIR/cli config apply
+404  $MODDIR/cli health
+505  $MODDIR/bin/sing-box run -c $MODDIR/.config/sing-box/config.json
+606  sh $MODDIR/.state/watchdog/magicnet-kernel.loop.sh
 EOF
 }
 
@@ -35,6 +41,16 @@ output="$(magicnet_supervisor_orphan_pids fswatch)"
 }
 [ "$(tr '\n' ' ' <"$WORK/candidates")" = "101 303 " ] || {
     printf '%s\n' 'ps prefilter did not narrow candidates before /proc validation' >&2
+    exit 1
+}
+
+# A matching loop with unknown ownership must still block status and stop.
+ps() {
+    printf '707 sh %s/.state/fswatch/magicnet-config.loop.sh\n' "$MODDIR"
+}
+if magicnet_supervisor_orphan_pids fswatch; then actual=0; else actual=$?; fi
+[ "$actual" -eq 2 ] || {
+    printf 'matching supervisor ownership was treated as known (exit=%s)\n' "$actual" >&2
     exit 1
 }
 

@@ -23,7 +23,8 @@ warn() { :; }
 error() { :; }
 magicnet_fswatch_status() { printf '%s\n' 5101; }
 record_mutation() { printf '%s\n' "$1" >>"$fixture/mutations.log"; }
-magicnet_supervisors_stop() { record_mutation supervisors-stop; }
+magicnet_supervisors_stop_workers() { record_mutation supervisors-stop; }
+magicnet_hotspot_route_cleanup() { :; }
 magicnet_disable_dns_capture() { record_mutation dns-capture-disable; }
 magicnet_disable_dns_leak_guard() { record_mutation dns-guard-disable; }
 magicnet_singbox_reset_bootstrap_cache() { record_mutation cache-reset; }

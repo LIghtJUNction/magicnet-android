@@ -1190,21 +1190,23 @@ magicnet_singbox_owned_ready() {
 }
 
 magicnet_singbox_supervisor_restore() {
-    # Subscription activation stops the kernel watchdog even when fswatch is
-    # disabled. Restore connectivity monitoring for the verified live core.
-    if command -v magicnet_connectivity_watchdog_start >/dev/null 2>&1 &&
-        command -v magicnet_kernel_running >/dev/null 2>&1 && magicnet_kernel_running; then
-        magicnet_connectivity_watchdog_start >/dev/null 2>&1 || return 1
-    fi
+    # Never give a stopped/unknown generation workers that could revive it.
+    if magicnet_kernel_running; then _restore_core_rc=0; else _restore_core_rc=$?; fi
+    case "$_restore_core_rc" in 0) ;; 1) return 0 ;; *) return 2 ;; esac
     _restore_fswatch_active="${1:-${_owned_fswatch_active:-0}}"
+    # Reuse the normal configured set, including Wi-Fi/hotspot/refresh. Every
+    # caller holding the config lock must defer this until after lock release.
+    if magicnet_supervisors_start "$_restore_fswatch_active"; then
+        _restore_rc=0
+    else
+        _restore_rc=$?
+        unset _restore_fswatch_active
+        return "$_restore_rc"
+    fi
     [ "$_restore_fswatch_active" -eq 1 ] || {
         unset _restore_fswatch_active
         return 0
     }
-    if ! magicnet_fswatch_start >/dev/null 2>&1; then
-        unset _restore_fswatch_active
-        return 1
-    fi
     magicnet_fswatch_status >/dev/null 2>&1
     _restore_rc=$?
     unset _restore_fswatch_active
@@ -1434,15 +1436,29 @@ magicnet_singbox_restart_owned() {
 
     # Only now is the old core definitely absent. Keep all network policy and
     # supervisor state intact throughout discovery and stop-wait uncertainty.
+    if [ "${MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE:-0}" -eq 1 ]; then
+        # Set before the first worker mutation so signal cleanup can restore
+        # the complete set even when fswatch was off. Latch its original active
+        # state across a failed activation followed by journal rollback.
+        MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=1
+        [ "$_owned_fswatch_active" -ne 1 ] || MAGICNET_SUB_FSWATCH_RESTORE_PENDING=1
+    fi
     _owned_cleanup_rc=0
-    magicnet_supervisors_stop >/dev/null 2>&1 || _owned_cleanup_rc=1
+    magicnet_supervisors_stop_workers >/dev/null 2>&1 || _owned_cleanup_rc=$?
+    if [ "$_owned_cleanup_rc" -eq 0 ]; then
+        # Hotspot policy already reconciles after startup and in its watcher.
+        # Preserve its ownership checks and warning, but do not leave the core
+        # stopped solely because this independent cleanup could not finish.
+        magicnet_hotspot_route_cleanup >/dev/null 2>&1 ||
+            warn "Hotspot route cleanup is incomplete; post-start reconciliation will retry"
+    fi
     magicnet_disable_dns_capture >/dev/null 2>&1 ||
-        { warn "Failed to clear DNS capture before subscription restart"; _owned_cleanup_rc=1; }
+        { warn "Failed to clear DNS capture before subscription restart"; [ "$_owned_cleanup_rc" -ne 0 ] || _owned_cleanup_rc=1; }
     magicnet_disable_dns_leak_guard >/dev/null 2>&1 ||
-        { warn "Failed to clear DNS leak guard before subscription restart"; _owned_cleanup_rc=1; }
+        { warn "Failed to clear DNS leak guard before subscription restart"; [ "$_owned_cleanup_rc" -ne 0 ] || _owned_cleanup_rc=1; }
     # The listener is gone. Even a supervisor failure must not skip independent
     # interception cleanup and strand apps behind a dead local DNS port.
-    [ "$_owned_cleanup_rc" -eq 0 ] || return 1
+    [ "$_owned_cleanup_rc" -eq 0 ] || return "$_owned_cleanup_rc"
 
     _restart_rc=0
     if [ "${MAGICNET_SUB_RESET_BOOTSTRAP_CACHE:-0}" = 1 ]; then
@@ -1473,11 +1489,7 @@ magicnet_singbox_restart_owned() {
         fi
         unset _post_start_rc
     fi
-    if [ "${MAGICNET_SUB_DEFER_FSWATCH_RESTORE:-0}" -eq 1 ]; then
-        # Read by the subscription update wrapper after it releases the config lock.
-        # shellcheck disable=SC2034
-        MAGICNET_SUB_FSWATCH_RESTORE_PENDING="$_owned_fswatch_active"
-    else
+    if [ "${MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE:-0}" -ne 1 ]; then
         magicnet_singbox_supervisor_restore "$_owned_fswatch_active" || _restart_rc=1
     fi
     unset _owned_query_rc _owned_cleanup_rc

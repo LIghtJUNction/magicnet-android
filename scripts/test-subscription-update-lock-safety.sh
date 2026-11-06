@@ -123,10 +123,13 @@ printf '%s\n' 'subscription status read-only safety test passed'
 # the config lock first, then restore fswatch before dropping the update lock.
 interrupt_trace="$MODDIR/.state/sing-box/interrupt-trace"
 set +e
+# Each interrupt fixture exports its own independent environment.
+# shellcheck disable=SC2030
 (
     export MAGICNET_CONFIG_LOCK_HELD=1
-    export MAGICNET_SUB_DEFER_FSWATCH_RESTORE=1
-    export MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
+    export MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE=1
+    export MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=1
+    export MAGICNET_SUB_FSWATCH_RESTORE_PENDING=1
     export MAGICNET_SUB_FSWATCH_WAS_ACTIVE=1
     magicnet_singbox_transaction_reconcile() { :; }
     magicnet_singbox_update_cleanup_stage() { :; }
@@ -134,7 +137,7 @@ set +e
     magicnet_config_lock_release() { printf '%s\n' config-release >>"$interrupt_trace"; }
     magicnet_singbox_supervisor_restore() {
         [ "$1" -eq 1 ]
-        [ -z "${MAGICNET_SUB_DEFER_FSWATCH_RESTORE+x}" ]
+        [ -z "${MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE+x}" ]
         printf '%s\n' fswatch-restore >>"$interrupt_trace"
     }
     magicnet_singbox_update_lock_release() { printf '%s\n' update-release >>"$interrupt_trace"; }
@@ -147,6 +150,33 @@ set -e
 
 printf '%s\n' 'subscription interrupt fswatch restoration test passed'
 
+# The full set still needs restoration when fswatch was off. The interrupt
+# must not use fswatch's optional state as a proxy for all supervisors.
+interrupt_without_fswatch="$MODDIR/.state/sing-box/interrupt-without-fswatch"
+set +e
+# shellcheck disable=SC2031
+(
+    export MAGICNET_CONFIG_LOCK_HELD=1
+    export MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE=1
+    export MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING=1
+    export MAGICNET_SUB_FSWATCH_RESTORE_PENDING=0
+    magicnet_singbox_transaction_reconcile() { :; }
+    magicnet_singbox_update_cleanup_stage() { :; }
+    magicnet_singbox_status_mark_interrupted() { :; }
+    magicnet_config_lock_release() { printf '%s\n' config-release >>"$interrupt_without_fswatch"; }
+    magicnet_singbox_supervisor_restore() {
+        [ "$1" -eq 0 ]
+        [ -z "${MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE+x}" ]
+        printf '%s\n' supervisors-restore >>"$interrupt_without_fswatch"
+    }
+    magicnet_singbox_update_lock_release() { printf '%s\n' update-release >>"$interrupt_without_fswatch"; }
+    magicnet_singbox_update_interrupt 143
+)
+interrupt_rc=$?
+set -e
+[ "$interrupt_rc" -eq 143 ]
+[ "$(<"$interrupt_without_fswatch")" = $'config-release\nsupervisors-restore\nupdate-release' ]
+
 # A signal while config-lock acquisition is still waiting must not reconcile
 # another operation's files without owning that lock. Leave the journal for a
 # later status/startup recovery and release only the update lock.
@@ -154,7 +184,8 @@ prelock_interrupt_trace="$MODDIR/.state/sing-box/prelock-interrupt-trace"
 set +e
 (
     unset MAGICNET_CONFIG_LOCK_HELD MAGICNET_SUB_FSWATCH_RESTORE_PENDING
-    unset MAGICNET_SUB_FSWATCH_WAS_ACTIVE MAGICNET_SUB_DEFER_FSWATCH_RESTORE
+    unset MAGICNET_SUB_SUPERVISORS_RESTORE_PENDING
+    unset MAGICNET_SUB_FSWATCH_WAS_ACTIVE MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE
     magicnet_singbox_transaction_reconcile() { printf '%s\n' reconcile >>"$prelock_interrupt_trace"; }
     magicnet_singbox_update_cleanup_stage() { :; }
     magicnet_singbox_status_mark_interrupted() { :; }

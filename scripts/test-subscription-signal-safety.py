@@ -143,10 +143,11 @@ magicnet_singbox_owned_pids_to_file() {
 }
 magicnet_fswatch_status() { return 1; }
 magicnet_singbox_api_listener_exists() { return 1; }
-magicnet_supervisors_stop() {
+magicnet_supervisors_stop_workers() {
     event supervisors-stop
     [ "$scenario" != supervisor_denied ]
 }
+magicnet_hotspot_route_cleanup() { :; }
 magicnet_disable_dns_capture() { event dns-clean; }
 magicnet_disable_dns_leak_guard() { event guard-clean; }
 __START_HELPER__
@@ -165,7 +166,7 @@ unset MAGICNET_SUB_STOP_TIMEOUT
 export MAGICNET_SUB_KILL_TIMEOUT=3
 export MAGICNET_SUB_READY_TIMEOUT=1
 export MAGICNET_SUB_FSWATCH_WAS_ACTIVE=0 MAGICNET_SUB_RESET_BOOTSTRAP_CACHE=0
-export MAGICNET_SUB_DEFER_FSWATCH_RESTORE=0
+export MAGICNET_SUB_DEFER_SUPERVISORS_RESTORE=0
 trap ': >"$MODDIR/parent-exit"' EXIT
 rc=0
 __COMMAND__ || rc=$?
