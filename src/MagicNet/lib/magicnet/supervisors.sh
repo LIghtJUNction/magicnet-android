@@ -1403,19 +1403,13 @@ magicnet_supervisors_start_detached() {
     # them synchronously made an optional stale fswatch flock hold the manual
     # start button indefinitely.  Detach into a new session and bound the
     # nested CLI so it cannot outlive a broken helper forever.
+    set -- "${MODDIR}/cli" supervisor start all
     if [ -x "${MODDIR}/bin/busybox" ]; then
-        MAGICNET_COMMAND_TIMEOUT="$_mssd_timeout" \
-            "${MODDIR}/bin/busybox" setsid "${MODDIR}/cli" supervisor start all \
-            </dev/null >>"$_mssd_log" 2>&1 &
+        set -- "${MODDIR}/bin/busybox" setsid "$@"
     elif magicnet_cmd_exists setsid; then
-        MAGICNET_COMMAND_TIMEOUT="$_mssd_timeout" \
-            setsid "${MODDIR}/cli" supervisor start all \
-            </dev/null >>"$_mssd_log" 2>&1 &
-    else
-        MAGICNET_COMMAND_TIMEOUT="$_mssd_timeout" \
-            "${MODDIR}/cli" supervisor start all \
-            </dev/null >>"$_mssd_log" 2>&1 &
+        set -- setsid "$@"
     fi
+    MAGICNET_COMMAND_TIMEOUT="$_mssd_timeout" "$@" </dev/null >>"$_mssd_log" 2>&1 &
     unset _mssd_timeout _mssd_log
     return 0
 }
@@ -1431,17 +1425,11 @@ magicnet_supervisors_start() {
         magicnet_singbox_record_runtime_fingerprint ||
             magicnet_warn "Failed to record the settled sing-box configuration fingerprint."
     fi
-    for _mss_start_target in connectivity refresh wifi-policy hotspot-watchdog fswatch; do
-        case "$_mss_start_target" in
-        connectivity) magicnet_connectivity_watchdog_start ;;
-        refresh) magicnet_subscription_refresh_start ;;
-        wifi-policy) magicnet_wifi_policy_start ;;
-        hotspot-watchdog) magicnet_hotspot_watchdog_start ;;
-        fswatch) magicnet_fswatch_start ;;
-        esac
-        _mss_target_rc=$?
+    for _mss_start in magicnet_connectivity_watchdog_start magicnet_subscription_refresh_start \
+        magicnet_wifi_policy_start magicnet_hotspot_watchdog_start magicnet_fswatch_start; do
+        if "$_mss_start"; then _mss_target_rc=0; else _mss_target_rc=$?; fi
         [ "$_mss_target_rc" -ne 2 ] || _mss_rc=2
-        if [ "$_mss_target_rc" -ne 0 ] && [ "$_mss_start_target" != fswatch ] && [ "$_mss_rc" -eq 0 ]; then
+        if [ "$_mss_target_rc" -ne 0 ] && [ "$_mss_start" != magicnet_fswatch_start ] && [ "$_mss_rc" -eq 0 ]; then
             _mss_rc=1
         fi
     done
@@ -1450,24 +1438,17 @@ magicnet_supervisors_start() {
 
 magicnet_supervisors_stop() {
     _mss_stop_rc=0
-    magicnet_watchdog_stop || _mss_stop_rc=$?
-    magicnet_fswatch_stop || {
-        _mss_target_rc=$?
-        [ "$_mss_target_rc" -ne 2 ] || _mss_stop_rc=2
-        [ "$_mss_stop_rc" -ne 0 ] || _mss_stop_rc=1
-    }
-    magicnet_wifi_policy_stop || {
-        _mss_target_rc=$?
-        [ "$_mss_target_rc" -ne 2 ] || _mss_stop_rc=2
-        [ "$_mss_stop_rc" -ne 0 ] || _mss_stop_rc=1
-    }
-    if [ "${MAGICNET_SUB_PRESERVE_REFRESH:-0}" != "1" ]; then
-        magicnet_subscription_refresh_stop || {
-            _mss_target_rc=$?
-            [ "$_mss_target_rc" -ne 2 ] || _mss_stop_rc=2
-            [ "$_mss_stop_rc" -ne 0 ] || _mss_stop_rc=1
-        }
-    fi
+    for _mss_stop in magicnet_watchdog_stop magicnet_fswatch_stop \
+        magicnet_wifi_policy_stop magicnet_subscription_refresh_stop; do
+        [ "$_mss_stop" != magicnet_subscription_refresh_stop ] ||
+            [ "${MAGICNET_SUB_PRESERVE_REFRESH:-0}" != 1 ] || continue
+        if "$_mss_stop"; then _mss_target_rc=0; else _mss_target_rc=$?; fi
+        case "$_mss_target_rc" in
+        0) ;;
+        2) _mss_stop_rc=2 ;;
+        *) [ "$_mss_stop_rc" -ne 0 ] || _mss_stop_rc=1 ;;
+        esac
+    done
     if [ "$_mss_stop_rc" -eq 0 ]; then
         magicnet_hotspot_route_cleanup || _mss_stop_rc=$?
     fi

@@ -152,6 +152,73 @@ magicnet_route_apply_singbox
 printf 'repeat_rc=%s\\n' "$?"
 jq -cS . "$MODDIR/.config/sing-box/config.json"
 '''))
+    runtime_steps = [
+        'magicnet_ipset_lkm_prepare', 'magicnet_singbox_chain_apply', 'magicnet_singbox_apply_zashboard',
+        'magicnet_dns_apply_unlocked', 'magicnet_route_apply_unlocked', 'magicnet_block_apply_unlocked',
+        'magicnet_transparent_apply_unlocked', 'magicnet_app_policy_apply_unlocked',
+        'magicnet_warp_apply_unlocked', 'magicnet_tailscale_apply_unlocked', 'singbox_prepare_route_config',
+        'magicnet_override_materialize_unlocked', 'magicnet_wifi_policy_start',
+        'magicnet_enable_dns_capture', 'magicnet_enable_dns_leak_guard',
+        'magicnet_disable_dns_capture', 'magicnet_disable_dns_leak_guard', 'magicnet_supervisors_stop',
+    ]
+    setup = '''
+import() { :; }
+magicnet_module_disabled() { return 1; }
+magicnet_kernel_running() { return 0; }
+'''
+    setup += '\n'.join(f'{fn}() {{ echo {fn}; }}' for fn in runtime_steps)
+    for status in [0, 1, 2]:
+        result.append((f'runtime-state-{status}', setup + f'\nmagicnet_kernel_running() {{ return {status}; }}\nmagicnet_apply_runtime_config_unlocked'))
+    result.append(('runtime-disabled', setup + '\nmagicnet_module_disabled() { return 0; }\nmagicnet_apply_runtime_config_unlocked'))
+    for fn in runtime_steps:
+        for status in [1, 2]:
+            result.append((f'runtime-failure-{fn}-{status}', setup + f'\n{fn}() {{ echo {fn}; return {status}; }}\nmagicnet_apply_runtime_config_unlocked'))
+    starts = ['magicnet_connectivity_watchdog_start', 'magicnet_subscription_refresh_start',
+              'magicnet_wifi_policy_start', 'magicnet_hotspot_watchdog_start', 'magicnet_fswatch_start']
+    stops = ['magicnet_watchdog_stop', 'magicnet_fswatch_stop', 'magicnet_wifi_policy_stop',
+             'magicnet_subscription_refresh_stop', 'magicnet_hotspot_route_cleanup']
+    setup = '''
+magicnet_detach_pid_from_app_cgroup() { return 0; }
+magicnet_kernel_running() { return 0; }
+magicnet_singbox_record_runtime_fingerprint() { echo fingerprint; }
+magicnet_warn() { printf 'warn:%s\\n' "$*"; }
+'''
+    setup += '\n'.join(f'{fn}() {{ echo {fn}; }}' for fn in starts + stops)
+    for action, funcs in [('start', starts), ('stop', stops)]:
+        result.append((f'supervisors-{action}', setup + f'\nmagicnet_supervisors_{action}'))
+        for fn in funcs:
+            for status in [1, 2]:
+                result.append((f'supervisors-{action}-{fn}-{status}', setup + f'\n{fn}() {{ echo {fn}; return {status}; }}\nmagicnet_supervisors_{action}'))
+    result.append(('supervisors-preserve-refresh', setup + '\nMAGICNET_SUB_PRESERVE_REFRESH=1 magicnet_supervisors_stop'))
+    result.append(('supervisors-stop-unknown-dominates', setup + '''
+magicnet_watchdog_stop() { echo watchdog; return 1; }
+magicnet_fswatch_stop() { echo fswatch; return 2; }
+magicnet_wifi_policy_stop() { echo wifi; return 1; }
+magicnet_supervisors_stop
+'''))
+    for index, endpoints in enumerate([
+        None, [], [{'type': 'tailscale', 'tag': 'mesh'}],
+        [{'type': 'tailscale', 'tag': 'mesh', 'auth_key': 'fixture-login-key', 'system_interface': True}],
+        [{'type': 'wireguard', 'tag': 'other'}, {'type': 'tailscale', 'tag': 'mesh', 'state_directory': '/fixed-state'}],
+    ]):
+        config = {'dns': {'servers': [{'type': 'local', 'tag': 'mesh-dns'}]},
+                  'inbounds': [{'type': 'tun', 'tag': 'tun-in', 'route_exclude_address': ['100.64.0.0/10', '192.168.0.0/16']}],
+                  'route': {'rules': [{'action': 'sniff'}, {'ip_cidr': ['100.64.0.0/10'], 'outbound': 'lan'}]}}
+        if endpoints is not None:
+            config['endpoints'] = endpoints
+        for stored_key in [False, True]:
+            auth_setup = 'printf \'%s\\n\' \'{"mesh":"fixture-stored-key"}\' >"$MODDIR/.config/sing-box/tailscale-auth.json"' if stored_key else ':'
+            result.append((f'tailscale-{index}-{stored_key}', f'''
+printf '%s\\n' {quote(json.dumps(config))} >"$MODDIR/.config/sing-box/config.json"
+rm -f "$MODDIR/.config/sing-box/tailscale-auth.json"
+{auth_setup}
+for action in magicnet_tailscale_apply_unlocked magicnet_tailscale_inject_auth_key magicnet_tailscale_scrub_auth_key; do
+    "$action"
+    printf '%s_rc=%s\\n' "$action" "$?"
+    jq -cS --arg state "$MODDIR/.state/sing-box/tailscale" 'walk(if . == $state then "$STATE" else . end)' "$MODDIR/.config/sing-box/config.json"
+done
+[ ! -f "$MODDIR/.config/sing-box/tailscale-auth.json" ] || jq -cS . "$MODDIR/.config/sing-box/tailscale-auth.json"
+'''))
     return result
 
 
@@ -189,6 +256,7 @@ MAGICNET_TUN_MTU=1420
 
 def script_for(test_cases: list[tuple[str, str]]) -> str:
     source = '''
+set_i18n() { :; }
 . "$MODDIR/lib/magicnet/primitives.sh"
 . "$MODDIR/lib/magicnet/singbox_subscribe/common.sh"
 . "$MODDIR/lib/magicnet/transparent_dns.sh"
@@ -198,6 +266,8 @@ def script_for(test_cases: list[tuple[str, str]]) -> str:
 . "$MODDIR/lib/magicnet/subscribe_bootstrap.sh"
 . "$MODDIR/lib/magicnet/blocklist.sh"
 . "$MODDIR/lib/magicnet/routes.sh"
+. "$MODDIR/lib/magicnet/runtime_config.sh"
+. "$MODDIR/lib/magicnet/supervisors.sh"
 '''
     for label, code in test_cases:
         source += f'\nprintf "CASE %s\\n" {quote(label)}\n(\n{code}\n) 2>&1\nprintf "\\nSTATUS %s\\n" "$?"\n'
@@ -219,16 +289,28 @@ def run(shell: list[str], script: str, checkout: Path, timeout: int = 90, *, com
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=True)
 
 
-def benchmark(shell: list[str], checkout: Path, iterations: int) -> list[float]:
+def benchmark(shell: list[str], checkout: Path, iterations: int, workload: str,
+              measure_program: Path | None) -> list[dict]:
     # Selector rendering used to fork twice per node; use identical 128-node
     # UTF-8 inputs, shell, loop count and machine for both implementations.
-    tags = '\n'.join(f'node-{i} 中继' for i in range(128))
-    script = script_for([]) + f'\nvalue={quote(tags)}\nfor_test=0\nwhile [ "$for_test" -lt {iterations} ]; do\n magicnet_selector_tags_json "$value" fallback >/dev/null\n for_test=$((for_test + 1))\ndone\n'
+    if workload == 'selector':
+        value = '\n'.join(f'node-{i} 中继' for i in range(128))
+        setup = ''
+        call = 'magicnet_selector_tags_json "$value" fallback'
+    else:
+        value = '\n'.join(f'DOMAIN-SUFFIX,domain-{i}.invalid' for i in range(128))
+        setup = 'magicnet_block_all_rules() { printf "%s\\n" "$value"; }\n'
+        call = 'magicnet_block_singbox_rules'
+    script = script_for([]) + f'\nvalue={quote(value)}\n{setup}for_test=0\nwhile [ "$for_test" -lt {iterations} ]; do\n {call} >/dev/null\n for_test=$((for_test + 1))\ndone\n'
     timings = []
     for _ in range(3):
-        started = time.perf_counter()
-        run(shell, script, checkout, timeout=180)
-        timings.append((time.perf_counter() - started) * 1000)
+        if measure_program:
+            measured = run([str(measure_program), *shell], script, checkout, timeout=180)
+            timings.append(json.loads(measured.stdout))
+        else:
+            started = time.perf_counter()
+            run(shell, script, checkout, timeout=180)
+            timings.append({'ms': (time.perf_counter() - started) * 1000})
     return timings
 
 
@@ -237,6 +319,8 @@ def main() -> None:
     parser.add_argument('--baseline', type=Path, required=True)
     parser.add_argument('--report', type=Path)
     parser.add_argument('--benchmark', type=int, default=0, metavar='ITERATIONS')
+    parser.add_argument('--measure-program', type=Path,
+                        help='compiled crates/magicnet-cli/tests/measure-cli.c for elapsed time and wait4 RSS')
     args = parser.parse_args()
     baseline = args.baseline.resolve()
     shells = {name: [shutil.which(name)] for name in ['bash', 'sh', 'mksh'] if shutil.which(name)}
@@ -259,14 +343,18 @@ def main() -> None:
         entry = {'cases_passed': len(test_cases)}
         entry['compact_json_cases_passed'] = 32
         if args.benchmark:
-            before = benchmark(command, baseline, args.benchmark)
-            after = benchmark(command, ROOT, args.benchmark)
-            entry['selector_128_nodes'] = {
-                'iterations': args.benchmark, 'runs': 3,
-                'baseline_ms': before, 'candidate_ms': after,
-                'baseline_median_ms': statistics.median(before),
-                'candidate_median_ms': statistics.median(after),
-            }
+            for workload, key in [('selector', 'selector_128_nodes'), ('block', 'block_128_domains')]:
+                before = benchmark(command, baseline, args.benchmark, workload, args.measure_program)
+                after = benchmark(command, ROOT, args.benchmark, workload, args.measure_program)
+                entry[key] = {
+                    'iterations': args.benchmark, 'runs': 3,
+                    'baseline': before, 'candidate': after,
+                    'baseline_median_ms': statistics.median(item['ms'] for item in before),
+                    'candidate_median_ms': statistics.median(item['ms'] for item in after),
+                }
+                if args.measure_program:
+                    entry[key]['baseline_median_peak_rss_kib'] = statistics.median(item['peak_rss_kib'] for item in before)
+                    entry[key]['candidate_median_peak_rss_kib'] = statistics.median(item['peak_rss_kib'] for item in after)
         result['shells'][name] = entry
         print(f'{name}: {len(test_cases)} original-vs-rewrite cases passed')
     if args.report:

@@ -63,7 +63,8 @@ class TailscaleRouteOrder(unittest.TestCase):
         return config
 
     def apply(self, shell, operations, mode="blacklist"):
-        script = '''. "$1/runtime_config.sh"
+        script = '''. "$1/singbox_subscribe/bootstrap.sh"
+. "$1/runtime_config.sh"
 . "$1/apps.sh"
 magicnet_conf_value() { return 1; }
 magicnet_package_uids() { if [ -s "$1" ]; then printf '10123\\n'; fi; }

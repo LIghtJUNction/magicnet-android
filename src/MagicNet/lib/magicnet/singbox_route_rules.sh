@@ -43,7 +43,7 @@ magicnet_singbox_apply_route_rules() (
     _rules_base="${_rules_config}.magicnet-${_rules_mode}.base"
     _rules_fragment="${MODDIR}/.cache/magicnet-${_rules_mode}-singbox.rules"
     [ ! -L "$_rules_tmp" ] && [ ! -L "$_rules_base" ] && [ ! -L "$_rules_fragment" ] || return 1
-    trap 'rm -f "$_rules_tmp" "$_rules_base" "${_rules_base}.magicnet-selectors.new"' 0
+    trap 'rm -f "$_rules_tmp" "$_rules_base" "${_rules_base}.magicnet-selectors.new" "$_rules_fragment"' 0
     trap 'exit 1' 1 2 3 15
     umask 077
     mkdir -p "${_rules_fragment%/*}" || return 1

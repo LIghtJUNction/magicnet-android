@@ -30,7 +30,8 @@ with tempfile.TemporaryDirectory() as temp:
         ]}
     }
     config_path.write_text(json.dumps(config))
-    command = ['sh','-c','. "$1"; magicnet_tailscale_apply_unlocked','test',str(root/'src/MagicNet/lib/magicnet/runtime_config.sh')]
+    command = ['sh','-c','. "$1/singbox_subscribe/bootstrap.sh"; . "$1/runtime_config.sh"; magicnet_tailscale_apply_unlocked',
+               'test',str(root/'src/MagicNet/lib/magicnet')]
     env = dict(os.environ,MODDIR=temp)
     subprocess.run(command, env=env, check=True)
     output = json.loads(config_path.read_text())

@@ -12,9 +12,8 @@ magicnet_tailscale_apply_unlocked() (
     _tmp="${_config}.tailscale.new"
     _new_auth="${_auth}.new"
     _merged_auth="${_auth}.merged"
-    _old_umask="$(umask)"
     umask 077
-    trap 'rm -f "$_tmp" "$_new_auth" "$_merged_auth"; umask "$_old_umask"' 0
+    trap 'rm -f "$_tmp" "$_new_auth" "$_merged_auth"' 0
     mkdir -p "$_state" "${_auth%/*}" || return 1
     chmod 700 "$_state" "${_auth%/*}" 2>/dev/null || true
 
@@ -22,10 +21,7 @@ magicnet_tailscale_apply_unlocked() (
       reduce (.endpoints[]?
         | select(.type == "tailscale" and (.tag // "") != "" and (.auth_key // "") != "")) as $endpoint
         ({}; .[$endpoint.tag] = $endpoint.auth_key)
-    ' "$_config" >"$_new_auth" || {
-        rm -f "$_new_auth"
-        return 1
-    }
+    ' "$_config" >"$_new_auth" || return 1
     if [ "$("$_jq" 'length' "$_new_auth" 2>/dev/null)" -gt 0 ]; then
         if [ -s "$_auth" ]; then
             "$_jq" -s '.[0] * .[1]' "$_auth" "$_new_auth" >"$_merged_auth" || return 1
@@ -38,7 +34,7 @@ magicnet_tailscale_apply_unlocked() (
         rm -f "$_new_auth"
     fi
 
-    "$_jq" --arg state_dir "$_state" '
+    magicnet_jq_install_config "$_config" "$_tmp" "$_jq" --arg state_dir "$_state" '
       def tailnets: ["100.64.0.0/10", "fd7a:115c:a1e0::/48"];
       def userspace_tailscale:
         .type == "tailscale"
@@ -83,66 +79,36 @@ magicnet_tailscale_apply_unlocked() (
               {"domain_suffix":["ts.net"], "action":"route", "outbound":$endpoint.tag}
             ] + $rules[$at:])
         end
-    ' "$_config" >"$_tmp" || {
-        rm -f "$_tmp" "$_new_auth" "$_merged_auth"
-        return 1
-    }
-    if ! chmod 600 "$_tmp" || ! mv -f "$_tmp" "$_config" || ! chmod 600 "$_config"; then
-        rm -f "$_tmp" "$_new_auth" "$_merged_auth"
-        return 1
-    fi
-    umask "$_old_umask"
-    trap - 0
-    unset _config _jq _auth _state _tmp _new_auth _merged_auth _old_umask
+    ' "$_config"
 )
 
-magicnet_tailscale_inject_auth_key() {
+# The live file only carries login keys during startup; both directions use
+# the same validated atomic writer and leave no plaintext staging file.
+magicnet_tailscale_write_auth() (
+    _mode=$1
     _config="${MODDIR}/.config/sing-box/config.json"
     _auth="$(magicnet_tailscale_auth_file)"
-    [ -s "$_auth" ] || return 0
+    case "$_mode" in
+    inject) [ -s "$_auth" ] || return 0; set -- --slurpfile auth "$_auth" ;;
+    scrub) set -- --argjson auth '[]' ;;
+    *) return 1 ;;
+    esac
     _jq="${MODDIR}/bin/jq"
     [ -x "$_jq" ] || return 1
-    _tmp="${_config}.tailscale-auth.new"
-    (
-        umask 077
-        "$_jq" --slurpfile auth "$_auth" '
-      ($auth[0] // {}) as $keys
-      | .endpoints = ((.endpoints // []) | map(
-          if .type == "tailscale" and ($keys[.tag] // "") != "" then
-            .auth_key = $keys[.tag]
-          else . end
-        ))
-    ' "$_config" >"$_tmp"
-    ) || {
-        rm -f "$_tmp"
-        return 1
-    }
-    if ! chmod 600 "$_tmp" || ! mv -f "$_tmp" "$_config" || ! chmod 600 "$_config"; then
-        rm -f "$_tmp"
-        return 1
-    fi
-    unset _config _auth _jq _tmp
-}
-
-magicnet_tailscale_scrub_auth_key() {
-    _config="${MODDIR}/.config/sing-box/config.json"
-    _jq="${MODDIR}/bin/jq"
-    [ -x "$_jq" ] || return 1
-    _tmp="${_config}.tailscale-scrub.new"
-    (
-        umask 077
-        "$_jq" '
-        if has("endpoints") then
+    magicnet_jq_install_config "$_config" "${_config}.tailscale-${_mode}.new" "$_jq" "$@" --arg mode "$_mode" '
+        if $mode == "inject" then
+            ($auth[0] // {}) as $keys
+            | .endpoints = ((.endpoints // []) | map(
+                if .type == "tailscale" and ($keys[.tag] // "") != "" then .auth_key = $keys[.tag] else . end))
+        elif has("endpoints") then
             .endpoints = ((.endpoints // []) | map(if .type == "tailscale" then del(.auth_key) else . end))
             | if (.endpoints | length) == 0 then del(.endpoints) else . end
         else . end
-    ' "$_config" >"$_tmp"
-    ) &&
-        chmod 600 "$_tmp" && mv -f "$_tmp" "$_config" && chmod 600 "$_config"
-    _rc=$?
-    unset _config _jq _tmp
-    return "$_rc"
-}
+    ' "$_config"
+)
+
+magicnet_tailscale_inject_auth_key() { magicnet_tailscale_write_auth inject; }
+magicnet_tailscale_scrub_auth_key() { magicnet_tailscale_write_auth scrub; }
 
 magicnet_singbox_runtime_fingerprint_file() {
     printf '%s\n' "${MODDIR}/.state/sing-box/runtime-fingerprint"
@@ -211,46 +177,23 @@ EOF
     echo "$_runtime_crc:$_runtime_bytes"
 )
 
-magicnet_singbox_record_runtime_fingerprint() {
+magicnet_singbox_record_runtime_fingerprint() (
     _runtime_fingerprint_file="$(magicnet_singbox_runtime_fingerprint_file)"
-    _runtime_fingerprint_dir=${_runtime_fingerprint_file%/*}
     _runtime_fingerprint_tmp="${_runtime_fingerprint_file}.new.$$"
-    mkdir -p "$_runtime_fingerprint_dir" || return 1
-    (
-        umask 077
-        magicnet_singbox_runtime_fingerprint >"$_runtime_fingerprint_tmp"
-    ) || {
-        rm -f "$_runtime_fingerprint_tmp" 2>/dev/null || true
-        unset _runtime_fingerprint_file _runtime_fingerprint_dir _runtime_fingerprint_tmp
-        return 1
-    }
-    chmod 600 "$_runtime_fingerprint_tmp" &&
-        mv -f "$_runtime_fingerprint_tmp" "$_runtime_fingerprint_file" &&
-        chmod 600 "$_runtime_fingerprint_file"
-    _runtime_fingerprint_rc=$?
-    [ "$_runtime_fingerprint_rc" -eq 0 ] || rm -f "$_runtime_fingerprint_tmp" 2>/dev/null || true
-    set -- "$_runtime_fingerprint_rc"
-    unset _runtime_fingerprint_file _runtime_fingerprint_dir _runtime_fingerprint_tmp _runtime_fingerprint_rc
-    return "$1"
-}
+    [ ! -L "$_runtime_fingerprint_tmp" ] || return 1
+    trap 'rm -f "$_runtime_fingerprint_tmp"' 0
+    umask 077
+    mkdir -p "${_runtime_fingerprint_file%/*}" &&
+        magicnet_singbox_runtime_fingerprint >"$_runtime_fingerprint_tmp" &&
+        chmod 600 "$_runtime_fingerprint_tmp" && mv -f "$_runtime_fingerprint_tmp" "$_runtime_fingerprint_file"
+)
 
-magicnet_singbox_runtime_fingerprint_matches() {
+magicnet_singbox_runtime_fingerprint_matches() (
     _runtime_fingerprint_file="$(magicnet_singbox_runtime_fingerprint_file)"
-    [ -s "$_runtime_fingerprint_file" ] || {
-        unset _runtime_fingerprint_file
-        return 1
-    }
-    _runtime_fingerprint="$(magicnet_singbox_runtime_fingerprint)" || {
-        unset _runtime_fingerprint_file _runtime_fingerprint
-        return 1
-    }
+    [ -s "$_runtime_fingerprint_file" ] || return 1
+    _runtime_fingerprint="$(magicnet_singbox_runtime_fingerprint)" || return 1
     grep -F -x "$_runtime_fingerprint" "$_runtime_fingerprint_file" >/dev/null 2>&1
-    _runtime_fingerprint_rc=$?
-    set -- "$_runtime_fingerprint_rc"
-    unset _runtime_fingerprint_file _runtime_fingerprint
-    unset _runtime_fingerprint_rc
-    return "$1"
-}
+)
 
 magicnet_override_materialize_unlocked() {
     [ "${MAGICNET_OVERRIDE_SKIP:-0}" != 1 ] || return 0
@@ -270,18 +213,15 @@ magicnet_apply_runtime_config_unlocked() {
     fi
     _runtime_rc=0
     magicnet_ipset_lkm_prepare || true
-    magicnet_singbox_chain_apply || _runtime_rc=1
-    magicnet_singbox_apply_zashboard || _runtime_rc=1
-    magicnet_dns_apply_unlocked || _runtime_rc=1
     # Match startup ordering: user route/block materializers precede the
     # transparent inbound's sniff/DNS rules and per-app boundaries. Otherwise
     # apply detects a different ordering, restarts, and startup undoes it.
-    magicnet_route_apply_unlocked || _runtime_rc=1
-    magicnet_block_apply_unlocked || _runtime_rc=1
-    magicnet_transparent_apply_unlocked || _runtime_rc=1
-    magicnet_app_policy_apply_unlocked || _runtime_rc=1
-    magicnet_warp_apply_unlocked || _runtime_rc=1
-    magicnet_tailscale_apply_unlocked || _runtime_rc=1
+    for _runtime_step in \
+        magicnet_singbox_chain_apply magicnet_singbox_apply_zashboard magicnet_dns_apply_unlocked \
+        magicnet_route_apply_unlocked magicnet_block_apply_unlocked magicnet_transparent_apply_unlocked \
+        magicnet_app_policy_apply_unlocked magicnet_warp_apply_unlocked magicnet_tailscale_apply_unlocked; do
+        "$_runtime_step" || _runtime_rc=1
+    done
     # Runtime policy writers rebuild selector objects. Normalize route-level
     # sing-box fields afterwards so a no-op apply remains byte-equivalent to
     # the configuration used by the running core.
