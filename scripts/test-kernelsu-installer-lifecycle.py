@@ -161,6 +161,8 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
         project = cls.root / "fixture-project"
         (project / "dist").mkdir(parents=True)
         (project / "scripts").mkdir()
+        shutil.copyfile(ROOT / "scripts/android-curl-artifact.py",
+                        project / "scripts/android-curl-artifact.py")
         (project / "kam.toml").write_text('[prop]\nid = "MagicNet"\n')
         # These controlled host payloads are intentionally not Android ARM64
         # binaries. Keep a real CRC check here; the release's architecture smoke
