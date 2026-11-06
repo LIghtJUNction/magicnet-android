@@ -147,7 +147,9 @@ class LocalDevice:
             self.ca_host.write_bytes(data)
             return cp()
         if args == ('reverse', '--list'):
-            return cp(f'fixture tcp:{self.mapping} tcp:{self.mapping_target}\n' if self.mapping else '')
+            # Match adb_query_command's newline after the returned table,
+            # including the empty-table behavior of the official ADB client.
+            return cp((f'fixture tcp:{self.mapping} tcp:{self.mapping_target}\n' if self.mapping else '') + '\n')
         if len(args) == 4 and args[:2] == ('reverse', '--no-rebind'):
             if not args[2].startswith('tcp:') or args[2] != args[3] or self.mapping is not None:
                 raise AssertionError('unexpected reverse mutation')
@@ -448,6 +450,37 @@ class CurlProofTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 self.device.kshell(PROOF.clean_command(args), timeout=1, check=False)
             executor.assert_not_called()
+
+
+class ReverseListingTests(unittest.TestCase):
+    def query(self, text, rc=0):
+        device = Mock()
+        device.run.return_value = cp(text, rc)
+        result = PROOF.reverse_pair(device, 12345, PROOF.Budget())
+        device.run.assert_called_once()
+        self.assertEqual(device.run.call_args.args, ('reverse', '--list'))
+        self.assertFalse(device.run.call_args.kwargs['check'])
+        self.assertLessEqual(device.run.call_args.kwargs['timeout'], 2)
+        return result
+
+    def test_empty_adb_table_newlines_are_valid(self):
+        for text in ('', '\n', '\r\n', '\n\n', ' \t\r\n'):
+            with self.subTest(text=repr(text)):
+                self.assertIsNone(self.query(text))
+
+    def test_real_table_terminating_newline_preserves_exact_mapping(self):
+        self.assertEqual(self.query('UsbFfs tcp:10000 tcp:10001\n\n'
+                                    'UsbFfs tcp:12345 tcp:12346\n\n'), 'tcp:12346')
+        self.assertIsNone(self.query('UsbFfs tcp:10000 tcp:10001\n\n'))
+
+    def test_nonempty_malformed_duplicate_or_failed_list_is_not_empty(self):
+        for text in ('\nunknown\n', '\nUsbFfs tcp:12345\n',
+                     'UsbFfs tcp:12345 tcp:12345 unexpected\n\n',
+                     'UsbFfs tcp:12345 tcp:12345\n\nUsbFfs tcp:12345 tcp:12346\n'):
+            with self.subTest(text=text), self.assertRaisesRegex(RuntimeError, '^curl_reverse_unknown$'):
+                self.query(text)
+        with self.assertRaisesRegex(RuntimeError, '^curl_reverse_unknown$'):
+            self.query('\n', rc=1)
 
 
 class VersionSyntaxTests(unittest.TestCase):

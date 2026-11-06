@@ -123,6 +123,9 @@ def reverse_pair(device, port, budget, *, cleanup=False):
     matches = []
     for line in text.splitlines():
         parts = line.split()
+        # adb_query_command prints a final newline even for an empty table.
+        if not parts:
+            continue
         require(len(parts) == 3, 'curl_reverse_unknown')
         if parts[1] == f'tcp:{port}':
             matches.append(parts[2])
