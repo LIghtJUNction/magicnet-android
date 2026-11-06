@@ -6,7 +6,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
 export MODDIR="$tmp/module"
-mkdir -p "$MODDIR/.config/magicnet" "$MODDIR/.config/sing-box"
+mkdir -p "$MODDIR/.config/magicnet" "$MODDIR/.config/sing-box" "$MODDIR/bin"
+ln -s "$(command -v jq)" "$MODDIR/bin/jq"
 cat >"$MODDIR/.config/sing-box/config.json" <<'EOF'
 {
   "outbounds": [
@@ -54,7 +55,6 @@ if [[ "$selector_after" != "$selector_before" ]]; then
 fi
 
 magicnet_block_normalize_allow_rules() { :; }
-magicnet_block_ensure_ad_selectors() { :; }
 magicnet_block_singbox_rules() { return 1; }
 
 before=$(<"$MODDIR/.config/sing-box/config.json")
@@ -64,7 +64,7 @@ if magicnet_block_apply_singbox; then
 fi
 after=$(<"$MODDIR/.config/sing-box/config.json")
 if [[ "$after" != "$before" ]]; then
-  printf '%s\n' 'block apply failure must not publish a partial config' >&2
+  printf '%s\n' 'block apply failure must not publish selector repairs or partial rules' >&2
   diff -u <(printf '%s\n' "$before") <(printf '%s\n' "$after") >&2 || true
   exit 1
 fi
@@ -72,6 +72,7 @@ fi
 # A successful rule renderer is not enough when the source config no longer
 # has the expected route.rules shape; publishing that candidate would silently
 # drop the managed block rule.
+magicnet_block_ensure_ad_selectors() { :; }
 cat >"$MODDIR/.config/sing-box/config.json" <<'EOF'
 {
   "route": {

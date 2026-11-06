@@ -98,6 +98,60 @@ magicnet_kernel_route_report_result() { printf 'route-result:%s\\n' "$1"; }
     for label, fn in steps.items():
         for rc in [1, 2]:
             result.append((f'start-failure-{label}-{rc}', setup + f'\n{fn}() {{ echo {label}; return {rc}; }}\nmagicnet_start_singbox_unlocked'))
+    for port in ['', '0', '01', '53', '9090', '65535', '65536', 'invalid']:
+        result.append((f'api-port-{port}', f'magicnet_singbox_api_endpoint() {{ echo "127.0.0.1:{port}"; }}\nmagicnet_singbox_api_port'))
+    for index, listener in enumerate([
+        '', 'LISTEN 0 128 127.0.0.1:9090 0.0.0.0:* users:(("sing-box",pid=42,fd=3))',
+        'LISTEN 0 128 [::1]:9090 [::]:* users:(("sing-box",pid=42,fd=3))',
+        'LISTEN 0 128 127.0.0.1:19090 0.0.0.0:* users:(("sing-box",pid=42,fd=3))',
+        'LISTEN 0 128 127.0.0.1:9090 0.0.0.0:* users:(("other",pid=142,fd=3))',
+    ]):
+        setup = f'magicnet_singbox_api_endpoint() {{ echo 127.0.0.1:9090; }}\nss() {{ printf "%s\\n" {quote(listener)}; }}\n'
+        result.append((f'api-listener-{index}', setup + 'magicnet_singbox_api_listener_exists'))
+        result.append((f'api-owned-{index}', setup + 'magicnet_singbox_listener_owned 42'))
+    setup = '''
+cp "$MODDIR/fixture.json" "$MODDIR/.config/sing-box/config.json"
+rm -f "$MODDIR/.config/magicnet/"*list "$MODDIR/.config/magicnet/block.conf"
+magicnet_warn() { printf 'warn:%s\\n' "$*"; }
+'''
+    policies = [
+        ('empty', '', '', ''),
+        ('suffix', 'news.invalid\nchat.invalid\nnews.invalid', '', ''),
+        ('escaped', '雪.invalid\nquote"name.invalid\nback\\slash.invalid', '', ''),
+        ('typed', '', 'DOMAIN,ad.invalid\nDOMAIN-SUFFIX,ads.invalid\nDOMAIN-KEYWORD,sponsor', ''),
+        ('allow', '', 'DOMAIN,ad.invalid\nDOMAIN-SUFFIX,ads.invalid', 'DOMAIN,ad.invalid'),
+        ('normalize', '', 'DOMAIN-SUFFIX,ads.invalid', 'DOMAIN-SUFFIX,https://Forum.Example.invalid.:443/path?source=test'),
+        ('unsupported', '', 'PROCESS-NAME,unused\nDOMAIN-KEYWORD,sponsor', 'PROCESS-NAME,keep'),
+        ('mixed', 'manual.invalid', 'DOMAIN,ad.invalid\nDOMAIN-SUFFIX,blocked.invalid', 'DOMAIN-SUFFIX,allowed.invalid'),
+    ]
+    for name, manual, community, allowed in policies:
+        prepare = setup + f'''
+printf '%s\\n' {quote(manual)} >"$MODDIR/.config/magicnet/block-domain-suffix.list"
+printf '%s\\n' {quote(community)} >"$MODDIR/.config/magicnet/community-ban-rules.list"
+printf '%s\\n' {quote(allowed)} >"$MODDIR/.config/magicnet/block-allow-rules.list"
+'''
+        for enabled in [0, 1]:
+            conf = f'MAGICNET_BLOCK_ENABLED={enabled}\nMAGICNET_BLOCK_COMMUNITY_ENABLED=1\nMAGICNET_BLOCK_URL=https://example.invalid/rules\n'
+            result.append((f'block-{name}-{enabled}', prepare + f'''
+printf '%s' {quote(conf)} >"$MODDIR/.config/magicnet/block.conf"
+magicnet_block_apply_singbox
+printf 'apply_rc=%s\\n' "$?"
+jq -cS . "$MODDIR/.config/sing-box/config.json"
+magicnet_block_apply_singbox
+printf 'repeat_rc=%s\\n' "$?"
+jq -cS . "$MODDIR/.config/sing-box/config.json"
+'''))
+    for index, domains in enumerate(['', 'example.invalid', ' a.invalid \nb.invalid\na.invalid', '雪.invalid\nquote".invalid\nback\\slash.invalid']):
+        for target in ['proxy', 'direct', 'block', 'warp']:
+            result.append((f'route-{target}-{index}', setup + f'''
+printf '%s\\n' {quote(domains)} >"$MODDIR/.config/magicnet/route-{target}-domain-suffix.list"
+magicnet_route_apply_singbox
+printf 'apply_rc=%s\\n' "$?"
+jq -cS . "$MODDIR/.config/sing-box/config.json"
+magicnet_route_apply_singbox
+printf 'repeat_rc=%s\\n' "$?"
+jq -cS . "$MODDIR/.config/sing-box/config.json"
+'''))
     return result
 
 
@@ -117,6 +171,17 @@ MAGICNET_UDP_TIMEOUT=15m
 MAGICNET_TUN_MTU=1420
 ''')
     (module / '.state').mkdir()
+    (module / '.config/sing-box').mkdir()
+    (module / 'fixture.json').write_text(json.dumps({
+        'outbounds': [{'type': 'selector', 'tag': 'ad-block', 'outbounds': ['direct'], 'default': 'direct'},
+                      {'type': 'direct', 'tag': 'direct'}, {'type': 'block', 'tag': 'block'}],
+        'route': {'rules': [{'action': 'sniff'},
+                            {'domain': ['__magicnet_block__'], 'outbound': 'ad-block'},
+                            {'domain': ['__magicnet_ad_allow__'], 'outbound': 'ad-allow'},
+                            {'domain_suffix': ['__magicnet_route__', 'old.invalid'], 'outbound': 'proxy-rule'},
+                            {'domain_suffix': ['lan'], 'outbound': 'lan'},
+                            {'domain_keyword': ['adservice'], 'outbound': 'ad-block'}]},
+    }, indent=2) + '\n')
     proc = base / 'proc'
     (proc / '101').mkdir(parents=True)
     return module, proc
@@ -129,16 +194,23 @@ def script_for(test_cases: list[tuple[str, str]]) -> str:
 . "$MODDIR/lib/magicnet/transparent_dns.sh"
 . "$MODDIR/lib/magicnet/dns.sh"
 . "$MODDIR/lib/magicnet/core.sh"
+. "$MODDIR/lib/magicnet/api.sh"
+. "$MODDIR/lib/magicnet/subscribe_bootstrap.sh"
+. "$MODDIR/lib/magicnet/blocklist.sh"
+. "$MODDIR/lib/magicnet/routes.sh"
 '''
     for label, code in test_cases:
         source += f'\nprintf "CASE %s\\n" {quote(label)}\n(\n{code}\n) 2>&1\nprintf "\\nSTATUS %s\\n" "$?"\n'
     return source
 
 
-def run(shell: list[str], script: str, checkout: Path, timeout: int = 90) -> subprocess.CompletedProcess:
+def run(shell: list[str], script: str, checkout: Path, timeout: int = 90, *, compact: bool = False) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory(prefix='magicnet-shell-parity-') as name:
         base = Path(name)
         module, proc = prepare_module(base, checkout)
+        if compact:
+            fixture = module / 'fixture.json'
+            fixture.write_text(json.dumps(json.loads(fixture.read_text()), separators=(',', ':')))
         cwd = base / 'empty'
         cwd.mkdir()
         env = {k: v for k, v in os.environ.items() if not k.startswith(('MAGICNET_', 'MAGIC_', 'KAM_'))}
@@ -181,7 +253,11 @@ def main() -> None:
                                                 new.stdout.decode(errors='replace').splitlines(True),
                                                 fromfile='baseline', tofile='candidate'))
             raise AssertionError(f'{name} behavior changed:\n{diff}\nstderr: {old.stderr!r} / {new.stderr!r}')
+        compact = run(command, script, ROOT, compact=True)
+        if compact.stdout != new.stdout or compact.stderr != new.stderr:
+            raise AssertionError(f'{name} compact JSON changed policy behavior')
         entry = {'cases_passed': len(test_cases)}
+        entry['compact_json_cases_passed'] = 32
         if args.benchmark:
             before = benchmark(command, baseline, args.benchmark)
             after = benchmark(command, ROOT, args.benchmark)

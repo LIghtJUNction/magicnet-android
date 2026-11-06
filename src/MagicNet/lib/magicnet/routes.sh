@@ -1278,52 +1278,23 @@ magicnet_singbox_hotspot_policy_current() (
     return "$_hotspot_policy_rc"
 )
 
-magicnet_route_singbox_rules() {
+magicnet_route_singbox_rules() (
+    _route_jq=$(magicnet_jq) || return 1
     for _target in proxy direct block warp; do
-        case "$_target" in
-        proxy) _outbound="proxy-rule" ;;
-        direct) _outbound="direct" ;;
-        block) _outbound="block" ;;
-        warp) _outbound="warp" ;;
-        esac
-        _domains="$(magicnet_route_list_values "$(magicnet_route_list_file "$_target")")"
+        _domains="$(magicnet_route_list_values "$(magicnet_route_list_file "$_target")")" || return 1
         [ -n "$_domains" ] || continue
-        printf '      {\n'
-        printf '        "domain_suffix": [\n'
-        printf '          "__magicnet_route__",\n'
-        _count=$(printf '%s\n' "$_domains" | wc -l | tr -d ' ')
-        _idx=0
-        printf '%s\n' "$_domains" | while read -r _domain; do
-            [ -n "$_domain" ] || continue
-            _idx=$((_idx + 1))
-            _comma=","
-            [ "$_idx" -eq "$_count" ] && _comma=""
-            printf '          "%s"%s\n' "$(magicnet_json_escape "$_domain")" "$_comma"
-        done
-        printf '        ],\n'
-        printf '        "outbound": "%s"\n' "$_outbound"
-        printf '      },\n'
+        _outbound=$_target
+        [ "$_target" != proxy ] || _outbound=proxy-rule
+        printf '%s\n' "$_domains" | "$_route_jq" -R -s --arg outbound "$_outbound" -e '
+            split("\n") | map(gsub("^[ \t]+|[ \t]+$"; "")) | map(select(. != ""))
+            | {domain_suffix: (["__magicnet_route__"] + .), outbound:$outbound}
+        ' || return 1
+        printf ',\n'
     done
-    unset _target _outbound _domains _count _idx _comma _domain
-}
+)
 
 magicnet_route_apply_singbox() {
-    _config="${MODDIR}/.config/sing-box/config.json"
-    [ -f "$_config" ] || return 0
-    _tmp="${_config}.magicnet-route.new"
-    _rules_file="${MODDIR}/.cache/magicnet-route-singbox.rules"
-    if ! mkdir -p "${_rules_file%/*}" ||
-        ! magicnet_route_singbox_rules >"$_rules_file"; then
-        rm -f "$_rules_file" "$_tmp" 2>/dev/null || true
-        return 1
-    fi
-    if magicnet_route_has_rules &&
-        ! grep -q '"__magicnet_route__"' "$_rules_file"; then
-        magicnet_warn "sing-box custom route rules were not generated"
-        rm -f "$_rules_file" "$_tmp" 2>/dev/null || true
-        return 1
-    fi
-    type magicnet_singbox_insert_route_rules >/dev/null 2>&1 || {
+    type magicnet_singbox_apply_route_rules >/dev/null 2>&1 || {
         _route_rules_lib="${MODDIR}/lib/magicnet/singbox_route_rules.sh"
         if [ ! -f "$_route_rules_lib" ] && type magicnet_lib_dir >/dev/null 2>&1; then
             _route_rules_lib="$(magicnet_lib_dir)/singbox_route_rules.sh"
@@ -1331,32 +1302,7 @@ magicnet_route_apply_singbox() {
         . "$_route_rules_lib"
         unset _route_rules_lib
     }
-    if ! magicnet_singbox_insert_route_rules "$_config" "$_tmp" "$_rules_file" route; then
-        rm -f "$_tmp" 2>/dev/null || true
-        return 1
-    fi
-
-    # Validate the candidate before publishing it. The old order moved the
-    # snapshot first and only then noticed that a failed rule generation had
-    # removed the managed marker, leaving the live config damaged even though
-    # the function returned failure.
-    if magicnet_route_has_rules; then
-        grep -q '"__magicnet_route__"' "$_tmp" || {
-            magicnet_warn "sing-box custom route rules were not inserted"
-            rm -f "$_tmp" 2>/dev/null || true
-            return 1
-        }
-    else
-        if grep -q '"__magicnet_route__"' "$_tmp"; then
-            magicnet_warn "sing-box custom route marker was not removed"
-            rm -f "$_tmp" 2>/dev/null || true
-            return 1
-        fi
-    fi
-    if ! chmod 600 "$_tmp" || ! mv -f "$_tmp" "$_config" || ! chmod 600 "$_config"; then
-        rm -f "$_tmp" 2>/dev/null || true
-        return 1
-    fi
+    magicnet_singbox_apply_route_rules route
 }
 
 magicnet_route_apply_unlocked() {
