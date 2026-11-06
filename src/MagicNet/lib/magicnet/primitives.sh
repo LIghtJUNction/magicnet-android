@@ -283,24 +283,49 @@ magicnet_trusted_curl_exec() {
     return "$_trusted_curl_rc"
 }
 
-magicnet_json_escape() {
-    LC_ALL=C printf '%s' "$1" |
-        tr '\r\n\t' '   ' |
-        LC_ALL=C awk '
-            BEGIN {
-                for (n = 1; n < 32; n++) controls = controls sprintf("%c", n)
-                controls = controls sprintf("%c", 127)
+# Render text or string lists in one pass. A trailing sentinel preserves final
+# newlines without putting unbounded values in argv/env or interpreting escapes.
+magicnet_json_emit() {
+    printf '%s\001' "$2" | LC_ALL=C awk -v mode="$1" '
+        function trim(s, ws) {
+            ws=" \t\r\n\v\f"
+            while (length(s) && index(ws, substr(s, 1, 1))) s=substr(s, 2)
+            while (length(s) && index(ws, substr(s, length(s), 1))) s=substr(s, 1, length(s)-1)
+            return s
+        }
+        function escape(s, out, i, c) {
+            out=""
+            for (i=1; i<=length(s); i++) {
+                c=substr(s, i, 1)
+                if (c == "\r" || c == "\n" || c == "\t") c=" "
+                if (index(controls, c)) continue
+                if (c == "\\" || c == "\"") out=out "\\"
+                out=out c
             }
-            {
-                for (n = 1; n <= length($0); n++) {
-                    c = substr($0, n, 1)
-                    if (index(controls, c)) continue
-                    if (c == "\\" || c == "\"") printf "%s", "\\"
-                    printf "%s", c
-                }
+            return out
+        }
+        { input=input (NR > 1 ? "\n" : "") $0 }
+        END {
+            for (i=1; i<32; i++) controls=controls sprintf("%c", i)
+            controls=controls sprintf("%c", 127)
+            input=substr(input, 1, length(input)-1)
+            if (mode == "text") { printf "%s", escape(input); exit }
+            count=split(input, values, mode == "csv" ? "," : "\n")
+            printf "["
+            for (n=1; n<=count; n++) {
+                value=mode == "csv" ? trim(values[n]) : values[n]
+                if (mode == "csv" && value == "") continue
+                value=escape(value)
+                if (mode != "csv" && (trim(value) == "" || seen[value]++)) continue
+                if (emitted++) printf "%s", mode == "csv" ? "," : ", "
+                printf "\"%s\"", value
             }
-        '
+            printf "]"
+        }
+    '
 }
+
+magicnet_json_escape() { magicnet_json_emit text "$1"; }
 
 # Host-only compatibility for Bash test fixtures. Android always uses the Rust
 # worker below; never stream a device proc pseudo-file through this fallback.
@@ -529,235 +554,125 @@ magicnet_proc_named_pids_to_file() (
     return "$_named_rc"
 )
 
-# Emit one validated argv entry per line through the Rust bounded proc reader.
-# It caps cmdline at 64 KiB, enforces a monotonic deadline, fails closed on
-# malformed entries, and kills its reader worker if this shell disappears.
-magicnet_proc_cmdline_lines() (
-    _proc_pid="$1"
-    _proc_root="$(magicnet_effective_proc_root "${2:-${MAGICNET_PROC_ROOT:-/proc}}")"
-    case "$_proc_pid" in
-    '' | *[!0-9]* | 0) return 1 ;;
-    esac
-    case "$_proc_root" in
-    /*) ;;
-    *) return 1 ;;
-    esac
-    _proc_pid_dir="$_proc_root/$_proc_pid"
-    [ -d "$_proc_pid_dir" ] || return 1
+# One bounded proc reader owns selection and tri-state semantics for argv,
+# comm and stat. Missing identity is stopped (1); an unreadable live identity
+# is unknown (2). The production CLI caps bytes and owns worker deadlines.
+magicnet_proc_read() (
+    _proc_kind=$1
+    _proc_pid=$2
+    _proc_root="$(magicnet_effective_proc_root "${3:-${MAGICNET_PROC_ROOT:-/proc}}")"
+    case "$_proc_pid" in '' | *[!0-9]* | 0) return 1 ;; esac
+    case "$_proc_root" in /*) ;; *) return 1 ;; esac
+    [ -d "$_proc_root/$_proc_pid" ] || return 1
     if type magicnet_proc_reader_test_hook >/dev/null 2>&1; then
-        if magicnet_proc_reader_test_hook cmdline "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
+        magicnet_proc_reader_test_hook "$_proc_kind" "$_proc_root" "$_proc_pid" && return 0
     elif magicnet_host_proc_reader_allowed; then
-        if magicnet_host_proc_reader cmdline "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
+        magicnet_host_proc_reader "$_proc_kind" "$_proc_root" "$_proc_pid" && return 0
     else
-        _proc_reader="${MODDIR}/cli"
-        [ -x "$_proc_reader" ] || return 2
-        if "$_proc_reader" __proc-cmdline "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
+        [ -x "${MODDIR}/cli" ] || return 2
+        "${MODDIR}/cli" "__proc-$_proc_kind" "$_proc_root" "$_proc_pid" && return 0
     fi
-    [ "$_proc_rc" -eq 0 ] && return 0
-    [ -d "$_proc_pid_dir" ] || return 1
+    [ -d "$_proc_root/$_proc_pid" ] || return 1
     return 2
 )
 
-magicnet_proc_comm() (
-    _proc_pid="$1"
-    _proc_root="$(magicnet_effective_proc_root "${2:-${MAGICNET_PROC_ROOT:-/proc}}")"
-    case "$_proc_pid" in
-    '' | *[!0-9]* | 0) return 1 ;;
-    esac
-    case "$_proc_root" in
-    /*) ;;
-    *) return 1 ;;
-    esac
-    _proc_pid_dir="$_proc_root/$_proc_pid"
-    [ -d "$_proc_pid_dir" ] || return 1
-    if type magicnet_proc_reader_test_hook >/dev/null 2>&1; then
-        if magicnet_proc_reader_test_hook comm "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
-    elif magicnet_host_proc_reader_allowed; then
-        if magicnet_host_proc_reader comm "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
-    else
-        _proc_reader="${MODDIR}/cli"
-        [ -x "$_proc_reader" ] || return 2
-        if "$_proc_reader" __proc-comm "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
-    fi
-    [ "$_proc_rc" -eq 0 ] && return 0
-    [ -d "$_proc_pid_dir" ] || return 1
-    return 2
-)
+magicnet_proc_cmdline_lines() { magicnet_proc_read cmdline "$@"; }
+magicnet_proc_comm() { magicnet_proc_read comm "$@"; }
+magicnet_proc_stat_identity() { magicnet_proc_read stat "$@"; }
 
-magicnet_proc_stat_identity() (
-    _proc_pid="$1"
-    _proc_root="$(magicnet_effective_proc_root "${2:-${MAGICNET_PROC_ROOT:-/proc}}")"
-    case "$_proc_pid" in
-    '' | *[!0-9]* | 0) return 1 ;;
-    esac
-    case "$_proc_root" in
-    /*) ;;
-    *) return 1 ;;
-    esac
-    _proc_pid_dir="$_proc_root/$_proc_pid"
-    [ -d "$_proc_pid_dir" ] || return 1
-    if type magicnet_proc_reader_test_hook >/dev/null 2>&1; then
-        if magicnet_proc_reader_test_hook stat "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
-    elif magicnet_host_proc_reader_allowed; then
-        if magicnet_host_proc_reader stat "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
-    else
-        _proc_reader="${MODDIR}/cli"
-        [ -x "$_proc_reader" ] || return 2
-        if "$_proc_reader" __proc-stat "$_proc_root" "$_proc_pid"; then _proc_rc=0; else _proc_rc=$?; fi
-    fi
-    [ "$_proc_rc" -eq 0 ] && return 0
-    [ -d "$_proc_pid_dir" ] || return 1
-    return 2
-)
-
-# Read /proc/<pid>/stat starttime. Optional second argument overrides the proc
-# root (tests inject a fixture tree via MAGICNET_SUB_REFRESH_PROC_ROOT).
+# Positional parameters keep parsed identities private without another shell.
 magicnet_proc_start() {
-    _proc_pid="$1"
-    _proc_root="$(magicnet_effective_proc_root "${2:-${MAGICNET_PROC_ROOT:-/proc}}")"
-    case "$_proc_pid" in
-    '' | *[!0-9]*)
-        unset _proc_pid _proc_root _proc_identity _proc_state _proc_start _proc_read_rc
-        return 1
-        ;;
-    esac
-    case "$_proc_root" in
-    /*) ;;
-    *)
-        unset _proc_pid _proc_root _proc_identity _proc_state _proc_start _proc_read_rc
-        return 1
-        ;;
-    esac
-    if _proc_identity="$(magicnet_proc_stat_identity "$_proc_pid" "$_proc_root")"; then
-        _proc_read_rc=0
+    if _proc_field_identity=$(magicnet_proc_stat_identity "$@"); then
+        set -- "$_proc_field_identity" 0
     else
-        _proc_read_rc=$?
+        set -- '' "$?"
     fi
-    if [ "$_proc_read_rc" -ne 0 ]; then
-        unset _proc_pid _proc_root _proc_identity _proc_state _proc_start
-        return "$_proc_read_rc"
-    fi
-    _proc_state=${_proc_identity%% *}
-    _proc_start=${_proc_identity#* }
-    case "$_proc_state" in
-    [A-Za-z]) ;;
-    *)
-        unset _proc_pid _proc_root _proc_identity _proc_state _proc_start _proc_read_rc
-        return 2
-        ;;
-    esac
-    case "$_proc_start" in
-    '' | *[!0-9]*)
-        unset _proc_pid _proc_root _proc_identity _proc_state _proc_start _proc_read_rc
-        return 2
-        ;;
-    esac
-    printf '%s\n' "$_proc_start"
-    unset _proc_pid _proc_root _proc_identity _proc_state _proc_start _proc_read_rc
+    unset _proc_field_identity
+    [ "$2" -eq 0 ] || return "$2"
+    case "${1%% *}" in [A-Za-z]) ;; *) return 2 ;; esac
+    set -- "${1#* }"
+    case "$1" in '' | *[!0-9]*) return 2 ;; esac
+    printf '%s\n' "$1"
 }
 
 magicnet_proc_state() {
-    _proc_state_pid="$1"
-    _proc_state_root="$(magicnet_effective_proc_root "${2:-${MAGICNET_PROC_ROOT:-/proc}}")"
-    if _proc_state_identity="$(magicnet_proc_stat_identity "$_proc_state_pid" "$_proc_state_root")"; then
-        _proc_state_read_rc=0
+    if _proc_field_identity=$(magicnet_proc_stat_identity "$@"); then
+        set -- "$_proc_field_identity" 0
     else
-        _proc_state_read_rc=$?
+        set -- '' "$?"
     fi
-    if [ "$_proc_state_read_rc" -ne 0 ]; then
-        unset _proc_state_pid _proc_state_root _proc_state_identity _proc_state
-        return "$_proc_state_read_rc"
-    fi
-    _proc_state=${_proc_state_identity%% *}
-    case "$_proc_state" in
-    [A-Za-z]) printf '%s\n' "$_proc_state" ;;
-    *)
-        unset _proc_state_pid _proc_state_root _proc_state_identity _proc_state _proc_state_read_rc
-        return 2
-        ;;
+    unset _proc_field_identity
+    [ "$2" -eq 0 ] || return "$2"
+    case "${1%% *}" in
+    [A-Za-z]) printf '%s\n' "${1%% *}" ;;
+    *) return 2 ;;
     esac
-    unset _proc_state_pid _proc_state_root _proc_state_identity _proc_state _proc_state_read_rc
 }
 
 # KernelSU WebUI commands inherit the manager app's killable cgroups. Move an
 # explicitly selected MagicNet launcher into each matching stable parent before
 # the bridge exits, so its persistent children are not reclaimed with the app.
 magicnet_detach_pid_from_app_cgroup() (
-    _detach_pid="$1"
+    _detach_pid=$1
     _detach_proc_root="$(magicnet_effective_proc_root "${MAGICNET_PROC_ROOT:-/proc}")"
-    case "$_detach_pid" in
-    '' | *[!0-9]* | 0 | 1) return 1 ;;
-    esac
-    _detach_cgroup_file="${_detach_proc_root}/${_detach_pid}/cgroup"
-    [ -r "$_detach_cgroup_file" ] || return 1
-    _detach_cgroup="$(cat "$_detach_cgroup_file" 2>/dev/null || true)"
-    _detach_app_lines=$(printf '%s\n' "$_detach_cgroup" |
-        awk -F: '$3 ~ "^/apps/" { count++ } END { print count + 0 }')
-    [ "$_detach_app_lines" -gt 0 ] || return 0
-
-    _detach_default_roots='/sys/fs/cgroup:/dev/memcg/apps:/dev/cpuset:/dev/cpuctl:/dev/blkio:/dev/freezer'
-    if magicnet_android_runtime; then
-        _detach_roots="$_detach_default_roots"
-        _detach_custom=0
-    else
-        _detach_roots="${MAGICNET_PROCESS_CGROUP_ROOTS:-$_detach_default_roots}"
-        _detach_custom=0
-        [ -z "${MAGICNET_PROCESS_CGROUP_ROOTS:-}" ] || _detach_custom=1
+    case "$_detach_pid" in '' | *[!0-9]* | 0 | 1) return 1 ;; esac
+    _detach_file="$_detach_proc_root/$_detach_pid/cgroup"
+    [ -r "$_detach_file" ] || return 1
+    _detach_cgroup=$(cat "$_detach_file" 2>/dev/null || true)
+    _detach_lines=0
+    _detach_v2=0 _detach_memory=0 _detach_cpuset=0
+    _detach_cpu=0 _detach_blkio=0 _detach_freezer=0
+    # Parse once. The old per-controller pipelines spawned an awk plus six
+    # grep processes for the same small proc record on every service start.
+    while IFS=: read -r _id _controllers _path _extra; do
+        case "$_path" in /apps/*) ;; *) continue ;; esac
+        _detach_lines=$((_detach_lines + 1))
+        [ "$_id:$_controllers" != '0:' ] || _detach_v2=1
+        case "$_controllers" in *memory*) _detach_memory=1 ;; esac
+        case "$_controllers" in *cpuset*) _detach_cpuset=1 ;; esac
+        case "$_controllers" in *cpu*) _detach_cpu=1 ;; esac
+        case "$_controllers" in *blkio*) _detach_blkio=1 ;; esac
+        case "$_controllers" in *freezer*) _detach_freezer=1 ;; esac
+    done <<EOF
+$_detach_cgroup
+EOF
+    [ "$_detach_lines" -gt 0 ] || return 0
+    _detach_roots='/sys/fs/cgroup:/dev/memcg/apps:/dev/cpuset:/dev/cpuctl:/dev/blkio:/dev/freezer'
+    _detach_custom=0
+    if ! magicnet_android_runtime && [ -n "${MAGICNET_PROCESS_CGROUP_ROOTS:-}" ]; then
+        _detach_roots=$MAGICNET_PROCESS_CGROUP_ROOTS
+        _detach_custom=1
     fi
-    _detach_required=0
-    _detach_moved=0
-    _detach_failed=0
-    _detach_remaining=$_detach_roots
-    while [ -n "$_detach_remaining" ]; do
-        case "$_detach_remaining" in
-        *:*)
-            _detach_root=${_detach_remaining%%:*}
-            _detach_remaining=${_detach_remaining#*:}
-            ;;
-        *)
-            _detach_root=$_detach_remaining
-            _detach_remaining=''
-            ;;
+    _detach_required=0 _detach_moved=0
+    while [ -n "$_detach_roots" ]; do
+        _detach_root=${_detach_roots%%:*}
+        case "$_detach_roots" in
+        *:*) _detach_roots=${_detach_roots#*:} ;;
+        *) _detach_roots='' ;;
         esac
         [ -n "$_detach_root" ] || continue
-        _detach_applicable=0
-        if [ "$_detach_custom" -eq 1 ]; then
-            _detach_applicable=1
-        else
+        _detach_applicable=$_detach_custom
+        if [ "$_detach_custom" = 0 ]; then
             case "$_detach_root" in
-            /sys/fs/cgroup)
-                printf '%s\n' "$_detach_cgroup" | grep -q '^0::/apps/' && _detach_applicable=1
-                ;;
-            /dev/memcg/apps)
-                printf '%s\n' "$_detach_cgroup" | grep -Eq ':[^:]*memory[^:]*:/apps/' && _detach_applicable=1
-                ;;
-            /dev/cpuset)
-                printf '%s\n' "$_detach_cgroup" | grep -Eq ':[^:]*cpuset[^:]*:/apps/' && _detach_applicable=1
-                ;;
-            /dev/cpuctl)
-                printf '%s\n' "$_detach_cgroup" | grep -Eq ':[^:]*(cpu|cpuacct)[^:]*:/apps/' && _detach_applicable=1
-                ;;
-            /dev/blkio)
-                printf '%s\n' "$_detach_cgroup" | grep -Eq ':[^:]*blkio[^:]*:/apps/' && _detach_applicable=1
-                ;;
-            /dev/freezer)
-                printf '%s\n' "$_detach_cgroup" | grep -Eq ':[^:]*freezer[^:]*:/apps/' && _detach_applicable=1
-                ;;
+            /sys/fs/cgroup) _detach_applicable=$_detach_v2 ;;
+            /dev/memcg/apps) _detach_applicable=$_detach_memory ;;
+            /dev/cpuset) _detach_applicable=$_detach_cpuset ;;
+            /dev/cpuctl) _detach_applicable=$_detach_cpu ;;
+            /dev/blkio) _detach_applicable=$_detach_blkio ;;
+            /dev/freezer) _detach_applicable=$_detach_freezer ;;
             esac
         fi
-        [ "$_detach_applicable" -eq 1 ] || continue
+        [ "$_detach_applicable" = 1 ] || continue
         _detach_required=$((_detach_required + 1))
-        if [ -d "$_detach_root" ] && [ -w "${_detach_root}/cgroup.procs" ] &&
-            printf '%s\n' "$_detach_pid" >"${_detach_root}/cgroup.procs" 2>/dev/null; then
-            _detach_moved=$((_detach_moved + 1))
-        elif [ -d "$_detach_root" ] && [ -w "${_detach_root}/tasks" ] &&
-            printf '%s\n' "$_detach_pid" >"${_detach_root}/tasks" 2>/dev/null; then
-            _detach_moved=$((_detach_moved + 1))
-        else
-            _detach_failed=1
-        fi
+        [ -d "$_detach_root" ] || continue
+        for _detach_target in cgroup.procs tasks; do
+            if [ -w "$_detach_root/$_detach_target" ] &&
+                printf '%s\n' "$_detach_pid" >"$_detach_root/$_detach_target" 2>/dev/null; then
+                _detach_moved=$((_detach_moved + 1))
+                break
+            fi
+        done
     done
-    [ "$_detach_required" -ge "$_detach_app_lines" ] &&
-        [ "$_detach_moved" -eq "$_detach_required" ] &&
-        [ "$_detach_failed" -eq 0 ]
+    [ "$_detach_required" -ge "$_detach_lines" ] &&
+        [ "$_detach_moved" -eq "$_detach_required" ]
 )

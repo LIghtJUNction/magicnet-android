@@ -84,23 +84,36 @@ magicnet_startup_step() {
     return "$2"
 }
 
+# Candidate validation and startup materialize the same ordered policy graph.
+# Run it in this shell: normalizers publish state consumed by later stages.
+magicnet_materialize_singbox_runtime() {
+    set -- \
+        subscription magicnet_prepare_singbox_nodes_unlocked \
+        chain magicnet_singbox_chain_apply \
+        transparent magicnet_singbox_apply_transparent_mode \
+        hotspot magicnet_singbox_apply_hotspot_policy \
+        dns magicnet_dns_apply_unlocked \
+        tailscale magicnet_tailscale_apply_unlocked \
+        apps magicnet_app_policy_apply_unlocked \
+        warp magicnet_warp_apply_unlocked
+    while [ "$#" -gt 0 ]; do
+        magicnet_startup_step "$1" "$2" || return $?
+        shift 2
+    done
+    magicnet_singbox_apply_zashboard ||
+        magicnet_warn "Failed to materialize the sing-box Zashboard panel; the core will continue without the panel rewrite."
+    if [ -s "$MODDIR/.config/magicnet/config-override-active.json" ] ||
+        [ -s "$MODDIR/.state/override-materialization/checkpoint.json" ]; then
+        magicnet_startup_step overrides magicnet_override_materialize_unlocked || return $?
+    fi
+    return 0
+}
+
 magicnet_prepare_singbox_candidate_unlocked() {
     magicnet_module_disabled && return 1
     [ "${MAGIC_SINGBOX:-1}" -ne 0 ] || return 1
     magicnet_cmd_exists sing-box || return 1
-    magicnet_startup_step subscription magicnet_prepare_singbox_nodes_unlocked || return $?
-    magicnet_startup_step chain magicnet_singbox_chain_apply || return $?
-    magicnet_startup_step transparent magicnet_singbox_apply_transparent_mode || return $?
-    magicnet_startup_step hotspot magicnet_singbox_apply_hotspot_policy || return $?
-    magicnet_startup_step dns magicnet_dns_apply_unlocked || return $?
-    magicnet_startup_step tailscale magicnet_tailscale_apply_unlocked || return $?
-    magicnet_startup_step apps magicnet_app_policy_apply_unlocked || return $?
-    magicnet_startup_step warp magicnet_warp_apply_unlocked || return $?
-    magicnet_singbox_apply_zashboard ||
-        magicnet_warn "Failed to materialize the sing-box Zashboard panel; the core will continue without the panel rewrite."
-    if [ -s "$MODDIR/.config/magicnet/config-override-active.json" ] || [ -s "$MODDIR/.state/override-materialization/checkpoint.json" ]; then
-        magicnet_startup_step overrides magicnet_override_materialize_unlocked || return $?
-    fi
+    magicnet_materialize_singbox_runtime || return $?
     magicnet_startup_step config-check magicnet_validate_singbox_transparent_config
 }
 
@@ -124,24 +137,7 @@ magicnet_start_singbox_unlocked() {
     esac
     magicnet_startup_step hotspot-offload magicnet_hotspot_offload_prepare || return $?
     if [ "${MAGICNET_TRANSPARENT_RESTORED_CONFIG:-0}" != 1 ]; then
-        magicnet_startup_step subscription magicnet_prepare_singbox_nodes_unlocked || return $?
-        magicnet_startup_step chain magicnet_singbox_chain_apply || return $?
-        magicnet_startup_step transparent magicnet_singbox_apply_transparent_mode || return $?
-        magicnet_startup_step hotspot magicnet_singbox_apply_hotspot_policy || return $?
-        # sing-box snapshots DNS servers and WARP endpoints when the process
-        # starts. Applying these only in the post-start rewrite made a fresh
-        # start report success while the running core still held the old config.
-        magicnet_startup_step dns magicnet_dns_apply_unlocked || return $?
-        magicnet_startup_step tailscale magicnet_tailscale_apply_unlocked || return $?
-        # The preceding normalizers rebuild the managed transparent inbound.
-        # Materialize per-app UID boundaries before sing-box snapshots it.
-        magicnet_startup_step apps magicnet_app_policy_apply_unlocked || return $?
-        magicnet_startup_step warp magicnet_warp_apply_unlocked || return $?
-        magicnet_singbox_apply_zashboard ||
-            magicnet_warn "Failed to materialize the sing-box Zashboard panel; the core will continue without the panel rewrite."
-        if [ -s "$MODDIR/.config/magicnet/config-override-active.json" ] || [ -s "$MODDIR/.state/override-materialization/checkpoint.json" ]; then
-            magicnet_startup_step overrides magicnet_override_materialize_unlocked || return $?
-        fi
+        magicnet_materialize_singbox_runtime || return $?
         magicnet_startup_step auth magicnet_tailscale_inject_auth_key || return $?
     fi
     # A rollback/recovery starts the byte-exact snapshot without rewriting it.

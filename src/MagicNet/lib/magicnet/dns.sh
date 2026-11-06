@@ -17,40 +17,16 @@ magicnet_dns_profile() {
     unset _profile
 }
 
+# Materialization selects a fixed compatible resolver without Internet probes.
+# Only prefer_ipv6 can choose the IPv6 address; every other policy uses IPv4.
 magicnet_dns_bootstrap_server() {
-    _bootstrap_ipv6_mode="${MAGICNET_IPV6_MODE:-}"
-    [ -n "$_bootstrap_ipv6_mode" ] ||
-        _bootstrap_ipv6_mode="$(magicnet_network_policy_value MAGICNET_IPV6_MODE 2>/dev/null || true)"
-    _bootstrap_ipv6_available=0
-    if command -v ip >/dev/null 2>&1 &&
+    set -- "${MAGICNET_IPV6_MODE:-$(magicnet_network_policy_value MAGICNET_IPV6_MODE 2>/dev/null || true)}"
+    if [ "$1" = prefer_ipv6 ] && command -v ip >/dev/null 2>&1 &&
         ip -6 route show default 2>/dev/null | grep -q '^default'; then
-        _bootstrap_ipv6_available=1
-    fi
-    _bootstrap_ipv6_first=0
-    [ "$_bootstrap_ipv6_mode" = "prefer_ipv6" ] && _bootstrap_ipv6_first=1
-
-    if [ "$_bootstrap_ipv6_first" -eq 1 ] && [ "$_bootstrap_ipv6_available" -eq 1 ]; then
-        _bootstrap_candidates="6:2400:3200::1 6:2400:3200:baba::1 4:223.6.6.6 4:223.5.5.5"
-        _bootstrap_fallback="2400:3200::1"
+        printf '%s\n' '2400:3200::1'
     else
-        _bootstrap_candidates="4:223.6.6.6 4:223.5.5.5"
-        _bootstrap_fallback="223.6.6.6"
-        [ "$_bootstrap_ipv6_mode" = "ipv4_only" ] ||
-            [ "$_bootstrap_ipv6_available" -eq 0 ] ||
-            _bootstrap_candidates="$_bootstrap_candidates 6:2400:3200::1 6:2400:3200:baba::1"
+        printf '%s\n' '223.6.6.6'
     fi
-
-    # Config materialization must not perform synchronous Internet probes.
-    # A stopped TUN can make each curl attempt consume its full timeout and a
-    # manual start used to probe as many as four addresses.  Select the first
-    # policy-compatible static bootstrap address; sing-box owns reachability
-    # and retry behavior after the core is running.
-    _bootstrap_server=${_bootstrap_candidates%% *}
-    _bootstrap_server=${_bootstrap_server#*:}
-    [ -n "$_bootstrap_server" ] || _bootstrap_server="$_bootstrap_fallback"
-    printf '%s\n' "$_bootstrap_server"
-    unset _bootstrap_ipv6_mode _bootstrap_ipv6_available _bootstrap_ipv6_first
-    unset _bootstrap_candidates _bootstrap_server _bootstrap_fallback
 }
 
 magicnet_dns_apply_singbox() {

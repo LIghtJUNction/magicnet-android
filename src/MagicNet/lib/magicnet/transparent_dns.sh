@@ -5,114 +5,62 @@ magicnet_network_policy_conf() {
     printf '%s\n' "${MODDIR}/.config/magicnet/network-policy.conf"
 }
 
-magicnet_network_policy_value() {
-    _network_policy_key="$1"
-    _network_policy_conf="$(magicnet_network_policy_conf)"
-    [ -f "$_network_policy_conf" ] || {
-        unset _network_policy_key _network_policy_conf
-        return 1
-    }
-    if awk -F= -v key="$_network_policy_key" '
+# The token and CIDR readers share one exact-key parser. A malformed first
+# assignment is skipped, preserving the established first-valid-value rule.
+magicnet_network_policy_read() {
+    set -- "$1" "$2" "$(magicnet_network_policy_conf)"
+    [ -f "$3" ] || return 1
+    awk -F= -v key="$1" -v pattern="$2" '
         $1 == key {
             value = substr($0, index($0, "=") + 1)
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-            if (value ~ /^[A-Za-z0-9_-]+$/) {
-                print value
-                found = 1
-                exit
-            }
+            if (value ~ pattern) { print value; found = 1; exit }
         }
         END { exit found ? 0 : 1 }
-    ' "$_network_policy_conf"; then
-        unset _network_policy_key _network_policy_conf
-        return 0
-    fi
-    unset _network_policy_key _network_policy_conf
-    return 1
+    ' "$3"
+}
+
+magicnet_network_policy_value() {
+    magicnet_network_policy_read "$1" '^[A-Za-z0-9_-]+$'
+}
+
+magicnet_network_policy_cidr_value() {
+    magicnet_network_policy_read "$1" '^[0-9A-Fa-f.:/]+$'
 }
 
 magicnet_dns_capture_policy_port() {
-    _dns_capture_port="${MAGIC_DNS_CAPTURE_PORT:-}"
-    [ -n "$_dns_capture_port" ] || _dns_capture_port="${MAGICNET_DNS_CAPTURE_PORT:-}"
-    [ -n "$_dns_capture_port" ] || _dns_capture_port="$(magicnet_network_policy_value MAGICNET_DNS_CAPTURE_PORT 2>/dev/null || true)"
-    case "$_dns_capture_port" in
-        ''|0*|*[!0-9]*|??????*) _dns_capture_port=1053 ;;
-        *)
-            if [ "$_dns_capture_port" -gt 65535 ]; then
-                _dns_capture_port=1053
-            fi
-            ;;
+    set -- "${MAGIC_DNS_CAPTURE_PORT:-${MAGICNET_DNS_CAPTURE_PORT:-$(magicnet_network_policy_value MAGICNET_DNS_CAPTURE_PORT 2>/dev/null || true)}}"
+    case "$1" in
+    '' | 0* | *[!0-9]* | ??????*) set -- 1053 ;;
+    *) [ "$1" -le 65535 ] || set -- 1053 ;;
     esac
-    printf '%s\n' "$_dns_capture_port"
-    unset _dns_capture_port
+    printf '%s\n' "$1"
 }
 
 magicnet_ipv6_mode() {
-    _ipv6_mode="${MAGICNET_IPV6_MODE:-}"
-    [ -n "$_ipv6_mode" ] || _ipv6_mode="$(magicnet_network_policy_value MAGICNET_IPV6_MODE 2>/dev/null || true)"
-    case "$_ipv6_mode" in
-        ipv4_only|prefer_ipv4|prefer_ipv6) ;;
-        ipv4-only|compat|disabled) _ipv6_mode="ipv4_only" ;;
-        prefer-ipv6) _ipv6_mode="prefer_ipv6" ;;
-        prefer-ipv4|auto|dual|"") _ipv6_mode="prefer_ipv4" ;;
-        *) _ipv6_mode="prefer_ipv4" ;;
+    set -- "${MAGICNET_IPV6_MODE:-$(magicnet_network_policy_value MAGICNET_IPV6_MODE 2>/dev/null || true)}"
+    case "$1" in
+    ipv4_only | prefer_ipv4 | prefer_ipv6) ;;
+    ipv4-only | compat | disabled) set -- ipv4_only ;;
+    prefer-ipv6) set -- prefer_ipv6 ;;
+    *) set -- prefer_ipv4 ;;
     esac
-    printf '%s\n' "$_ipv6_mode"
-    unset _ipv6_mode
+    printf '%s\n' "$1"
 }
 
 magicnet_tun_mtu() {
-    _tun_mtu="${MAGICNET_TUN_MTU:-}"
-    [ -n "$_tun_mtu" ] || _tun_mtu="$(magicnet_network_policy_value MAGICNET_TUN_MTU 2>/dev/null || true)"
-    case "$_tun_mtu" in
-        ''|*[!0-9]*) _tun_mtu=1400 ;;
-        *)
-            if [ "$_tun_mtu" -lt 1280 ] || [ "$_tun_mtu" -gt 1500 ]; then
-                _tun_mtu=1400
-            fi
-            ;;
+    set -- "${MAGICNET_TUN_MTU:-$(magicnet_network_policy_value MAGICNET_TUN_MTU 2>/dev/null || true)}"
+    case "$1" in
+    '' | *[!0-9]*) set -- 1400 ;;
+    *) [ "$1" -ge 1280 ] && [ "$1" -le 1500 ] || set -- 1400 ;;
     esac
-    printf '%s\n' "$_tun_mtu"
-    unset _tun_mtu
+    printf '%s\n' "$1"
 }
 
 magicnet_udp_timeout() {
-    _udp_timeout="${MAGICNET_UDP_TIMEOUT:-}"
-    [ -n "$_udp_timeout" ] || _udp_timeout="$(magicnet_network_policy_value MAGICNET_UDP_TIMEOUT 2>/dev/null || true)"
-    case "$_udp_timeout" in
-        1m|3m|5m|10m|15m|30m) ;;
-        *) _udp_timeout="5m" ;;
-    esac
-    printf '%s\n' "$_udp_timeout"
-    unset _udp_timeout
-}
-
-# CIDR tokens are outside magicnet_network_policy_value's token charset.
-# Read the named key and leave format checks to the family validators.
-magicnet_network_policy_cidr_value() {
-    _network_policy_key="$1"
-    _network_policy_conf="$(magicnet_network_policy_conf)"
-    [ -f "$_network_policy_conf" ] || {
-        unset _network_policy_key _network_policy_conf
-        return 1
-    }
-    if awk -F= -v key="$_network_policy_key" '
-        $1 == key {
-            value = substr($0, index($0, "=") + 1)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-            if (value ~ /^[0-9A-Fa-f.:\/]+$/) {
-                print value
-                found = 1
-                exit
-            }
-        }
-        END { exit found ? 0 : 1 }
-    ' "$_network_policy_conf"; then
-        unset _network_policy_key _network_policy_conf
-        return 0
-    fi
-    unset _network_policy_key _network_policy_conf
-    return 1
+    set -- "${MAGICNET_UDP_TIMEOUT:-$(magicnet_network_policy_value MAGICNET_UDP_TIMEOUT 2>/dev/null || true)}"
+    case "$1" in 1m | 3m | 5m | 10m | 15m | 30m) ;; *) set -- 5m ;; esac
+    printf '%s\n' "$1"
 }
 
 magicnet_ipv4_tun_cidr_valid() {
@@ -187,23 +135,15 @@ magicnet_ipv6_tun_cidr_valid() {
 }
 
 magicnet_tun_inet() {
-    _tun_inet="${MAGICNET_TUN_INET:-}"
-    [ -n "$_tun_inet" ] || _tun_inet="$(magicnet_network_policy_cidr_value MAGICNET_TUN_INET 2>/dev/null || true)"
-    if ! magicnet_ipv4_tun_cidr_valid "$_tun_inet"; then
-        _tun_inet="172.19.0.1/30"
-    fi
-    printf '%s\n' "$_tun_inet"
-    unset _tun_inet
+    set -- "${MAGICNET_TUN_INET:-$(magicnet_network_policy_cidr_value MAGICNET_TUN_INET 2>/dev/null || true)}"
+    magicnet_ipv4_tun_cidr_valid "$1" || set -- 172.19.0.1/30
+    printf '%s\n' "$1"
 }
 
 magicnet_tun_inet6() {
-    _tun_inet6="${MAGICNET_TUN_INET6:-}"
-    [ -n "$_tun_inet6" ] || _tun_inet6="$(magicnet_network_policy_cidr_value MAGICNET_TUN_INET6 2>/dev/null || true)"
-    if ! magicnet_ipv6_tun_cidr_valid "$_tun_inet6"; then
-        _tun_inet6="fdfe:dcba:9876::1/126"
-    fi
-    printf '%s\n' "$_tun_inet6"
-    unset _tun_inet6
+    set -- "${MAGICNET_TUN_INET6:-$(magicnet_network_policy_cidr_value MAGICNET_TUN_INET6 2>/dev/null || true)}"
+    magicnet_ipv6_tun_cidr_valid "$1" || set -- fdfe:dcba:9876::1/126
+    printf '%s\n' "$1"
 }
 
 magicnet_singbox_dns_strategy_for_mode() {

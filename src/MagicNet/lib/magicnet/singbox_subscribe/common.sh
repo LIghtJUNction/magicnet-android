@@ -181,51 +181,13 @@ magicnet_singbox_ai_selectors_canonical() (
     ' "$_ai_config" >/dev/null 2>&1
 )
 
-magicnet_json_array_csv() (
-    _values="$1"
-    _first=1
-    printf '['
-    _old_ifs=$IFS
-    IFS=,
-    for _value in $_values; do
-        _value=$(printf '%s' "$_value" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-        [ -n "$_value" ] || continue
-        [ "$_first" -eq 1 ] || printf ','
-        printf '"%s"' "$(magicnet_json_escape "$_value")"
-        _first=0
-    done
-    IFS=$_old_ifs
-    printf ']'
-)
+magicnet_json_array_csv() { magicnet_json_emit csv "$1"; }
 
 magicnet_selector_tags_json() {
-    _selector_tags="$1"
-    _selector_fallback="$2"
-    _selector_items=$(
-        {
-            while IFS= read -r _selector_raw_tag; do
-                magicnet_json_escape "$_selector_raw_tag"
-                printf '\n'
-            done <<EOF
-$_selector_tags
-$_selector_fallback
+    magicnet_json_emit lines "$1
+$2
 direct
-block
-EOF
-        } | awk 'NF && !seen[$0]++'
-    )
-    _selector_first=1
-    printf '['
-    while IFS= read -r _selector_tag; do
-        [ -n "$_selector_tag" ] || continue
-        [ "$_selector_first" -eq 1 ] || printf ', '
-        printf '"%s"' "$_selector_tag"
-        _selector_first=0
-    done <<EOF
-$_selector_items
-EOF
-    printf ']'
-    unset _selector_tags _selector_fallback _selector_items _selector_first _selector_tag _selector_raw_tag
+block"
 }
 
 magicnet_uri_query_value() {

@@ -41,31 +41,25 @@ magicnet_xtables_timeout() {
     unset _xtables_timeout
 }
 
-magicnet_iptables_cmd() {
-    if magicnet_xtables_function_defined iptables; then
-        iptables "$@"
-        return $?
-    fi
-    if magicnet_cmd_exists timeout; then
-        timeout "$(magicnet_xtables_timeout)" iptables -w 1 "$@"
+magicnet_xtables_exec() {
+    if magicnet_xtables_function_defined "$1"; then
+        "$@"
     else
-        # All supported Android builds ship toybox timeout.  Keep a bounded
-        # xtables wait even on a minimal test/runtime image without it.
-        iptables -w 1 "$@"
+        # Both families share the bounded netd lock and command deadline.
+        _xtables_exec_family=$1
+        shift
+        set -- "$_xtables_exec_family" -w 1 "$@"
+        unset _xtables_exec_family
+        if magicnet_cmd_exists timeout; then
+            timeout "$(magicnet_xtables_timeout)" "$@"
+        else
+            "$@"
+        fi
     fi
 }
 
-magicnet_ip6tables_cmd() {
-    if magicnet_xtables_function_defined ip6tables; then
-        ip6tables "$@"
-        return $?
-    fi
-    if magicnet_cmd_exists timeout; then
-        timeout "$(magicnet_xtables_timeout)" ip6tables -w 1 "$@"
-    else
-        ip6tables -w 1 "$@"
-    fi
-}
+magicnet_iptables_cmd() { magicnet_xtables_exec iptables "$@"; }
+magicnet_ip6tables_cmd() { magicnet_xtables_exec ip6tables "$@"; }
 
 # Root is not sufficient for legacy xtables on every Android vendor build:
 # the KSU shell context may see the binaries but still be denied access to

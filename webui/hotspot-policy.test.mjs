@@ -89,15 +89,40 @@ assert.match(webuiApi, /"reconcile"[\s\S]*config_apply_lock[\s\S]*refresh_hotspo
 assert.match(webuiApi, /fn refresh_hotspot_policy_locked[\s\S]*hotspot_policy_is_stale[\s\S]*apply_config_locked/);
 assert.match(webuiApi, /"disable" => set_hotspot_policy\(app, "direct"\)/);
 assert.match(webuiApi, /hotspot rollback failed/);
-const startSingBox = core.slice(
-  core.indexOf("magicnet_start_singbox_unlocked()"),
-  core.indexOf("magicnet_with_sub_config_lock magicnet_start_singbox"),
-);
-assert.match(startSingBox, /magicnet_singbox_apply_hotspot_policy/);
-assert.ok(
-  startSingBox.indexOf("magicnet_singbox_apply_hotspot_policy") <
-    startSingBox.indexOf("singbox_start"),
-  "hotspot policy must be materialized before sing-box snapshots the config",
-);
+// Execute startup: moving policy preparation into a shared helper must keep
+// the same snapshot ordering, and a failed policy must prevent core launch.
+for (const hotspotStatus of [0, 1, 2]) {
+  const root = mkdtempSync(join(tmpdir(), "magicnet-hotspot-start-"));
+  try {
+    const noops = [
+      "import", "magicnet_warn", "magicnet_cmd_exists", "magicnet_hotspot_offload_prepare",
+      "magicnet_prepare_singbox_nodes_unlocked", "magicnet_singbox_chain_apply",
+      "magicnet_singbox_apply_transparent_mode", "magicnet_dns_apply_unlocked",
+      "magicnet_tailscale_apply_unlocked", "magicnet_app_policy_apply_unlocked",
+      "magicnet_warp_apply_unlocked", "magicnet_singbox_apply_zashboard",
+      "magicnet_tailscale_inject_auth_key", "magicnet_tailscale_scrub_auth_key",
+      "magicnet_validate_singbox_transparent_config", "magicnet_kernel_route_state_begin",
+      "magicnet_singbox_running_has_nodes",
+    ].map((name) => `${name}() { :; }`).join("\n");
+    const result = spawnSync("sh", ["-s"], {
+      input: `${core}\n${noops}\n
+        magicnet_module_disabled() { return 1; }
+        is_singbox_running() { return 1; }
+        magicnet_singbox_runtime_memory_limit() { echo 256MiB; }
+        magicnet_singbox_apply_hotspot_policy() { echo hotspot; return ${hotspotStatus}; }
+        singbox_start() { echo snapshot; }
+        magicnet_start_singbox_unlocked
+      `,
+      env: { ...process.env, MODDIR: root, MAGICNET_TRANSPARENT_RESTORED_CONFIG: "0" },
+      encoding: "utf8", timeout: 5000,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, hotspotStatus, result.stderr);
+    assert.equal(result.stdout, hotspotStatus === 0 ? "hotspot\nsnapshot\n" : "hotspot\n",
+      "hotspot policy must succeed before sing-box snapshots the config");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 console.log("hotspot policy tests passed");
