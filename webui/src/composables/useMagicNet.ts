@@ -1,5 +1,6 @@
 import { t } from "@/i18n";
 import { decodeMachineData, machineErrorCode } from "@/composables/machineStatus";
+import { connectivityDefaults, parseServiceConnectivity } from "@/composables/connectivityStatus";
 import { nextTick, reactive } from "vue";
 import {
   AUTHOR_WHISPER_URL,
@@ -101,6 +102,7 @@ const state = reactive({
     open: false,
   },
   runtime: { ...runtimeDefaults },
+  connectivity: { ...connectivityDefaults },
   health: [] as HealthItem[],
   pingtest: "",
   appPolicy: {
@@ -730,6 +732,7 @@ async function refreshStatus(
   // still belongs to that write. A newer foreground owner invalidates old reads.
   if (canUpdateRefreshUi(command.token, true)) {
     state.runtime = snapshot ?? { ...runtimeDefaults };
+    state.connectivity = snapshot ? parseServiceConnectivity(text) : { ...connectivityDefaults };
   }
   if (!snapshot) {
     if (reportFailure) markQuietFailure(t("刷新状态"), machineFailureText(text), command.token, allowBusy);

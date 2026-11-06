@@ -6,6 +6,7 @@ import { t } from "./src/i18n/index.ts";
 import ts from "typescript";
 import * as background from "./src/composables/backgroundTasks.ts";
 import { runtimeDefaults, subscriptionDefaults } from "./src/composables/parsers.ts";
+import { connectivityDefaults, parseServiceConnectivity } from "./src/composables/connectivityStatus.ts";
 import { parseMachineRuntime, parseMachineSubscription, parseMachineWifi, machineFailureText } from "./src/composables/machineStatus.ts";
 import { subscriptionSnapshot, subscriptionData, wifiSnapshot } from "./machine-fixtures.mjs";
 import { execFailed } from "./src/utils.ts";
@@ -82,6 +83,7 @@ function backgroundFixture() {
     runShell: async () => "[launch] id=operation label=restart\n[exit] id=operation status=0",
     subscriptionReadSequence: 0,
     runCli: async () => subscriptionSnapshot(), execFailed, parseMachineRuntime, parseMachineSubscription, parseMachineWifi, machineFailureText, runtimeDefaults,
+    connectivityDefaults, parseServiceConnectivity,
     withAction: async (_, action) => action(),
     refreshApps: async () => true,
     refreshBlock: async () => true, refreshDns: async () => true,

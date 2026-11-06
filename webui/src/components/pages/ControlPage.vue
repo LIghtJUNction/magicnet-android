@@ -29,6 +29,7 @@ import StatTile from "@/components/ui/StatTile.vue";
 import StatusDot from "@/components/ui/StatusDot.vue";
 import ModuleUpdateCard from "./ModuleUpdateCard.vue";
 import ConstellationPath from "./ConstellationPath.vue";
+import ConnectivityNotice from "@/components/ConnectivityNotice.vue";
 import {
   applyConfigAction,
   applyTransparentModeAction,
@@ -506,6 +507,9 @@ onMounted(() => {
         <div><dt>{{ t("服务检查") }}</dt><dd>{{ readinessFact }}</dd></div>
         <div><dt>{{ t("实际模式") }}</dt><dd>{{ state.hasKsu ? transparentEffectiveLabel : t("未确认") }}</dd></div>
       </dl>
+      <ConnectivityNotice v-if="state.hasKsu" :snapshot="state.connectivity">
+        <Button v-if="state.connectivity.warning" variant="ghost" class="justify-self-start" @click="emit('goto-tab', 'health')">{{ t("打开诊断") }}<ArrowUpRight :size="16" /></Button>
+      </ConnectivityNotice>
       <section v-if="showRuntimeNotice" class="mn-control-notice" :class="controlInsightTone(runtimeInsight.status)" :role="state.phase === 'error' ? 'alert' : 'status'" aria-live="polite">
         <h3><StatusDot tone="current" />{{ runtimeInsight.title }}</h3>
         <p>{{ runtimeInsight.detail }}</p>

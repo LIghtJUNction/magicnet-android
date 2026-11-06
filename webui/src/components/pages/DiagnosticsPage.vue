@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from "@/i18n";
 import { computed, ref } from "vue";
-import { Bug, Copy, ExternalLink, FileText, RadioTower, RefreshCw, Server, ShieldCheck, TimerReset } from "lucide-vue-next";
+import { Bug, Copy, Download, ExternalLink, FileText, RadioTower, RefreshCw, Server, ShieldCheck, TimerReset } from "lucide-vue-next";
 import Badge from "@/components/ui/Badge.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
@@ -18,9 +18,15 @@ import NodeDelayPanel from "./NodeDelayPanel.vue";
 import ProxyGroupsPanel from "./ProxyGroupsPanel.vue";
 import { hideSupportIssueLines, triageSupportBundle } from "./supportBundleTriage";
 import TrafficStatsPanel from "./TrafficStatsPanel.vue";
+import ConnectivityNotice from "@/components/ConnectivityNotice.vue";
+import { parseSupportExport, type SupportExport } from "@/composables/connectivityStatus";
+import { decodeMachineData, machineErrorCode } from "@/composables/machineStatus";
 
-const { state, refreshHealth, refreshMcp, refreshPing, runCli, createIssue, openExternal } = useMagicNet();
+const { state, refreshHealth, refreshMcp, refreshPing, runCli, runMachineCli, createIssue, openExternal } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
+const exportedBundle = ref<SupportExport | null>(null);
+const exportError = ref("");
+const exportPathCopied = ref(false);
 const supportBundle = ref("");
 const supportCopied = ref(false);
 const supportIssuesCopied = ref(false);
@@ -52,6 +58,38 @@ const assistants = [
   ["Qwen", "https://chat.qwen.ai/"],
   ["DeepSeek", "https://chat.deepseek.com/"]
 ];
+
+async function exportDiagnostics(): Promise<void> {
+  await withAction("export-diagnostics", async () => {
+    exportedBundle.value = null;
+    exportError.value = "";
+    exportPathCopied.value = false;
+    const capabilityResult = await runMachineCli("--json capabilities", t("读取诊断导出能力"));
+    const capabilities = capabilityResult.ok ? decodeMachineData(capabilityResult.stdout, "machine.capabilities") : null;
+    if (!capabilities || !Array.isArray(capabilities.commands) || !capabilities.commands.includes("support.export") ||
+      !Array.isArray(capabilities.mutation_commands) || !capabilities.mutation_commands.includes("support.export")) {
+      exportError.value = capabilities ? "machine.unsupported_command" : machineErrorCode(capabilityResult.stdout) || "machine.invalid_response";
+      state.notice = t("诊断包导出失败");
+      state.phase = "error";
+      return;
+    }
+    const outcome = await runMachineCli("--json support export", t("导出完整诊断包"));
+    const result = outcome.ok ? parseSupportExport(outcome.stdout) : null;
+    if (!result) {
+      exportError.value = machineErrorCode(outcome.stdout) || "machine.invalid_response";
+      state.notice = t("诊断包导出失败");
+      state.phase = "error";
+      return;
+    }
+    exportedBundle.value = result;
+    state.notice = t("诊断包已保存到下载目录");
+    state.phase = "done";
+  });
+}
+
+async function copyExportPath(): Promise<void> {
+  if (exportedBundle.value) exportPathCopied.value = await copyText(exportedBundle.value.path);
+}
 
 async function copyContextUnlocked(): Promise<void> {
   const text = await runCli(
@@ -186,6 +224,7 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
   <div class="grid gap-4">
     <PageHeader :overline="t('诊断')" :title="t('诊断')">
       <template #actions>
+        <Button :disabled="!state.hasKsu" :loading="isRunning('export-diagnostics')" @click="exportDiagnostics"><Download :size="17" />{{ t("一键导出诊断包") }}</Button>
         <Button :loading="isRunning('health')" @click="withAction('health', refreshDiagnostics)"><RefreshCw :size="17" />{{ t("健康检查") }}</Button>
         <Button variant="outline" :loading="isRunning('ping')" @click="withAction('ping', () => refreshPing())"><RadioTower :size="17" />{{ t("连通性测试") }}</Button>
         <details class="config-action-menu">
@@ -197,6 +236,16 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
         </details>
       </template>
     </PageHeader>
+
+    <ConnectivityNotice v-if="state.hasKsu" :snapshot="state.connectivity" />
+    <p class="text-sm leading-6 text-[var(--mn-ink-muted)]">{{ t("一个文件包含联网探测、路由、DNS、内核、订阅、恢复记录和日志；订阅凭据会自动遮蔽。") }}</p>
+    <div v-if="exportedBundle" class="grid gap-2 rounded-md p-4" :class="statusToneClasses('ok')" role="status" data-testid="diagnostics-export-result">
+      <p class="font-medium">{{ t("诊断包已保存到下载目录") }}</p>
+      <p class="break-all text-sm">{{ exportedBundle.path }}</p>
+      <p class="text-xs tabular-nums">{{ (exportedBundle.bytes / 1024).toFixed(1) }} KiB</p>
+      <Button variant="ghost" class="justify-self-start" @click="copyExportPath"><Copy :size="15" />{{ exportPathCopied ? t("已复制") : t("复制文件路径") }}</Button>
+    </div>
+    <p v-if="exportError" class="rounded-md p-4 text-sm" :class="statusToneClasses('danger')" role="alert">{{ t("诊断包导出失败") }} · {{ exportError }}</p>
 
     <Card class="grid gap-5">
       <div class="flex flex-wrap items-center justify-between gap-3">

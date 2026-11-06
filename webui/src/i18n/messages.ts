@@ -8,6 +8,7 @@ import configuration from "./catalogs/configuration.ts";
 import control from "./catalogs/control.ts";
 import tools from "./catalogs/tools.ts";
 import diagnostics from "./catalogs/diagnostics.ts";
+import connectivity from "./catalogs/connectivity.ts";
 import routeFeedback from "./catalogs/route-feedback.ts";
 import machineStatus from "./catalogs/machine-status.ts";
 
@@ -24,6 +25,7 @@ export const messages: Record<string, readonly string[]> = {
   ...control,
   ...tools,
   ...diagnostics,
+  ...connectivity,
   ...routeFeedback,
   ...machineStatus,
   ...tailscale,

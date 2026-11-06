@@ -11,6 +11,7 @@ import * as background from "./src/composables/backgroundTasks.ts";
 import * as utils from "./src/utils.ts";
 import { ForegroundUiGate } from "./src/composables/foregroundUiGate.ts";
 import { runtimeDefaults } from "./src/composables/parsers.ts";
+import { connectivityDefaults, parseServiceConnectivity } from "./src/composables/connectivityStatus.ts";
 import { machineFailureText } from "./src/composables/machineStatus.ts";
 import { t } from "./src/i18n/index.ts";
 
@@ -45,6 +46,7 @@ function fixture(testContext, timeoutMs = 1000) {
     nextTick: async () => {}, nextFrame: async () => {},
     // Parsing is covered independently; this suite observes dispatch and ownership.
     parseMachineRuntime: () => ({ observed: true }), runtimeDefaults, machineFailureText,
+    connectivityDefaults, parseServiceConnectivity,
   });
   vm.runInContext(code, context);
   const finish = (request, text = "observation", errno = 0) => {
