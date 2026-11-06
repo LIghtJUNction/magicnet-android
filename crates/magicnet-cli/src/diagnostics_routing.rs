@@ -261,9 +261,7 @@ fn analyze_config(config: &Value) -> RoutingPolicyStatus {
         if let Some(tags) = rule_set_tags.as_ref().filter(|_| maintained) {
             // Domestic domains and named services precede the foreign-domain
             // fallback, which must itself precede country-IP fallbacks.
-            let service = tags
-                .iter()
-                .any(|tag| tag.starts_with("meta-") || *tag == "sukka-chatgpt-voice");
+            let service = tags.iter().any(|tag| tag.starts_with("meta-"));
             let proxy_service = outbound.is_some_and(|tag| {
                 PROXY_POLICY_OUTBOUND_TAGS.contains(&tag) || tag.starts_with("ai-") || tag == "bing"
             });

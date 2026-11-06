@@ -45,9 +45,7 @@ jobs:
           KAM_PROJECT_ROOT: ${{ github.workspace }}
           KAM_HOOKS_ROOT: ${{ github.workspace }}/hooks
           KAM_MODULE_ROOT: ${{ github.workspace }}/src/MagicNet
-        run: |
-          bash hooks/pre-build/5450.update_sing_box_rules.sh
-          bash hooks/pre-build/5460.update_chatgpt_voice_rules.sh
+        run: bash hooks/pre-build/5450.update_sing_box_rules.sh
       - name: Measure isolated host memory, not physical-device acceptance
         run: |
           python3 scripts/profile-core-memory.py --core "$RUNNER_TEMP/core/sing-box" \

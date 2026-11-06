@@ -37,5 +37,6 @@ remove_zip_entries '^\.local/subscriptions\.env$' "Removing local subscription m
 remove_zip_entries '(^|/)(mihomo|__mihomo__)(\.sh)?($|/)' "Removing legacy mihomo helpers from module artifact"
 remove_zip_entries '^bin/magicnet-ebpf$' "Removing the retired eBPF runtime binary from module artifact"
 remove_zip_entries '^\.config/sing-box/\.dns-.*\.json$' "Removing routing test fixtures from module artifact"
+remove_zip_entries '^\.config/sing-box/rules/sukka-chatgpt-voice\.json$|^\.local/state/chatgpt-voice(/|$)' "Removing retired ChatGPT Voice artifacts"
 
 "${KAM_PROJECT_ROOT}/scripts/package-smoke.sh" "$zip_path"

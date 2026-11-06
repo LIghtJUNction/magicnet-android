@@ -101,9 +101,6 @@ def domain_matches(rule, domain):
 
 def ip_matches(rule, destination_ip):
     cidrs = values(rule.get("ip_cidr"))
-    if rule.get("rule_set") == ["sukka-chatgpt-voice"]:
-        # Synthetic rule-set content keeps this routing-order test offline.
-        cidrs = ["203.0.113.8/32"]
     if not cidrs:
         return True
     address = ipaddress.ip_address(destination_ip)
@@ -142,7 +139,7 @@ def first_modeled_outbound(
             continue
         if not ip_matches(rule, destination_ip):
             continue
-        if "rule_set" in rule and rule["rule_set"] != ["sukka-chatgpt-voice"]:
+        if "rule_set" in rule:
             continue
         if any(key in rule for key in ("domain", "domain_keyword", "ip_is_private")):
             continue
@@ -228,44 +225,6 @@ for domain in ("api.openai.com", "auth.openai.com", "ws.chatgpt.com", "events.oa
             f"reverse-mapped ChatGPT domain {domain} did not select ai-chatgpt: "
             f"index={mapped_index} outbound={mapped_outbound}"
         )
-
-voice_rules = [
-    (index, rule)
-    for index, rule in enumerate(route_rules)
-    if rule.get("network") == "udp"
-    and rule.get("port") == 3478
-    and rule.get("outbound") == "ai-chatgpt"
-    and rule.get("rule_set") == ["sukka-chatgpt-voice"]
-    and set(rule) == {"network", "port", "rule_set", "outbound"}
-]
-if len(voice_rules) != 1:
-    raise AssertionError(f"expected one exact ChatGPT Voice route, got {voice_rules}")
-voice_index, voice_rule = voice_rules[0]
-voice_cidrs = ["203.0.113.8/32"]
-if not voice_cidrs:
-    raise AssertionError("ChatGPT Voice route must contain the official IP prefixes")
-for prefix in voice_cidrs:
-    ipaddress.ip_network(prefix)
-
-if voice_index >= cn_ip_indexes[0]:
-    raise AssertionError(
-        "ChatGPT Voice route must precede generic CN IP ownership: "
-        f"voice={voice_index} cn={cn_ip_indexes}"
-    )
-
-voice_address = str(ipaddress.ip_network(voice_cidrs[0]).network_address)
-matched_index, matched_outbound = first_modeled_outbound(
-    "",
-    voice_address,
-    "",
-    network="udp",
-    port=3478,
-)
-if (matched_index, matched_outbound) != (voice_index, "ai-chatgpt"):
-    raise AssertionError(
-        "official ChatGPT Voice IP-only flow did not select ai-chatgpt: "
-        f"index={matched_index} outbound={matched_outbound}"
-    )
 
 chatgpt_domain_rules = [
     rule

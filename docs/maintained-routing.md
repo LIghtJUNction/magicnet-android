@@ -7,7 +7,6 @@ in the MagicNet template:
 - [lyc8503/sing-box-rules](https://github.com/lyc8503/sing-box-rules): existing CN, advertising and Telegram GeoIP classifiers.
 - [KaringX/karing-ruleset](https://github.com/KaringX/karing-ruleset): existing WeChat and China domain/IP classifiers.
 - [HaGeZi via razaxq](https://github.com/razaxq/dns-blocklists-sing-box): light advertising/tracking classifier. Copyright/anti-piracy lists are not part of the default advertising policy.
-- [SukkaW/ruleset.skk.moe](https://gitlab.com/SukkaW/ruleset.skk.moe/-/blob/master/sing-box/ip/ai.json): ChatGPT Voice IPs, generated from OpenAI's published feed.
 - [LIghtJUNction/MagicNetRules](https://github.com/LIghtJUNction/MagicNetRules): unified, deduplicated and optimized sing-box rule sets packaged via git submodule `rules`.
 
 Build hooks resolve immutable upstream revisions, synchronize from the local `rules` submodule,

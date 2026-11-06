@@ -93,7 +93,6 @@ CI_TEST_FORCE=1 check python3 scripts/test-android-utf8.py
 CI_TEST_FORCE=1 check python3 scripts/test-android-probe.py
 check bash scripts/test-tailscale-login.sh
 check python3 scripts/test-tailscale-route-order.py
-check bash scripts/test-chatgpt-voice-rules.sh
 check bash scripts/test-rule-hash-retry.sh
 check python3 scripts/test-bundled-rules.py
 check bash scripts/singbox-subscription-protocol-smoke.sh

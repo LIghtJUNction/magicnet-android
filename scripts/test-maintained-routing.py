@@ -99,15 +99,9 @@ assert index("meta-bing") < index("meta-microsoft")
 assert index("meta-category-game-platforms-download") < index("meta-category-games-!cn")
 assert index("meta-openai") < index("meta-category-ai-!cn")
 assert index("meta-category-social-media-!cn") < index("lyc-geoip-cn")
-assert index("sukka-chatgpt-voice") < index("lyc-geoip-cn")
 assert not any(
     rule.get("outbound") == "cn-direct" and "package_name" in rule for rule in routes
 )
-voice = [r for r in routes if "sukka-chatgpt-voice" in r.get("rule_set", [])]
-assert {(r["network"], r["port"], r["outbound"]) for r in voice} == {
-    ("udp", 3478, "ai-chatgpt"),
-    ("tcp", 443, "ai-chatgpt"),
-}
 assert outbounds["ad-block"]["default"] == "block"
 for tag in (
     "lan",
@@ -328,21 +322,6 @@ assert (
     )
     == "direct"
 )
-voice_source = json.loads(
-    (CONFIG_DIR / definitions["sukka-chatgpt-voice"]["path"]).read_text()
-)
-voice_ip = str(
-    ipaddress.ip_network(voice_source["rules"][0]["ip_cidr"][0]).network_address
-)
-for network, port in [("udp", 3478), ("tcp", 443)]:
-    assert (
-        first(routes, "outbound", "", address=voice_ip, network=network, port=port)
-        == "ai-chatgpt"
-    )
-for network, port in [("udp", 443), ("tcp", 3478)]:
-    assert not any(
-        matches(r, address=voice_ip, network=network, port=port) for r in voice
-    )
 print(
-    f"Maintained routing: {len(cases) * 2} TCP/UDP + DNS cases, mode overrides, keyword negatives and voice scope passed"
+    f"Maintained routing: {len(cases) * 2} TCP/UDP + DNS cases, mode overrides and keyword negatives passed"
 )

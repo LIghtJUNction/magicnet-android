@@ -341,7 +341,7 @@ if len(packaged_tuns) != 1 or packaged_tuns[0].get("route_exclude_address") != c
 packaged_tun = packaged_tuns[0]
 if (
     config.get("dns", {}).get("strategy") != "prefer_ipv4"
-    or packaged_tun.get("stack") != "mixed"
+    or "stack" in packaged_tun
     or packaged_tun.get("mtu") != 1400
     or packaged_tun.get("udp_timeout") != "5m"
     or 0 not in packaged_tun.get("exclude_uid", [])
@@ -1473,21 +1473,6 @@ for outbound, required_domains in ai_domain_routes.items():
 if config.get("dns", {}).get("reverse_mapping") is not True:
     raise SystemExit("packaged DNS must preserve reverse mappings for IP-only app flows")
 
-chatgpt_voice_routes = [
-    (index, rule)
-    for index, rule in enumerate(route_rules)
-    if rule.get("network") == "udp"
-    and rule.get("port") == 3478
-    and rule.get("outbound") == "ai-chatgpt"
-    and set(rule) == {"network", "port", "ip_cidr", "outbound"}
-]
-if len(chatgpt_voice_routes) != 1:
-    raise SystemExit(f"packaged ChatGPT Voice route is non-canonical: {chatgpt_voice_routes}")
-voice_index, voice_rule = chatgpt_voice_routes[0]
-if not voice_rule["ip_cidr"]:
-    raise SystemExit("packaged ChatGPT Voice route has no official IP prefixes")
-for prefix in voice_rule["ip_cidr"]:
-    ipaddress.ip_network(prefix)
 x_package_routes = [
     index
     for index, rule in enumerate(route_rules)
@@ -1520,28 +1505,6 @@ if len(x_domain_routes) != 1 or len(cn_ip_routes) != 1 or len(invalid_destinatio
 if x_domain_routes[0] >= cn_ip_routes[0]:
     raise SystemExit(
         "packaged X domains must precede the canonical CN IP route so API/CDN IPs stay proxied"
-    )
-
-chatgpt_voice_routes = [
-    (index, rule)
-    for index, rule in enumerate(route_rules)
-    if rule.get("network") == "udp"
-    and rule.get("port") == 3478
-    and rule.get("outbound") == "ai-chatgpt"
-    and set(rule) == {"network", "port", "ip_cidr", "outbound"}
-]
-if len(chatgpt_voice_routes) != 1:
-    raise SystemExit(f"packaged ChatGPT Voice route is non-canonical: {chatgpt_voice_routes}")
-voice_index, voice_rule = chatgpt_voice_routes[0]
-voice_prefixes = voice_rule.get("ip_cidr", [])
-if not voice_prefixes:
-    raise SystemExit("packaged ChatGPT Voice route has no official IP prefixes")
-for prefix in voice_prefixes:
-    ipaddress.ip_network(prefix, strict=True)
-if voice_index >= cn_ip_routes[0]:
-    raise SystemExit(
-        f"packaged ChatGPT Voice route must precede CN IP ownership: "
-        f"voice={voice_index} cn={cn_ip_routes}"
     )
 
 if invalid_destination_routes[0] > cn_ip_routes[0]:
@@ -2044,8 +2007,7 @@ esac
 mkdir -p "$routing_package_root"
 unzip -oq "$ZIP_PATH" \
     '.config/sing-box/config.json' \
-    '.config/sing-box/rules/*.srs' \
-    '.config/sing-box/rules/*.json' \
+    '.config/sing-box/rules/*' \
     -d "$routing_package_root"
 [[ -f "$routing_config_dir/config.json" ]] || fail "extracted routing config is missing"
 printf 'running extracted package default routing policy test\n'

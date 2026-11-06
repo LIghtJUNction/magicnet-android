@@ -4,7 +4,7 @@
 
 `hooks/pre-build/5450.update_sing_box_rules.sh` invokes the submodule's Release downloader at build time. The hook selects the reviewed tag in `rules-release.json`, then obtains the checksum file and runtime archive from that concrete tag. It checks the archive SHA-256, rejects unsafe archive members, validates every SRS against `manifest.json`, and replaces the local ignored `rules/dist/` only after complete verification.
 
-The hook validates the full configured SRS inventory before installing selected rules. Missing files, bad checksums, download errors, missing submodule, and invalid config fail the build; there is no fallback to unrelated upstream branches or stale local data. Rule files and state markers are updated through temporary files. Unchanged rules retain their modification time. The separately configured ChatGPT Voice JSON feed is still handled by hook 5460; this migration does not change its routing format.
+The hook validates the full configured SRS inventory before installing selected rules. Missing files, bad checksums, download errors, missing submodule, and invalid config fail the build; there is no fallback to unrelated upstream branches or stale local data. Rule files and state markers are updated through temporary files. Unchanged rules retain their modification time. The default template's rule assets all come from this Release bundle.
 
 Normal builds use the committed release pin automatically. An explicit `MAGICNET_RULES_TAG` must equal that pin; changing the tag requires updating the pin and reviewing both changes.
 

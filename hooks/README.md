@@ -42,8 +42,6 @@ legacy layout.
   Release bundle and installs configured SRS files; it does not fetch individual
   upstream rule branches. See `docs/rules-release-distribution.md` for tag pinning
   and explicit offline builds.
-- `pre-build/5460.update_chatgpt_voice_rules.sh` refreshes the validated
-  ChatGPT Voice rule-set.
 - `pre-build/5470.optimize_sing_box_routing.sh` normalizes routing after rule
   assets are ready.
 - `pre-build/6000.check_config.sh` parses sing-box JSON and runs
