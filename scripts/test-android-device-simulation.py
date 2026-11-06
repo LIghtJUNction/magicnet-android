@@ -1222,6 +1222,7 @@ class DeviceTests(unittest.TestCase):
              patch.object(SIM.time, 'monotonic', side_effect=[0, 0, 0, 1, 1]), \
              patch.object(SIM.time, 'sleep'), self.assertRaisesRegex(RuntimeError, 'did not become ready'):
             device.ready(timeout=1)
+        self.assertTrue(device.readiness_timed_out)
 
     def test_service_stop_failure_is_recorded_and_never_replayed(self):
         device = self.device()
@@ -1409,6 +1410,165 @@ class BusyboxPreflightTests(unittest.TestCase):
             self.assertEqual(SIM.bounded_exit_code(code), code)
         for code in (True, 'secret', 99999, -256):
             self.assertIsNone(SIM.bounded_exit_code(code))
+
+
+class ReadinessSupportTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.out = Path(self.tmp.name)
+        with patch.dict(os.environ, ENV, clear=True):
+            self.device = SIM.Device()
+        self.device.verified = True
+        self.device.readiness_timed_out = True
+        self.calls = []
+        self.report = ('MagicNet canonical support bundle\nschema=1\nformat=diagnostic-text-v1\n'
+                       'privacy=redacted\nexternal_network_probes=not_run\n'
+                       '\n[service status]\nstatus=incomplete exit_code=124 timed_out=true\n'
+                       '\n[health]\n[warn] dataplane: ipv4_rpdb=unknown:command-failed\n'
+                       '\n[routes: ipv4 rules]\n9001: from all lookup 2022\n'
+                       '\n[routes: ipv6 rules]\nstatus=unavailable reason=collection_deadline\n'
+                       '\n[routes: ipv4 routes]\ndefault dev magicnet0\n'
+                       '\n[routes: ipv6 routes]\nstatus=unavailable reason=collection_deadline\n'
+                       '\n[collection summary]\nstate_mutations=none\n'
+                       'missing_or_truncated_evidence_is_not_success=true\nend_of_report=true\n')
+        self.receipt = {'path': SIM.SUPPORT_EXPORT, 'bytes': len(self.report.encode())}
+        self.export_result = None
+        self.read_result = None
+
+    def kshell(self, command, *, timeout, check=True):
+        self.calls.append(command)
+        self.assertFalse(check)
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, 30)
+        if command == SIM.MOD + '/cli --json support export':
+            if self.export_result is not None:
+                return self.export_result
+            return cp(json.dumps({'schema': 1, 'ok': True, 'command': 'support.export',
+                                  'data': self.receipt}))
+        if command.startswith('test -f ' + SIM.SUPPORT_EXPORT):
+            self.assertIn('test ! -L ' + SIM.SUPPORT_EXPORT, command)
+            self.assertIn(SIM.BB + ' head -c ' + str(SIM.SUPPORT_LIMIT + 1), command)
+            return self.read_result if self.read_result is not None else cp(self.report)
+        self.assertIn('>/dev/null 2>&1', command)
+        return cp()
+
+    def collect(self):
+        with patch.object(self.device, 'kshell', side_effect=self.kshell), \
+             patch.object(self.device, 'shell', return_value=cp()):
+            SIM.diagnostics(self.device, self.out)
+        return json.loads((self.out / 'readiness-support.json').read_text())
+
+    def test_timeout_collects_existing_redacted_support_before_other_diagnostics(self):
+        report = SIM.Report(self.out)
+        with self.assertRaisesRegex(RuntimeError, 'did not become ready'):
+            with report.phase('cold-boot'):
+                try:
+                    with patch.object(self.device, 'kshell', return_value=cp('{}')), \
+                         patch.object(SIM.time, 'monotonic', side_effect=[0, 0, 0, 1, 1]), \
+                         patch.object(SIM.time, 'sleep'):
+                        self.device.ready(timeout=1)
+                finally:
+                    evidence = self.collect()
+        self.assertEqual(evidence['status'], 'captured')
+        self.assertEqual(evidence['trigger'], 'readiness_timeout')
+        self.assertEqual(self.calls[0], SIM.MOD + '/cli --json support export')
+        self.assertEqual((self.out / 'readiness-support.txt').read_text(), self.report)
+        self.assertEqual(evidence['bytes'], len(self.report.encode()))
+        self.assertFalse(report.complete())
+        result = json.loads((self.out / 'simulation.json').read_text())
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('did not become ready', result['cases'][3]['reason'])
+        self.assertFalse(any('supervisor start' in command or 'service start' in command
+                             or 'connectivity tick' in command for command in self.calls))
+
+    def test_failed_export_does_not_disclose_command_output_or_replace_original_failure(self):
+        self.export_result = cp('private-canary', 124, 'https://private.invalid/?token=private-canary')
+        (self.out / 'readiness-support.txt').write_text('stale support from an earlier run')
+        try:
+            raise RuntimeError('original readiness failure')
+        except RuntimeError as original:
+            evidence = self.collect()
+            self.assertEqual(str(original), 'original readiness failure')
+        self.assertEqual(evidence['status'], 'failed')
+        self.assertEqual(evidence['commands'], [{'operation': 'support_export', 'exit_code': 124}])
+        self.assertNotIn('private', json.dumps(evidence))
+        self.assertFalse((self.out / 'readiness-support.txt').exists())
+
+    def test_bad_receipts_and_incomplete_or_oversized_exports_are_not_published(self):
+        for change in ('private_path', 'oversized_receipt', 'truncated', 'unredacted', 'read_failed', 'too_large'):
+            with self.subTest(change=change):
+                self.receipt = {'path': SIM.SUPPORT_EXPORT, 'bytes': len(self.report.encode())}
+                self.read_result = None
+                if change == 'private_path':
+                    self.receipt['path'] = '/private-canary/config.json'
+                elif change == 'oversized_receipt':
+                    self.receipt['bytes'] = SIM.SUPPORT_LIMIT + 1
+                elif change == 'read_failed':
+                    self.read_result = cp('private-canary', 124, 'private-canary')
+                elif change == 'too_large':
+                    self.read_result = cp('private-canary' * SIM.SUPPORT_LIMIT)
+                else:
+                    text = (self.report.removesuffix('end_of_report=true\n') + 'private-canary'
+                            if change == 'truncated' else self.report.replace('privacy=redacted', 'privacy=private-canary'))
+                    self.read_result = cp(text)
+                    self.receipt['bytes'] = len(text.encode())
+                evidence = self.collect()
+                self.assertEqual(evidence['status'], 'failed')
+                self.assertNotIn('private', json.dumps(evidence))
+                self.assertFalse((self.out / 'readiness-support.txt').exists())
+
+    def test_successful_readiness_and_unverified_devices_do_not_export(self):
+        with patch.object(self.device, 'kshell', return_value=cp(json.dumps(READY))):
+            self.device.ready()
+        self.assertFalse(self.device.readiness_timed_out)
+        with patch.object(self.device, 'kshell', side_effect=self.kshell), \
+             patch.object(self.device, 'shell', return_value=cp()):
+            SIM.diagnostics(self.device, self.out)
+        self.assertFalse((self.out / 'readiness-support.json').exists())
+        self.assertFalse(any('support export' in command for command in self.calls))
+        self.device.verified = False
+        self.device.readiness_timed_out = True
+        with patch.object(self.device, 'kshell') as command:
+            SIM.diagnostics(self.device, self.out)
+        command.assert_not_called()
+
+    def test_diagnostic_deadline_prevents_an_unbounded_export_read(self):
+        with patch.object(self.device, 'kshell', side_effect=self.kshell), \
+             patch.object(SIM.time, 'monotonic', side_effect=[0, 26]):
+            SIM.readiness_support(self.device, self.out, 25)
+        evidence = json.loads((self.out / 'readiness-support.json').read_text())
+        self.assertEqual(evidence['status'], 'failed')
+        self.assertEqual(evidence['failure_code'], 'collection_deadline')
+        self.assertEqual(len(self.calls), 1)
+        self.assertFalse((self.out / 'readiness-support.txt').exists())
+
+    def test_support_and_legacy_diagnostics_share_the_existing_25_second_budget(self):
+        ticks = iter([0, 0, 21])
+        with patch.object(self.device, 'kshell', side_effect=self.kshell) as command, \
+             patch.object(self.device, 'shell') as legacy, \
+             patch.object(SIM.time, 'monotonic', side_effect=lambda: next(ticks, 25)):
+            SIM.diagnostics(self.device, self.out)
+        self.assertEqual([call.kwargs['timeout'] for call in command.call_args_list], [20, 4])
+        legacy.assert_not_called()
+        evidence = json.loads((self.out / 'readiness-support.json').read_text())
+        self.assertEqual(evidence['budget_seconds'], 25)
+
+    def test_main_retains_failure_exit_when_diagnostic_export_fails(self):
+        self.export_result = cp('private-canary', 124, 'private-canary')
+        env = dict(ENV, MAGICNET_ANDROID_REPORT_DIR=str(self.out), MAGICNET_X86_CLI='fixture-cli',
+                   MAGICNET_X86_SINGBOX='fixture-core', MAGICNET_X86_TOOLS='fixture-tools',
+                   MAGICNET_ANDROID_CURL_DIR='fixture-curl')
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(SIM, 'Device', return_value=self.device), \
+             patch.object(SIM, 'verified_curl_build', side_effect=RuntimeError('original simulation failure')), \
+             patch.object(self.device, 'kshell', side_effect=self.kshell), \
+             patch.object(self.device, 'shell', return_value=cp()):
+            self.assertEqual(SIM.main(), 1)
+        result = json.loads((self.out / 'simulation.json').read_text())
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('original simulation failure', result['cases'][0]['reason'])
+        self.assertNotIn('private', (self.out / 'readiness-support.json').read_text())
 
 
 class TunControlTests(unittest.TestCase):
