@@ -162,6 +162,7 @@ check bash scripts/test-webui-build-cache.sh
 check bash scripts/test-webui-lockfile-sync.sh
 check bash scripts/test-release-integrity.sh
 check python3 scripts/test-release-workflow.py
+check python3 scripts/test-stamp-release.py
 check python3 scripts/test-release-cache.py
 check python3 scripts/test-ci-submodules.py
 check python3 scripts/test-network-check.py

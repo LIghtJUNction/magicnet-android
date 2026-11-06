@@ -419,34 +419,32 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
 
 class WorkflowStructureTest(unittest.TestCase):
-    def test_version_bump_opens_a_review_pr_instead_of_pushing_main(self):
+    def test_source_ci_is_a_read_only_reusable_builder(self):
         text = (WORKFLOWS / "exec.yml").read_text()
         workflow = yaml.safe_load(text)
-        self.assertEqual(set(workflow["jobs"]), {"version-bump", "release-android", "build"})
+        self.assertEqual(set(workflow["jobs"]), {"build"})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
         self.assertNotIn("RELEASE_TOKEN", text)
-        version_job = workflow["jobs"]["version-bump"]
-        self.assertEqual(version_job["permissions"]["pull-requests"], "write")
-        self.assertEqual(version_job["permissions"]["contents"], "write")
-        self.assertIn("workflow_dispatch", version_job["if"])
-        self.assertIn("inputs.bump", version_job["if"])
-        version_steps = version_job["steps"]
-        self.assertEqual(version_steps[0]["with"]["ref"], "${{ github.sha }}")
-        self.assertTrue(version_steps[0]["with"]["persist-credentials"])
-        self.assertTrue(any(step.get("name") == "Open version pull request"
-                            for step in version_steps))
-        self.assertIn('git push --set-upstream origin "HEAD:$branch"', text)
-        self.assertIn("gh pr create", text)
-        self.assertNotIn("git push origin HEAD:main", text)
-        self.assertIn("inputs.bump == 'none'", workflow["jobs"]["build"]["if"])
+        events = workflow.get("on", workflow.get(True))
+        self.assertTrue({"push", "pull_request", "workflow_dispatch", "workflow_call"}.issubset(events))
+        self.assertTrue({"bump", "release", "prerelease"}.isdisjoint(events["workflow_dispatch"]["inputs"]))
+        self.assertEqual(events["workflow_call"]["outputs"]["artifact_id"]["value"], "${{ jobs.build.outputs.artifact_id }}")
+        self.assertEqual(workflow["jobs"]["build"]["outputs"]["artifact_id"], "${{ steps.artifact.outputs.artifact-id }}")
+        for mutation in ("git push", "gh pr create", "gh release create", "gh release edit", "git tag"):
+            self.assertNotIn(mutation, text)
 
     def test_release_build_keeps_exact_target_and_artifact_checks(self):
         text = (WORKFLOWS / "exec.yml").read_text()
         workflow = yaml.safe_load(text)
         steps = workflow["jobs"]["build"]["steps"]
-        self.assertEqual(steps[0]["with"]["ref"], "${{ github.sha }}")
-        release = next(step for step in steps if step["name"] == "Create GitHub release")
-        self.assertIn('--target "$RELEASE_COMMIT_SHA"', release["run"])
-        self.assertIn("--verify-build", release["run"])
+        self.assertEqual(steps[0]["with"]["ref"], "${{ inputs.source_sha || github.sha }}")
+        self.assertFalse(steps[0]["with"]["persist-credentials"])
+        provenance = next(step for step in steps if step["name"] == "Record immutable build provenance")
+        self.assertIn('test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT_SHA"', provenance["run"])
+        self.assertIn("scripts/stamp-release.py", provenance["run"])
+        self.assertIn("--verify", provenance["run"])
+        self.assertIn("dist/build-source.json", provenance["run"])
+        self.assertIn("cp update.json dist/update.json", provenance["run"])
         package = next(step for step in steps if step["name"] == "Package core, components and offline full module")
         installer = next(step for step in steps if step["name"] == "Verify incremental MagicNet installer")
         checksums = next(step for step in steps if step["name"] == "Generate release checksums")
@@ -454,15 +452,22 @@ class WorkflowStructureTest(unittest.TestCase):
         self.assertIn("test-downloader-installer.py dist/magicnet_installer.zip", installer["run"])
         self.assertIn("--core dist/MagicNet-core.zip", installer["run"])
         self.assertLess(steps.index(package), steps.index(installer))
-        self.assertLess(steps.index(installer), steps.index(checksums))
+        self.assertLess(steps.index(installer), steps.index(provenance))
+        self.assertLess(steps.index(provenance), steps.index(checksums))
         self.assertNotIn("private-key", text)
         self.assertNotIn("KAM_PRIVATE_KEY", text)
         self.assertNotIn("sign-release-assets", text)
         self.assertNotIn("if", checksums)
-        self.assertIn("sha256sum -c SHA256SUMS", release["run"])
+        self.assertIn("checksum-release-assets.sh dist", checksums["run"])
+        artifact = next(step for step in steps if step.get("id") == "artifact")
+        self.assertLess(steps.index(checksums), steps.index(artifact))
+        self.assertNotIn("if", artifact)
+        self.assertIn("github.run_id", artifact["with"]["name"])
+        self.assertIn("github.run_attempt", artifact["with"]["name"])
+        self.assertEqual(artifact["with"]["retention-days"], 30)
         self.assertNotIn("kam installer", text)
         self.assertNotIn("--id magicnet_installer", text)
-        self.assertIn("magicnet_installer.zip", release["run"])
+        self.assertIn("magicnet_installer.zip", installer["run"])
 
     def test_caches_include_toolchain_and_source_and_exclude_rustup(self):
         for name in ("exec.yml", "quality.yml"):

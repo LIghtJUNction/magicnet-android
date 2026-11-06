@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Keep PR #203's release regressions on the shared gate introduced by #204."""
+"""Keep reusable source builds bound to their selected commits and quality gates."""
+import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -10,48 +12,46 @@ import unittest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location("stamp_fixture", ROOT / "scripts/test-stamp-release.py")
+STAMP_FIXTURE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(STAMP_FIXTURE)
 
 
 class ReleaseGateTests(unittest.TestCase):
-    def test_publication_requires_successful_local_quality_gate(self):
+    def test_reusable_artifact_requires_successful_local_quality_gate(self):
         build = yaml.safe_load((ROOT / '.github/workflows/exec.yml').read_text())['jobs']['build']
         steps = build['steps']
         gate = next(s for s in steps if s.get('id') == 'release_quality')
-        publish = next(s for s in steps if s.get('name') == 'Create GitHub release')
-        self.assertLess(steps.index(gate), steps.index(publish))
-        self.assertEqual(gate['if'], "${{ env.RELEASE_REQUESTED == '1' }}")
-        self.assertEqual(publish['if'], "${{ env.RELEASE_REQUESTED == '1' && steps.release_quality.outcome == 'success' && steps.android_acceptance.outcome == 'success' }}")
-        android = next(s for s in steps if s.get('id') == 'android_acceptance')
-        self.assertLess(steps.index(gate), steps.index(android))
-        self.assertLess(steps.index(android), steps.index(publish))
-        self.assertIn('scripts/require-android-acceptance.py', android['run'])
-        self.assertFalse(android.get('continue-on-error', False))
+        upload = next(s for s in steps if s.get('id') == 'artifact')
+        self.assertLess(steps.index(gate), steps.index(upload))
+        self.assertEqual(gate['if'], "${{ inputs.release_quality == true }}")
+        self.assertNotIn('if', upload)  # Default success() must stop a failed gate.
+        self.assertFalse(upload.get('continue-on-error', False))
         self.assertFalse(build.get('continue-on-error', False))
         self.assertFalse(gate.get('continue-on-error', False))
         self.assertEqual(gate.get('env', {}).get('CI_TEST_FORCE'), '1')
         self.assertGreater(gate['timeout-minutes'], 0)
         for command in ('set -euo pipefail', 'bash scripts/quality-gate.sh all',
-                        'git submodule status --recursive', 'prepare-release.py --verify-build'):
+                        'git submodule status --recursive', 'scripts/stamp-release.py', '--verify'):
             self.assertIn(command, gate['run'])
-        self.assertIn('--target "$RELEASE_COMMIT_SHA"', publish['run'])
-        self.assertIn('--notes-file "$notes_file"', publish['run'])
-        self.assertIn('cat "docs/releases/${RELEASE_VERSION}.md"', publish['run'])
-        self.assertIn('--draft', publish['run'])
-        self.assertLess(publish['run'].index('gh release create'), publish['run'].index('gh release edit'))
+        for name in ('Prepare release quality dependencies', 'Compile release acceptance test APK'):
+            dependency = next(s for s in steps if s.get('name') == name)
+            self.assertEqual(dependency['if'], gate['if'])
+            self.assertLess(steps.index(dependency), steps.index(gate))
 
-    def test_dispatched_release_uses_same_commit_acceptance_dependency(self):
+    def test_reusable_build_and_android_accept_the_same_explicit_source(self):
         flow = yaml.safe_load((ROOT / '.github/workflows/exec.yml').read_text())
         android = yaml.safe_load((ROOT / '.github/workflows/android-kernelsu-acceptance.yml').read_text())
-        call = flow['jobs']['release-android']
-        self.assertEqual(call['uses'], './.github/workflows/android-kernelsu-acceptance.yml')
-        self.assertEqual(call['permissions'], {'contents': 'read'})
-        self.assertNotIn('secrets', call)
-        self.assertNotIn('continue-on-error', call)
-        self.assertIn('workflow_call', android.get('on', android.get(True)))
-        for guard in ("github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/main'",
-                      "inputs.release == true", "inputs.bump == 'none'",
-                      "inputs.expected_sha == github.sha"):
-            self.assertIn(guard, call['if'])
+        self.assertEqual(flow['permissions'], {'contents': 'read'})
+        self.assertEqual(set(flow['jobs']), {'build'})
+        inputs = flow.get('on', flow.get(True))['workflow_call']['inputs']
+        for name in ('source_sha', 'recipe_sha', 'release_version', 'release_version_code'):
+            self.assertEqual(inputs[name]['type'], 'string')
+            self.assertTrue(inputs[name]['required'])
+        self.assertEqual(inputs['release_quality']['type'], 'boolean')
+        android_inputs = android.get('on', android.get(True))['workflow_call']['inputs']
+        for name in ('source_sha', 'release_version', 'release_version_code'):
+            self.assertEqual(android_inputs[name]['type'], 'string')
         for job in ('harness', 'android-kernelsu'):
             checkout = android['jobs'][job]['steps'][0]
             self.assertEqual(checkout['with']['repository'],
@@ -69,54 +69,11 @@ class ReleaseGateTests(unittest.TestCase):
             result = subprocess.run(['bash', '-e', '-c', command],
                                     env=dict(os.environ, HARNESS_RESULT=harness, ANDROID_RESULT=device))
             self.assertEqual(result.returncode == 0, harness == device == 'success')
-        build = flow['jobs']['build']
-        self.assertEqual(build['needs'], 'release-android')
-        self.assertIn('!cancelled()', build['if'])
-        self.assertIn("needs.release-android.result == 'success'", build['if'])
-        # Even a skipped dependency must never grant release permission.
-        verify = next(step for step in build['steps'] if step.get('id') == 'android_acceptance')
-        self.assertEqual(verify['env']['ANDROID_RESULT'], '${{ needs.release-android.result }}')
-        for status in ('success', 'skipped', 'failure', 'cancelled', ''):
-            for ref in ('refs/heads/main', 'refs/heads/other'):
-                result = subprocess.run(['bash', '-c', verify['run']], env=dict(
-                    os.environ, GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF=ref,
-                    ANDROID_RESULT=status))
-                self.assertEqual(result.returncode == 0,
-                                 status == 'success' and ref == 'refs/heads/main')
-
-    def test_bot_build_dispatch_binds_sha_and_rejects_moved_main(self):
-        flow = yaml.safe_load((ROOT / '.github/workflows/exec.yml').read_text())
-        steps = flow['jobs']['build']['steps']
-        verify = next(step for step in steps if step.get('name') == 'Verify dispatched commit')
-        validate = next(step for step in steps if step.get('name') == 'Validate release request')
-        self.assertLess(steps.index(verify), steps.index(validate))
-        self.assertEqual(verify['env']['EXPECTED_SHA'], '${{ inputs.expected_sha }}')
-        for expected in ('', 'a' * 40, 'b' * 40):
-            result = subprocess.run(['bash', '-c', verify['run']], capture_output=True,
-                                    env=dict(os.environ, EXPECTED_SHA=expected, GITHUB_SHA='a' * 40))
-            self.assertEqual(result.returncode == 0, expected != 'b' * 40)
-        command = next(step['run'] for step in flow['jobs']['version-bump']['steps']
-                       if step.get('name') == 'Open version pull request')
-        with tempfile.TemporaryDirectory() as tmp:
-            work = Path(tmp)
-            (work / 'gh').write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
-            for path in work.iterdir():
-                path.chmod(0o755)
-            result = subprocess.run(['bash', '-c', command], capture_output=True, text=True,
-                                    env=dict(os.environ, PATH=tmp + ':' + os.environ['PATH'],
-                                             VERSION='v1.2.4', GITHUB_RUN_ID='42',
-                                             RUNNER_TEMP=tmp, RELEASE_INPUT='true',
-                                             PRERELEASE_INPUT='false'))
-            self.assertEqual(result.returncode, 0, result.stderr)
-            output = result.stdout.splitlines()
-            self.assertIn('pr', output)
-            self.assertIn('create', output)
-            self.assertIn('--base', output)
-            self.assertIn('main', output)
-            self.assertIn('--head', output)
-            self.assertIn('release/version-1.2.4-42', output)
-            self.assertIn('--title', output)
-            self.assertIn('chore(release): prepare v1.2.4', output)
+        checkout = flow['jobs']['build']['steps'][0]
+        self.assertEqual(checkout['with']['repository'],
+                         "${{ inputs.source_sha && 'LIghtJUNction/magicnet-android' || github.repository }}")
+        self.assertEqual(checkout['with']['ref'], '${{ inputs.source_sha || github.sha }}')
+        self.assertFalse(checkout['with']['persist-credentials'])
 
     def test_shared_suite_preserves_all_original_checks(self):
         script = (ROOT / 'scripts/quality-gate.sh').read_text()
@@ -164,6 +121,124 @@ class ReleaseGateTests(unittest.TestCase):
                                             cwd=work, env=env, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 27, result.stdout + result.stderr)
                     self.assertFalse(sentinel.exists())
+
+
+class BuildStepTests(unittest.TestCase):
+    """Execute the workflow's actual metadata/provenance shell in an isolated repo."""
+
+    git = STAMP_FIXTURE.StampTest.git
+
+    def setUp(self):
+        STAMP_FIXTURE.StampTest.setUp(self)
+        self.sha = self.git('rev-parse', 'HEAD')
+        for name in ('scripts', 'bin', 'hooks', 'runner'):
+            (self.root / name).mkdir()
+        for name in ('stamp-release.py', 'checksum-release-assets.sh'):
+            shutil.copyfile(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        self.steps = yaml.safe_load((ROOT / '.github/workflows/exec.yml').read_text())['jobs']['build']['steps']
+        self.environment = dict(os.environ, SOURCE_SHA=self.sha, RELEASE_COMMIT_SHA=self.sha,
+                                GITHUB_SHA='c' * 40, RECIPE_SHA='b' * 40,
+                                SELECTED_VERSION='v1.9.0', SELECTED_VERSION_CODE='10700',
+                                RELEASE_VERSION='v1.9.0', RELEASE_VERSION_CODE='10700',
+                                GITHUB_ENV=str(self.root / 'runner/environment'),
+                                RUNNER_TEMP=str(self.root / 'runner'),
+                                PATH=str(self.root / 'bin') + ':' + os.environ['PATH'])
+        (self.root / 'runner/build-submodules.txt').write_text('')
+        kam = self.root / 'bin/kam'
+        kam.write_text('''#!/bin/sh
+test "$1" = build || exit 1
+mkdir -p dist
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+path = Path("update.json")
+data = json.loads(path.read_text())
+data["zipUrl"] = "https://example.invalid/kam-export.zip"
+field = os.environ.get("KAM_BROKEN_FIELD")
+if field:
+    data[field] = {"version": "v9.9.9", "versionCode": 99999,
+                   "changelog": "https://example.invalid/wrong-notes"}[field]
+path.write_text(json.dumps(data))
+PY
+''')
+        kam.chmod(0o755)
+
+    def run_step(self, name, **environment):
+        step = next(step for step in self.steps if step.get('name') == name)
+        return subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', step['run']], cwd=self.root,
+                              env=self.environment | environment, capture_output=True, text=True)
+
+    def stamp(self):
+        result = self.run_step('Stamp selected build version')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_selected_source_and_inputs_are_checked_before_stamping(self):
+        cases = (({}, True),
+                 ({'RECIPE_SHA': '', 'SELECTED_VERSION': '', 'SELECTED_VERSION_CODE': ''}, True),
+                 ({'SOURCE_SHA': 'a' * 40}, False), ({'SOURCE_SHA': 'main'}, False),
+                 ({'RECIPE_SHA': 'main'}, False),
+                 ({'SELECTED_VERSION': ''}, False),
+                 ({'SELECTED_VERSION': 'v1.9.0\nINJECTED=true'}, False),
+                 ({'SELECTED_VERSION_CODE': '0'}, False),
+                 ({'SELECTED_VERSION_CODE': '10700\nINJECTED=true'}, False),
+                 ({'SELECTED_VERSION': '', 'SELECTED_VERSION_CODE': ''}, False))
+        for environment, passes in cases:
+            with self.subTest(environment=environment):
+                output = Path(self.environment['GITHUB_ENV'])
+                output.unlink(missing_ok=True)
+                result = self.run_step('Verify selected source and version', **environment)
+                self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
+                if passes:
+                    values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                    self.assertEqual(set(values), {'RELEASE_VERSION', 'RELEASE_VERSION_CODE'})
+                    self.assertEqual(values['RELEASE_VERSION'], 'v1.9.0' if not environment else 'v1.8.5')
+                else:
+                    self.assertFalse(output.exists())
+                self.assertEqual(self.git('rev-parse', 'HEAD'), self.sha)
+                self.assertEqual((self.root / 'kam.toml').read_text(), self.original['kam.toml'])
+
+    def test_kam_export_restores_only_selected_installer_url(self):
+        self.stamp()
+        result = self.run_step('Build module')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        selected = json.loads((self.root / 'runner/selected-update.json').read_text())
+        self.assertEqual(json.loads((self.root / 'update.json').read_text()), selected)
+        self.assertEqual(selected['version'], 'v1.9.0')
+        self.assertEqual(selected['versionCode'], 10700)
+        self.assertIn('/releases/download/v1.9.0/magicnet_installer.zip', selected['zipUrl'])
+        self.assertEqual(self.git('rev-parse', 'HEAD'), self.sha)
+
+    def test_kam_metadata_drift_is_not_hidden_by_updater_restore(self):
+        for field in ('version', 'versionCode', 'changelog'):
+            with self.subTest(field=field):
+                self.git('restore', '--', *STAMP_FIXTURE.STAMP.METADATA_FILES)
+                self.stamp()
+                result = self.run_step('Build module', KAM_BROKEN_FIELD=field)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                selected = json.loads((self.root / 'runner/selected-update.json').read_text())
+                generated = json.loads((self.root / 'update.json').read_text())
+                self.assertEqual(generated['zipUrl'], selected['zipUrl'])
+                self.assertNotEqual(generated[field], selected[field])
+
+    def test_final_assets_record_source_recipe_version_and_updater_before_checksums(self):
+        self.stamp()
+        for name in ('Build module', 'Record immutable build provenance', 'Generate release checksums'):
+            result = self.run_step(name)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        provenance = json.loads((self.root / 'dist/build-source.json').read_text())
+        self.assertEqual(provenance, {'schema': 1, 'repository': 'LIghtJUNction/MagicNet',
+                         'source_repository': 'LIghtJUNction/magicnet-android',
+                         'source_sha': self.sha, 'recipe_sha': 'b' * 40,
+                         'version': 'v1.9.0', 'version_code': '10700'})
+        self.assertEqual((self.root / 'dist/update.json').read_bytes(), (self.root / 'update.json').read_bytes())
+        inventory = {line.split('  ', 1)[1] for line in (self.root / 'dist/SHA256SUMS').read_text().splitlines()}
+        self.assertEqual(inventory, {'build-source.json', 'build-submodules.txt', 'update.json'})
+        result = self.run_step('Record immutable build provenance', RECIPE_SHA='')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        standalone = json.loads((self.root / 'dist/build-source.json').read_text())
+        self.assertEqual(standalone['repository'], 'LIghtJUNction/magicnet-android')
+        self.assertNotIn('recipe_sha', standalone)
 
 
 if __name__ == '__main__':
