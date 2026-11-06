@@ -1,0 +1,1148 @@
+{
+  "binaries": {
+    "old": {
+      "path": "/workspace/scratch/9b5df97c03c7/baselines/magicnet-android/target/release/magicnet-cli",
+      "bytes": 2638680,
+      "sha256": "1a25a998ef7c1a078597172a8a960350672c8a37369bfb40d0c6fdde64e00e8b"
+    },
+    "new": {
+      "path": "/workspace/scratch/9b5df97c03c7/magicnet-android/target/release/magicnet-cli",
+      "bytes": 2622296,
+      "sha256": "695f30864cf7b2e2c73f2361422d898a56d0041e6b1c53e8b22717821ad67f0a"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "default-help",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "help",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "short-help",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "long-help",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "unknown",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "capabilities",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "double-json",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-service",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-core",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-supervisor",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-transparent",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-dns",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-network",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-connectivity",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-network-access",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-sub",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-wifi",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-hotspot",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-tailscale",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-override",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-module-update",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-inspect-sub",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-inspect-wifi",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-inspect-network-access",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-inspect-override",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-inspect-app",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-service",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-core",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-supervisor",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-transparent",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-dns",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-network",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-connectivity",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-wifi",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-hotspot",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-warp",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-chain",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-sub",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "status-mcp",
+      "commands": 1,
+      "exit_codes": [
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-service",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-service",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-supervisor",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-supervisor",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-transparent",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-transparent",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-network",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-network",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-core",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-core",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-node",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-node",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-chain",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-chain",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-wifi",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-wifi",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-hotspot",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-hotspot",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-route",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-route",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-dns",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-dns",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-warp",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-warp",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-sub",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-sub",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-block",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-block",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-mcp",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-mcp",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-webui",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-webui",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-backup",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-backup",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-api",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-api",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "invalid-app",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-app",
+      "commands": 1,
+      "exit_codes": [
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "machine-reject-control",
+      "commands": 2,
+      "exit_codes": [
+        1,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "paths",
+      "commands": 4,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "metadata",
+      "commands": 8,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "metadata-invalid",
+      "commands": 4,
+      "exit_codes": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "subscription-sources",
+      "commands": 5,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "subscription-rollback",
+      "commands": 2,
+      "exit_codes": [
+        1,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "dns-profiles",
+      "commands": 5,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "dns-invalid",
+      "commands": 3,
+      "exit_codes": [
+        1,
+        1,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "network-policy",
+      "commands": 5,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "network-invalid",
+      "commands": 2,
+      "exit_codes": [
+        0,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "wifi-lists",
+      "commands": 9,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "wifi-control",
+      "commands": 6,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "wifi-invalid",
+      "commands": 3,
+      "exit_codes": [
+        1,
+        1,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "routes",
+      "commands": 4,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "app-lists",
+      "commands": 8,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "app-batch-order",
+      "commands": 5,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "app-large-batch",
+      "commands": 3,
+      "exit_codes": [
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "app-invalid",
+      "commands": 2,
+      "exit_codes": [
+        1,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "chain-policy",
+      "commands": 11,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "chain-rollback",
+      "commands": 4,
+      "exit_codes": [
+        0,
+        0,
+        1,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "chain-invalid",
+      "commands": 4,
+      "exit_codes": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "api-read",
+      "commands": 6,
+      "exit_codes": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "api-write",
+      "commands": 10,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "connection-filters",
+      "commands": 3,
+      "exit_codes": [
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "mcp-settings",
+      "commands": 4,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "mcp-invalid",
+      "commands": 2,
+      "exit_codes": [
+        1,
+        1
+      ],
+      "passed": true,
+      "differences": []
+    },
+    {
+      "name": "reconcile",
+      "commands": 3,
+      "exit_codes": [
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "differences": []
+    }
+  ],
+  "commands": 204,
+  "comparison": "Exact exit, stdout, stderr, every file byte, local API state and write effects; no ignored fields.",
+  "benchmarks": {
+    "old": {
+      "help": {
+        "median_ms": 1.097,
+        "min_ms": 0.921,
+        "median_peak_rss_kib": 1628,
+        "rounds": 25
+      },
+      "--json capabilities": {
+        "median_ms": 1.235,
+        "min_ms": 0.881,
+        "median_peak_rss_kib": 1720,
+        "rounds": 25
+      },
+      "node list": {
+        "median_ms": 1.237,
+        "min_ms": 1.009,
+        "median_peak_rss_kib": 1976,
+        "rounds": 25
+      },
+      "--json service status": {
+        "median_ms": 2.528,
+        "min_ms": 1.995,
+        "median_peak_rss_kib": 2536,
+        "rounds": 25
+      },
+      "api proxies": {
+        "median_ms": 10.38,
+        "min_ms": 8.181,
+        "median_peak_rss_kib": 6400,
+        "rounds": 25
+      },
+      "app add-many (5000 packages)": {
+        "median_ms": 274.576,
+        "min_ms": 191.462,
+        "median_peak_rss_kib": 3880,
+        "rounds": 25
+      }
+    },
+    "new": {
+      "help": {
+        "median_ms": 1.265,
+        "min_ms": 0.992,
+        "median_peak_rss_kib": 1484,
+        "rounds": 25
+      },
+      "--json capabilities": {
+        "median_ms": 1.157,
+        "min_ms": 0.88,
+        "median_peak_rss_kib": 1672,
+        "rounds": 25
+      },
+      "node list": {
+        "median_ms": 1.352,
+        "min_ms": 0.979,
+        "median_peak_rss_kib": 1840,
+        "rounds": 25
+      },
+      "--json service status": {
+        "median_ms": 2.701,
+        "min_ms": 1.887,
+        "median_peak_rss_kib": 2472,
+        "rounds": 25
+      },
+      "api proxies": {
+        "median_ms": 9.759,
+        "min_ms": 7.99,
+        "median_peak_rss_kib": 6400,
+        "rounds": 25
+      },
+      "app add-many (5000 packages)": {
+        "median_ms": 179.752,
+        "min_ms": 99.508,
+        "median_peak_rss_kib": 3216,
+        "rounds": 25
+      }
+    }
+  },
+  "native_http_8mib": {
+    "old": {
+      "median_ms": 16.794,
+      "min_ms": 14.369,
+      "median_peak_rss_kib": 17436,
+      "rounds": 25
+    },
+    "new": {
+      "median_ms": 12.733,
+      "min_ms": 10.208,
+      "median_peak_rss_kib": 9244,
+      "rounds": 25
+    }
+  },
+  "passed": true,
+  "passed_scenarios": 104
+}

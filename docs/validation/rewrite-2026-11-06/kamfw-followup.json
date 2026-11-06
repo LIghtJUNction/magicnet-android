@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "validated_production_revision": "ea8758bf7f9c831931a99dfaa454356c81ed191a",
+  "final_adopted_revision": "a7788737b938a9ed930645befe2526b626999a22",
+  "changed_paths": [
+    "tests/test_contracts.py"
+  ],
+  "added_lines": 42,
+  "production_files_byte_identical": true,
+  "test": "Contracts.test_fswatch_prunes_literal_paths_and_basenames",
+  "shells": [
+    "sh",
+    "bash",
+    "mksh",
+    "busybox ash"
+  ],
+  "find_backends": [
+    "/usr/bin/find (GNU)",
+    "busybox find"
+  ],
+  "combinations_passed": 8,
+  "failed": 0,
+  "execution": "Read immutable test source with git show into a temporary runner; relocate ROOT to the production checkout and explicitly bind host find to /usr/bin/find; assertions unchanged.",
+  "coverage": [
+    "literal path suffixes",
+    "ancestor directory pruning",
+    "glob metacharacters and backslash",
+    "cwd wildcard interference",
+    "direct file snapshots under excluded ancestors"
+  ]
+}

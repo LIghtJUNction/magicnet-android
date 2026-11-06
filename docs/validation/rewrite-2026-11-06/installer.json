@@ -1,0 +1,14 @@
+{
+  "scenarios": 19,
+  "mismatches": 0,
+  "comparisons": [
+    "exit",
+    "stdout",
+    "stderr",
+    "file bytes",
+    "permissions",
+    "directories",
+    "symlinks"
+  ],
+  "normalization": "human-readable [done] elapsed duration only"
+}

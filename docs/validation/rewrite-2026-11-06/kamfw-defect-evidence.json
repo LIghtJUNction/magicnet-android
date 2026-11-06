@@ -1,0 +1,361 @@
+{
+  "phase_failure": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 37,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "nested_loader_registry": {
+    "baseline": {
+      "code": 0,
+      "stdout": "missing",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "registered",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "explicit_install_source": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "module/bin/tool": null
+      }
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "module/bin/tool": "#!/bin/sh\nprintf ok\n"
+      }
+    },
+    "different": true
+  },
+  "negative_confirmation": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "config_stdin_isolation": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "ordinary",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "cache_corruption": {
+    "baseline": {
+      "code": 0,
+      "stdout": "changed:0\n",
+      "stderr": "",
+      "files": {
+        "module/body": "corrupt"
+      }
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "changed:1\n",
+      "stderr": "",
+      "files": {
+        "module/body": "trusted"
+      }
+    },
+    "different": true
+  },
+  "zygisk_prune": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "libs/x86.so": "x86",
+        "libs/arm64-v8a.so": "arm64"
+      }
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "libs/x86.so": null,
+        "libs/arm64-v8a.so": "arm64"
+      }
+    },
+    "different": true
+  },
+  "archive_auto_select": {
+    "baseline": {
+      "code": 0,
+      "stdout": "payload-equal:0\n",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "payload-equal:0\n",
+      "stderr": "",
+      "files": {}
+    },
+    "different": false
+  },
+  "release_placeholders": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "sh: 189: \\${TAG}: not found\nsh: 189: v1.2: not found\nsh: 189: sh: 189: \\${ARCH}: not foundg\": not found\n\nsh: 189: g\": not found\nsh: 189: arm64: not found\nsed: -e expression #1, char 1: unknown command: `\"'\n",
+      "files": {
+        "download.calls": "https://github.com/owner/repo/releases/download/v1.2/\n"
+      }
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "download.calls": "https://github.com/owner/repo/releases/download/v1.2/tool-v1.2-arm64\n"
+      }
+    },
+    "different": true
+  },
+  "literal_rollback": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "property": "original '/home/agent' unsafe unsafe"
+      }
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "property": "original '$HOME' $(printf unsafe) `printf unsafe`"
+      }
+    },
+    "different": true
+  },
+  "zero_interval": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "x_repeat": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "ababab",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "log_write_error": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "sh: 200: cannot create <fixture>/directory: Is a directory\n",
+      "files": {}
+    },
+    "candidate": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "sh: 74: cannot create <fixture>/directory: Is a directory\n",
+      "files": {}
+    },
+    "different": true
+  },
+  "property_set_failure": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "hash_fetch_failure": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "module/body": "unchecked"
+      }
+    },
+    "candidate": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "module/body": "installed"
+      }
+    },
+    "different": true
+  },
+  "legacy_property_blob_fixture": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {},
+      "bytes_at_property_record": [
+        92,
+        120,
+        48,
+        92,
+        120,
+        92,
+        120,
+        48,
+        51,
+        92,
+        120,
+        54,
+        101
+      ]
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {},
+      "bytes_at_property_record": [
+        0,
+        0,
+        88,
+        3,
+        110,
+        101,
+        119,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "ambiguous_archive": {
+    "baseline": {
+      "code": 0,
+      "stdout": "install-status:0\noriginal-preserved:1\n",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "ERROR: Extract failed: Multiple files in archive; specify --result-name\ninstall-status:1\noriginal-preserved:0\n",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "config_path_key": {
+    "baseline": {
+      "code": 0,
+      "stdout": "set-status:0\nescapedget-status:0\n",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 0,
+      "stdout": "set-status:1\nget-status:1\n",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "watchdog_path_name": {
+    "baseline": {
+      "code": 0,
+      "stdout": "<fixture>/module/.state/watchdog/../../escape.pid\n",
+      "stderr": "",
+      "files": {}
+    },
+    "candidate": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "",
+      "files": {}
+    },
+    "different": true
+  },
+  "installer_parent_path": {
+    "baseline": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "outside": null
+      }
+    },
+    "candidate": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "",
+      "files": {
+        "outside": null
+      }
+    },
+    "different": true
+  }
+}

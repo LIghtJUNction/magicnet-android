@@ -1,0 +1,6 @@
+{
+  "requests": 57,
+  "passed": true,
+  "differences": [],
+  "comparison": "Exact HTTP status and body, including delegated argv; no ignored fields."
+}

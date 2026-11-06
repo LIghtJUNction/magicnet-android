@@ -1,0 +1,12 @@
+{
+  "baseline": {
+    "production_files": 39,
+    "production_lines": 6614,
+    "production_bytes": 202859
+  },
+  "candidate": {
+    "production_files": 39,
+    "production_lines": 3349,
+    "production_bytes": 123852
+  }
+}

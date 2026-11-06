@@ -299,6 +299,19 @@ class InstalledControlsTests(unittest.TestCase):
                 self.assertEqual(self.evidence['stage'], 'service_status')
         self.device.run.assert_not_called()
 
+    def test_fswatch_pid_must_fit_runtime_range(self):
+        for value in ('2147483648', '9999999999'):
+            with self.subTest(value=value):
+                self.service['supervisors']['fswatch'] = value
+                with self.assertRaisesRegex(RuntimeError, 'not confirmed running'):
+                    self.check()
+                self.assertEqual(self.evidence['status'], 'failed')
+                self.assertEqual(self.evidence['stage'], 'service_status')
+        self.device.run.assert_not_called()
+        self.service['supervisors']['fswatch'] = '2147483647'
+        self.check()
+        self.assertEqual(self.evidence['status'], 'passed')
+
     def test_machine_errors_wrong_schema_and_extra_stdout_are_rejected(self):
         for args, name, data in (
             ('service status', 'service.status', self.service),

@@ -1,0 +1,162 @@
+{
+  "source_sha": "81a60108477d31ca6131f930f955580ad4fa8ba1",
+  "completed_utc": "2026-11-06T03:38:06.773230+00:00",
+  "files_sha256": {
+    "crates/magicnet-cli/src/diagnostics_export.rs": "48395686ab56f25dbef5ac21491774a05388c08affd27c8b2c15f546a6fa1aff",
+    "crates/magicnet-cli/tests/diagnostic_export.rs": "6db4f13a733ea18ceca6bdda4f5b7a5e8a35c7702f34679ff9c39efd6363177f"
+  },
+  "rustc": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+  "cargo": "cargo 1.87.0 (99624be96 2025-05-06)",
+  "checks": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--package",
+        "magicnet-cli",
+        "--bin",
+        "magicnet-cli",
+        "diagnostics::export::tests"
+      ],
+      "command": "cargo test --offline --package magicnet-cli --bin magicnet-cli diagnostics::export::tests",
+      "started_utc": "2026-11-06T03:37:55.827773+00:00",
+      "duration_seconds": 4.147379,
+      "exit_code": 0,
+      "stdout": "\nrunning 10 tests\ntest diagnostics::export::tests::exhausted_total_budget_does_not_spawn_more_commands ... ok\ntest diagnostics::export::tests::core_version_remains_readable_without_passing_arbitrary_command_text ... ok\ntest diagnostics::export::tests::export_replaces_one_private_file_without_following_a_destination_symlink ... ok\ntest diagnostics::export::tests::failed_publication_removes_its_temporary_and_keeps_previous_directory ... ok\ntest diagnostics::export::tests::config_projection_preserves_route_references_without_private_values ... ok\ntest diagnostics::export::tests::logs_redact_credentials_node_labels_headers_and_uid_ranges ... ok\ntest diagnostics::export::tests::log_tail_retains_recent_failures_with_a_fixed_memory_bound ... ok\ntest diagnostics::export::tests::output_limit_is_reported_even_when_the_command_exits_successfully ... ok\ntest diagnostics::export::tests::command_timeout_keeps_partial_stderr_and_never_counts_as_success ... ok\ntest diagnostics::export::tests::report_limits_are_explicit_and_keep_the_completion_marker ... ok\n\ntest result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 792 filtered out; finished in 0.53s\n\n",
+      "stderr": "   Compiling magicnet-cli v0.1.0 (/workspace/scratch/9b5df97c03c7/magicnet-android/crates/magicnet-cli)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.60s\n     Running unittests src/main.rs (target/debug/deps/magicnet_cli-f4e398e35623d80f)\n",
+      "test_summaries": [
+        "ok. 10 passed; 0 failed; 0 ignored; 0 measured; 792 filtered out; finished in 0.53s"
+      ],
+      "working_directory": ".",
+      "source_sha": "81a60108477d31ca6131f930f955580ad4fa8ba1"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--package",
+        "magicnet-cli",
+        "--test",
+        "diagnostic_export"
+      ],
+      "command": "cargo test --offline --package magicnet-cli --test diagnostic_export",
+      "started_utc": "2026-11-06T03:37:59.975343+00:00",
+      "duration_seconds": 2.050743,
+      "exit_code": 0,
+      "stdout": "\nrunning 3 tests\ntest machine_export_failure_returns_one_complete_redacted_error_envelope ... ok\ntest bundle_observation_never_creates_an_export_or_reconciles_canonical_state ... ok\ntest machine_export_creates_one_complete_file_and_keeps_service_state_unchanged ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s\n\n",
+      "stderr": "   Compiling magicnet-cli v0.1.0 (/workspace/scratch/9b5df97c03c7/magicnet-android/crates/magicnet-cli)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.96s\n     Running tests/diagnostic_export.rs (target/debug/deps/diagnostic_export-5df0ce54bf0cc48a)\n",
+      "test_summaries": [
+        "ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s"
+      ],
+      "working_directory": ".",
+      "source_sha": "81a60108477d31ca6131f930f955580ad4fa8ba1"
+    },
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "command": "cargo clippy --workspace --all-targets --offline -- -D warnings",
+      "started_utc": "2026-11-06T03:38:02.026161+00:00",
+      "duration_seconds": 4.74701,
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "    Checking magicnet-cli v0.1.0 (/workspace/scratch/9b5df97c03c7/magicnet-android/crates/magicnet-cli)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.71s\n",
+      "working_directory": ".",
+      "source_sha": "81a60108477d31ca6131f930f955580ad4fa8ba1"
+    },
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "command": "cargo fmt --all -- --check",
+      "exit_code": 0,
+      "duration_seconds": 0.679117267,
+      "output": "",
+      "result": "passed",
+      "working_directory": ".",
+      "source_sha": "81a60108477d31ca6131f930f955580ad4fa8ba1"
+    }
+  ],
+  "schema": 1,
+  "purpose": "Targeted final Rust integration verification of newly included supervisor/watchdog diagnostic logs.",
+  "comparison_source_sha": "d58dbdc5ed8a43bc1fee5050187b529a0f7136b7",
+  "tracked_rust_matches_source_sha": true,
+  "source_scope": {
+    "production_change": "Add supervisors and connectivity-watchdog to the fixed list of diagnostic log tails; two production lines added.",
+    "test_change": "Add fixture logs, section/message assertions and a supervisor Authorization-header secret canary; eleven integration-test lines added.",
+    "new_log_paths": [
+      ".log/supervisors.log",
+      ".log/connectivity-watchdog.log"
+    ],
+    "production_files_changed": [
+      "crates/magicnet-cli/src/diagnostics_export.rs"
+    ],
+    "test_files_changed": [
+      "crates/magicnet-cli/tests/diagnostic_export.rs"
+    ]
+  },
+  "environment": {
+    "host": "Linux x86_64",
+    "dependency_mode": "cargo offline",
+    "fixtures": "Synthetic temporary module directories; no private subscription or Android device."
+  },
+  "review": {
+    "result": "No introduced privacy or size-budget regression found in this delta.",
+    "privacy": [
+      "Both fixed log names use log_tail -> Collector.append -> Privacy.line; neither uses append_safe or emits raw source lines directly.",
+      "The shared filter strips controls, redacts credential headers including multiword values, masks configuration-derived private strings and node labels, suppresses UID/comment values, then applies the common token redactor.",
+      "The integration fixture verifies both new section headings and useful failure messages while rejecting the supervisor Authorization-header canary.",
+      "Existing log path handling requires containment in the canonical module directory and a regular non-symlink leaf file opened with O_NONBLOCK and O_NOFOLLOW."
+    ],
+    "budget_and_effects": [
+      "Each new log uses the same bounded input window and retained-line cap as existing logs; no additional subprocess or external network probe is introduced.",
+      "Both sections use the existing section/report truncation path. Export still rejects an oversized completed report before creating an output file.",
+      "The monotonic remaining-time calculation still applies to every diagnostic subprocess. Additional local file reads do not reset or enlarge this budget.",
+      "Observation does not reconcile canonical state. Export publishes the existing single private report path; existing atomic replacement and failed-publication cleanup code is unchanged."
+    ]
+  },
+  "configured_limits": {
+    "log_input_window_bytes": 32768,
+    "log_retained_lines": 120,
+    "subprocess_stream_limit_bytes": 32768,
+    "section_content_threshold_bytes": 49152,
+    "report_limit_bytes": 524288,
+    "report_footer_reserve_bytes": 8192,
+    "subprocess_collection_budget_seconds": 25,
+    "configuration_input_limit_bytes": 4194304,
+    "private_value_inventory_entries": 4096,
+    "configuration_projection_array_entries": 128,
+    "configuration_projection_max_depth": 24,
+    "export_file_mode_host": "0600"
+  },
+  "scope_limits": [
+    "These are targeted tests for the two-log addition, not a repeat of the full workspace suite, executable differential suite or performance measurements.",
+    "The previously completed full workspace verification at d58dbdc covered 801 passing unit tests, 64 passing integration tests and one pre-existing ignored stress test. These 13 targeted passes are a subset, not 13 additional unique tests.",
+    "The 25-second constant limits subprocess collection using remaining monotonic time; it is not a hard deadline for all filesystem I/O, redaction CPU work or final persistence.",
+    "The 32 KiB log bound describes input bytes read. UTF-8 replacement and diagnostic metadata can expand rendered text; section/report guards constrain publication.",
+    "Synthetic canary checks and source review do not establish complete redaction for every possible arbitrary log format.",
+    "No real Android export, external-storage permission behavior, service restart, private configuration or outbound connectivity was exercised."
+  ],
+  "result": {
+    "passed": true,
+    "diagnostic_export_unit_tests_passed": 10,
+    "diagnostic_export_integration_tests_passed": 3,
+    "failed": 0,
+    "ignored_in_targeted_runs": 0,
+    "strict_clippy_all_targets": "passed",
+    "format_check": "passed"
+  }
+}

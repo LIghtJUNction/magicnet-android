@@ -1,0 +1,46 @@
+{
+  "payload_mib": 48,
+  "runs_per_version": 3,
+  "identical_artifacts": 11,
+  "mismatches": 0,
+  "measurement": {
+    "baseline": {
+      "median_seconds": 0.29036279399952036,
+      "median_max_rss_kib": 79288
+    },
+    "candidate": {
+      "median_seconds": 0.308170684000288,
+      "median_max_rss_kib": 16736
+    }
+  },
+  "runs": {
+    "baseline": [
+      {
+        "seconds": 0.29036279399952036,
+        "max_rss_kib": 79288
+      },
+      {
+        "seconds": 0.27489290999983496,
+        "max_rss_kib": 79288
+      },
+      {
+        "seconds": 0.33124769200003357,
+        "max_rss_kib": 79288
+      }
+    ],
+    "candidate": [
+      {
+        "seconds": 0.308170684000288,
+        "max_rss_kib": 16736
+      },
+      {
+        "seconds": 0.3228702839987818,
+        "max_rss_kib": 16736
+      },
+      {
+        "seconds": 0.29958862800049246,
+        "max_rss_kib": 16736
+      }
+    ]
+  }
+}

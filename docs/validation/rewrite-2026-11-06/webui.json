@@ -1,0 +1,18 @@
+{
+  "parity_cases": 1140,
+  "mismatches": 0,
+  "connection_parse": {
+    "baseline": {
+      "rows": 6000,
+      "runs": 11,
+      "median_ms": 29.632969000000003,
+      "max_rss_kib": 113324
+    },
+    "candidate": {
+      "rows": 6000,
+      "runs": 11,
+      "median_ms": 11.98168099999998,
+      "max_rss_kib": 113064
+    }
+  }
+}

@@ -1,0 +1,497 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "generated_at_utc": "2026-11-06T03:42:28.396996+00:00",
+  "scope": "host unit tests and review of Android device harness changes; not Android acceptance",
+  "source": {
+    "repository": "magicnet-android",
+    "root": "/workspace/scratch/9b5df97c03c7/magicnet-android",
+    "base_commit": "81a60108477d31ca6131f930f955580ad4fa8ba1",
+    "base_parent_commit": "d58dbdc5ed8a43bc1fee5050187b529a0f7136b7",
+    "tested_revision": "base commit plus the two listed local PID-boundary changes",
+    "files": {
+      "scripts/android-device-simulation.py": {
+        "base_sha256": "f115204e2d626fcab2cdb82d80de72196ab0c44f44222a84f9612318d23a28da",
+        "tested_sha256": "6c6767e3d0e6d71d9f5f3d12d35712821e2bc6f85bb19634050b5446fe7d5c2b"
+      },
+      "scripts/test-android-device-simulation.py": {
+        "base_sha256": "cf106af05cfbda58721c8e951eb04c2e78baa60abecebe99a48c3fab8da7a126",
+        "tested_sha256": "d7d18475b393a5225052dedbbeb738731a661db44677caec93dc81421999e40b"
+      }
+    },
+    "modified_files_vs_base": [
+      "scripts/android-device-simulation.py",
+      "scripts/test-android-device-simulation.py"
+    ],
+    "local_patch_sha256": "e0e10ed67389854daa5ddd26d6a1c20c15a4731b1b42dce151021f2d69c35597",
+    "local_patch": "diff --git a/scripts/android-device-simulation.py b/scripts/android-device-simulation.py\nindex eba2283..8d4389b 100644\n--- a/scripts/android-device-simulation.py\n+++ b/scripts/android-device-simulation.py\n@@ -247,7 +247,8 @@ def installed_controls(device, out: Path, evidence: dict) -> None:\n         service = machine('service status', 'service.status', 15)\n         supervisors = service.get('supervisors')\n         fswatch = supervisors.get('fswatch') if isinstance(supervisors, dict) else None\n-        require(isinstance(fswatch, str) and re.fullmatch(r'[1-9][0-9]{0,9}', fswatch) is not None,\n+        require(isinstance(fswatch, str) and re.fullmatch(r'[1-9][0-9]{0,9}', fswatch) is not None\n+                and int(fswatch) <= 2147483647,\n                 'installed fswatch supervisor is not confirmed running')\n         evidence['fswatch_running'] = True\n \ndiff --git a/scripts/test-android-device-simulation.py b/scripts/test-android-device-simulation.py\nindex afd09fd..33617d0 100644\n--- a/scripts/test-android-device-simulation.py\n+++ b/scripts/test-android-device-simulation.py\n@@ -299,6 +299,19 @@ class InstalledControlsTests(unittest.TestCase):\n                 self.assertEqual(self.evidence['stage'], 'service_status')\n         self.device.run.assert_not_called()\n \n+    def test_fswatch_pid_must_fit_runtime_range(self):\n+        for value in ('2147483648', '9999999999'):\n+            with self.subTest(value=value):\n+                self.service['supervisors']['fswatch'] = value\n+                with self.assertRaisesRegex(RuntimeError, 'not confirmed running'):\n+                    self.check()\n+                self.assertEqual(self.evidence['status'], 'failed')\n+                self.assertEqual(self.evidence['stage'], 'service_status')\n+        self.device.run.assert_not_called()\n+        self.service['supervisors']['fswatch'] = '2147483647'\n+        self.check()\n+        self.assertEqual(self.evidence['status'], 'passed')\n+\n     def test_machine_errors_wrong_schema_and_extra_stdout_are_rejected(self):\n         for args, name, data in (\n             ('service status', 'service.status', self.service),\n",
+    "upstream_delta": {
+      "scripts/android-device-simulation.py": {
+        "added_lines": 134,
+        "removed_lines": 1
+      },
+      "scripts/test-android-device-simulation.py": {
+        "added_lines": 274,
+        "removed_lines": 0
+      }
+    }
+  },
+  "execution": {
+    "cwd": "/workspace/scratch/9b5df97c03c7/magicnet-android",
+    "command": "PATH=/workspace/scratch/d050d6bac77d/host-tools/usr/bin:$PATH PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-android-device-simulation.py -v > /workspace/scratch/9b5df97c03c7/android-harness-final-unittests.log 2>&1",
+    "exit_code": 0,
+    "python_executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+    "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "host_tool_resolution": {
+      "python3": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "sh": "/usr/bin/sh",
+      "grep": "/usr/bin/grep",
+      "awk": "/usr/bin/awk",
+      "sed": "/usr/bin/sed",
+      "mksh": "/workspace/scratch/d050d6bac77d/host-tools/usr/bin/mksh",
+      "busybox": "/workspace/scratch/d050d6bac77d/host-tools/usr/bin/busybox"
+    },
+    "tools_note": "The suite uses host sh/grep/awk/sed for synthetic regex checks. Availability of mksh/BusyBox does not mean this command exercised Android BusyBox or all four shells.",
+    "tests": 82,
+    "passed": 82,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "reported_seconds": 0.157,
+    "counting": "unittest test methods; iterations inside subTest are not separate tests",
+    "counts_by_class": {
+      "ArchiveTests": 10,
+      "BusyboxPreflightTests": 8,
+      "DeviceTests": 35,
+      "InstalledControlsTests": 8,
+      "InvalidConfigTests": 10,
+      "ReadinessTests": 4,
+      "ReportTests": 3,
+      "TunControlTests": 1,
+      "UpgradeFailureContextTests": 3
+    },
+    "new_upstream_test_methods_vs_parent": [
+      "DeviceTests.test_reboot_non_timeout_command_errors_fail_before_boot_observation",
+      "DeviceTests.test_reboot_requires_a_valid_old_identity_before_issuing_the_command",
+      "DeviceTests.test_reboot_timeout_cannot_pass_unchanged_missing_or_incomplete_boot",
+      "DeviceTests.test_reboot_timeout_never_swallows_root_selinux_or_kernelsu_failure",
+      "DeviceTests.test_reboot_timeout_requires_new_boot_and_all_postconditions_without_replay",
+      "InstalledControlsTests.test_export_path_size_and_receipt_must_match_the_actual_file",
+      "InstalledControlsTests.test_export_required_sections_and_completion_marker_are_mandatory",
+      "InstalledControlsTests.test_fswatch_must_have_confirmed_live_pid",
+      "InstalledControlsTests.test_incomplete_or_unproven_connectivity_status_is_rejected",
+      "InstalledControlsTests.test_installed_contracts_and_export_evidence_without_forced_network_probe",
+      "InstalledControlsTests.test_machine_errors_wrong_schema_and_extra_stdout_are_rejected",
+      "InstalledControlsTests.test_supervisor_start_timeout_is_failure_and_stops_further_checks"
+    ],
+    "new_upstream_test_count": 12,
+    "new_local_regression_methods": [
+      "InstalledControlsTests.test_fswatch_pid_must_fit_runtime_range"
+    ],
+    "new_local_test_count": 1,
+    "all_test_results": [
+      {
+        "name": "ArchiveTests.test_cross_repository_fixture_records_implementation_commit",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_duplicates_are_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_foreign_or_truncated_replacements_are_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_incomplete_or_repackaged_module_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_missing_or_extra_payload_is_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_only_executables_and_provenance_change",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_path_traversal_and_ambiguous_members_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_release_zip_cannot_be_overwritten",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_symlink_payload_is_not_replaced_silently",
+        "status": "passed"
+      },
+      {
+        "name": "ArchiveTests.test_unreplaced_foreign_elf_fails_instead_of_booting_broken_fixture",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_config_diagnostics_retain_exit_codes_not_output",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_crash_nomatch_timeout_and_wrong_output_fail_closed",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_exit_codes_are_bounded_and_preserve_signal_forms",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_missing_identity_and_false_negative_control_fail_closed",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_regex_cases_match_existing_startup_patterns_and_host_tools",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_total_deadline_prevents_further_adb_calls",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_unverified_device_and_excess_history_are_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "BusyboxPreflightTests.test_valid_runtime_records_only_bounded_identity_and_statuses",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_abi_failure_stops_before_adb_deadline",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_adb_timeout_and_missing_tool_cannot_pass",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_adb_uses_exact_serial_and_bounded_deadline",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_boot_log_is_bounded_and_requires_failure_evidence",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_explicit_disposable_serial_required_before_adb",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_kernel_su_shell_preserves_standalone_semantics_without_fake_su_flag",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_lost_root_reply_does_not_repeat_an_already_effective_request",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_mutation_requires_verified_identity",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_network_cleanup_failure_is_not_suppressed",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_new_boot_identity_completes_reboot",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_no_read_or_success_is_allowed_after_root_operation_deadline",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_old_boot_completed_flag_does_not_count_as_reboot",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_physical_permissive_and_wrong_abi_refused_before_root",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_pinned_kernel_userspace_late_load_requires_active_kernel_and_real_ksu_domain",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_previous_boot_failures_do_not_poison_reboot",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_production_root_refusal_cannot_be_overridden_by_transport_or_uid_zero",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_ready_timeout_is_not_accepted",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_reboot_non_timeout_command_errors_fail_before_boot_observation",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_reboot_reactivates_late_load_only_after_android_boot",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_reboot_requires_a_valid_old_identity_before_issuing_the_command",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_reboot_timeout_cannot_pass_unchanged_missing_or_incomplete_boot",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_reboot_timeout_never_swallows_root_selinux_or_kernelsu_failure",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_reboot_timeout_requires_new_boot_and_all_postconditions_without_replay",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_root_global_deadline_covers_first_request_and_permanent_disconnect",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_root_reconnect_timeout_or_root_request_failure_stays_failed",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_root_transport_failure_retries_only_after_nonroot_observation",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_root_waits_for_restarted_adbd_and_checks_real_uid",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_service_stop_failure_is_recorded_and_never_replayed",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_stop_check_does_not_mask_live_interface_or_missing_pidof",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_stop_observation_has_a_deadline_and_keeps_failures",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_stop_observation_waits_for_kernel_exit_without_replaying_stop",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_transport_words_do_not_hide_unknown_or_authorization_errors",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_unknown_missing_timeout_and_abnormal_root_errors_are_not_retried",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_unknown_reconnect_or_identity_errors_do_not_become_root_success",
+        "status": "passed"
+      },
+      {
+        "name": "DeviceTests.test_userspace_late_load_rejects_missing_kernel_interface_before_activation",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_export_path_size_and_receipt_must_match_the_actual_file",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_export_required_sections_and_completion_marker_are_mandatory",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_fswatch_must_have_confirmed_live_pid",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_fswatch_pid_must_fit_runtime_range",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_incomplete_or_unproven_connectivity_status_is_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_installed_contracts_and_export_evidence_without_forced_network_probe",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_machine_errors_wrong_schema_and_extra_stdout_are_rejected",
+        "status": "passed"
+      },
+      {
+        "name": "InstalledControlsTests.test_supervisor_start_timeout_is_failure_and_stops_further_checks",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_abnormal_core_control_fails_even_when_cli_would_return_one",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_busy_or_permission_errors_cannot_count_as_validator_rejection",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_cleanup_exception_retains_primary_failure_and_discards_private_details",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_cleanup_failure_cannot_erase_primary_failure_or_count_as_pass",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_cli_crashes_and_nonstandard_failures_are_not_rejection",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_failed_positive_save_retains_private_bounded_evidence_without_retry",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_failed_validation_must_not_change_active_config",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_path_permission_failure_cannot_count_as_invalid_json_rejection",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_unavailable_positive_core_control_never_reaches_malformed_payload",
+        "status": "passed"
+      },
+      {
+        "name": "InvalidConfigTests.test_valid_same_path_control_precedes_malformed_rejection",
+        "status": "passed"
+      },
+      {
+        "name": "ReadinessTests.test_all_independent_readiness_facts_are_required",
+        "status": "passed"
+      },
+      {
+        "name": "ReadinessTests.test_malformed_machine_envelopes_are_not_ready",
+        "status": "passed"
+      },
+      {
+        "name": "ReadinessTests.test_offline_config_has_no_remote_resolver_proxy_or_rule_download",
+        "status": "passed"
+      },
+      {
+        "name": "ReadinessTests.test_stale_owned_network_is_detected_in_both_families",
+        "status": "passed"
+      },
+      {
+        "name": "ReportTests.test_fault_is_recorded_and_propagated",
+        "status": "passed"
+      },
+      {
+        "name": "ReportTests.test_only_all_executed_passes_make_success",
+        "status": "passed"
+      },
+      {
+        "name": "ReportTests.test_unexecuted_cases_are_failures_not_green_skips",
+        "status": "passed"
+      },
+      {
+        "name": "TunControlTests.test_failed_device_commands_reach_proof_without_raising",
+        "status": "passed"
+      },
+      {
+        "name": "UpgradeFailureContextTests.test_cleanup_failure_does_not_hide_failed_candidate_save",
+        "status": "passed"
+      },
+      {
+        "name": "UpgradeFailureContextTests.test_command_failure_reports_only_operation_and_bounded_exit_code",
+        "status": "passed"
+      },
+      {
+        "name": "UpgradeFailureContextTests.test_success_returns_the_original_result",
+        "status": "passed"
+      }
+    ],
+    "log": {
+      "path": "/workspace/scratch/9b5df97c03c7/android-harness-final-unittests.log",
+      "sha256": "7454899ec8418330b81848dbfce56a88eefc23cb63729b528194cdf1ba717805",
+      "summary": "Ran 82 tests in 0.157s\nOK"
+    },
+    "prior_base_check": {
+      "base_commit": "81a60108477d31ca6131f930f955580ad4fa8ba1",
+      "tests": 81,
+      "passed": 81,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "reported_seconds": 0.171,
+      "log_note": "Final rerun replaced the prior log; the retained log and hashes describe the fixed source."
+    }
+  },
+  "review": {
+    "blocking_findings": [],
+    "unresolved_findings": [],
+    "installed_control_checks": [
+      "Supervisor start must return success before checking machine endpoints.",
+      "Machine responses must be one bounded schema-1 success envelope with the expected command; duplicate keys, wrong schemas and extra stdout are rejected.",
+      "Connectivity fields are typed, bounded and allowlisted; online status requires recorded HTTP 204, a checked time and latency.",
+      "Support export uses the approved download path, a 512 KiB size bound, regular/non-symlink file observation, matching device and pulled artifact sizes, required sections and completion marker.",
+      "Evidence is written on both pass and failure, and unknown private connectivity fields are discarded."
+    ],
+    "reboot_checks": [
+      "A valid previous boot identity is required before issuing exactly one reboot command.",
+      "Exit 124 is classified as timeout, not success; only exit 0 or 124 can proceed to independent boot observation.",
+      "Success requires changed boot identity, boot completion, verified root, SELinux Enforcing and requested KernelSU reactivation.",
+      "Failure remains failure for unchanged/missing/incomplete boot, non-timeout command errors, root/SELinux/KernelSU errors, without replaying the reboot.",
+      "Stored reboot receipts contain bounded classifications rather than raw command output or boot identities."
+    ],
+    "resolved_findings": [
+      {
+        "id": "harness-pid-upper-bound",
+        "severity": "low",
+        "file": "scripts/android-device-simulation.py",
+        "function": "installed_controls",
+        "observation": "The original ten-digit regex accepted impossible PIDs such as 9999999999. Shared fswatch/watchdog runtime PID validation caps values at 2147483647.",
+        "correction": "Require the parsed PID to be at most 2147483647 after the existing positive decimal-string shape check.",
+        "regression": "InstalledControlsTests.test_fswatch_pid_must_fit_runtime_range",
+        "rejected_values": [
+          "2147483648",
+          "9999999999"
+        ],
+        "accepted_boundary": "2147483647",
+        "regression_behavior": "Impossible PIDs fail at service_status before pulling any artifact; the maximum permitted PID completes the mocked installed-controls check."
+      }
+    ]
+  },
+  "scope_limits": {
+    "device_operations_are_mocked": true,
+    "synthetic_fixtures_only": true,
+    "fswatch_liveness_source": "service.status response; this suite did not inspect a real process",
+    "not_executed": [
+      "Android hardware",
+      "Android emulator/AVD",
+      "actual adb command",
+      "Android root or SELinux checks",
+      "actual KernelSU activation",
+      "device reboot",
+      "active network/proxy probes",
+      "device deployment or module installation",
+      "--check-core built sing-box validation"
+    ],
+    "phase_output_note": "Lifecycle phase names printed by ReportTests describe synthetic report fixtures and are not evidence that those device phases ran.",
+    "claim": "Host unit contracts pass for the exact file hashes recorded here. Real Android behavior remains outside this verification."
+  },
+  "changes_made_by_this_check": [
+    "scripts/android-device-simulation.py",
+    "scripts/test-android-device-simulation.py",
+    "docs/validation/rewrite-2026-11-06/android-harness-final-integration.json"
+  ],
+  "publication": "none; parent coordinates publication"
+}

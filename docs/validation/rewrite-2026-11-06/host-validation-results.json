@@ -1,0 +1,399 @@
+{
+  "schema": 1,
+  "scope": "scripts/test-host.sh with its default host-fixture selection",
+  "counting_method": "Distinct runner check labels, including config-json; latest result per label; repeated attempts are not counted twice. Each check may contain multiple test cases.",
+  "distinct_manifest_checks": 108,
+  "same_check_labels_in_both_runs": true,
+  "manifest_label_set_sha256": "d591330ccba88e4dba58cf6f0beaf5ab4661c7b952cc76275bcbed078881a70c",
+  "baseline": {
+    "revision": "aefcbfbab80fe14008e4467eb0292251f7ce8f89",
+    "production_source_unchanged": true,
+    "original_fixture_results": {
+      "passed": 107,
+      "failed": 1,
+      "failed_labels": [
+        "test-network-access-upgrade.py"
+      ]
+    },
+    "preexisting_fixture_defect": {
+      "label": "test-network-access-upgrade.py",
+      "original_internal_cases_passed": 1,
+      "original_internal_cases_failed": 2,
+      "failure": "Generated fixture shell ends with an unmatched fi because its extraction boundary is stale.",
+      "upstream_fixture_fix": "027e91f19330404d5a52120c1ed171f203d90175",
+      "corrected_common_fixture_against_unchanged_baseline": {
+        "passed": 3,
+        "failed": 0
+      },
+      "adaptation": "Imported the corrected test module and changed only ROOT to the immutable baseline; all assertions and production installer bytes remained unchanged.",
+      "failed_case_names": [
+        "test_older_release_without_recovery_does_not_create_fake_records",
+        "test_upgrade_retains_original_record_and_private_permissions"
+      ],
+      "corrected_fixture_source_sha256": "559e51fa04315a50dc4582d9620c11cabffc3bab8067fc90a018343d0b82766e",
+      "exact_corrected_fixture_invocation": "python3 - <<'PYTHON' > /workspace/scratch/9b5df97c03c7/baseline-migration-corrected-fixture.log 2>&1\nimport importlib.util, unittest\nfrom pathlib import Path\npath=Path('/workspace/scratch/9b5df97c03c7/magicnet-android/scripts/test-network-access-upgrade.py')\nspec=importlib.util.spec_from_file_location('baseline_migration_common_fixture',path)\nmodule=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nmodule.ROOT=Path('/workspace/scratch/9b5df97c03c7/baselines/magicnet-android')\nprint('Corrected upstream fixture against unchanged aefcbfb production installer; original fixture failed with unexpected fi.', flush=True)\nresult=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(module))\nraise SystemExit(not result.wasSuccessful())\nPYTHON"
+    },
+    "manifest_checks_covered_after_explicit_fixture_correction": 108
+  },
+  "candidate": {
+    "source_base_commit_at_completion": "d58dbdc5ed8a43bc1fee5050187b529a0f7136b7",
+    "kamfw_revision": "ea8758bf7f9c831931a99dfaa454356c81ed191a",
+    "validated_uncommitted_test_adaptation": {
+      "path": "scripts/test-connectivity-watchdog.sh",
+      "sha256": "644d462c4c94293efbe5ee1e63934ef7b5b4e67df4caaad8ad68c9a9a2ed546f"
+    },
+    "passed": 108,
+    "failed": 0
+  },
+  "execution": {
+    "resumed_after_failures": true,
+    "resume_method": "Continued the unchanged host manifest from its first unresolved check; successful earlier checks are included once. Complete attempt logs are retained.",
+    "environment_prerequisites_resolved": [
+      "Initialized exact sing-box and recursive client gitlinks in both checkouts.",
+      "Provided the matching OpenJDK 21.0.13 compiler and Java 8 API symbols; --release 8 was retained."
+    ],
+    "candidate_regression_fixed": "Restored literal path-suffix fswatch exclusions and included the new atomic staging files, preventing generated outputs from scheduling another apply.",
+    "candidate_shape_test_updated": "Connectivity fixture observes the owned loop child sleeping for 60 seconds instead of asserting a particular generated quote spelling.",
+    "initial_failures": [
+      {
+        "revision": "baseline",
+        "check": "test-android-probe.py",
+        "kind": "environment",
+        "reason": "javac executable missing",
+        "latest_result": "PASS"
+      },
+      {
+        "revision": "baseline",
+        "check": "test-release-integrity.sh",
+        "kind": "environment",
+        "reason": "sing-box and nested clients not initialized at their recorded gitlinks",
+        "latest_result": "PASS"
+      },
+      {
+        "revision": "baseline",
+        "check": "test-network-policy-bridge.py",
+        "kind": "environment",
+        "reason": "Java compiler module lacked Java 8 API symbols for --release 8",
+        "latest_result": "PASS"
+      },
+      {
+        "revision": "baseline",
+        "check": "test-network-access-upgrade.py",
+        "kind": "preexisting_fixture_defect",
+        "reason": "stale extraction delimiter generated an unmatched fi",
+        "latest_original_result": "FAIL",
+        "corrected_common_fixture_result": "PASS: 3 cases"
+      },
+      {
+        "revision": "candidate",
+        "check": "test-supervisor-start-policy.sh",
+        "kind": "implementation_regression",
+        "reason": "find -name could not match literal path-suffix exclusions; new atomic stages also needed exclusions",
+        "latest_result": "PASS"
+      },
+      {
+        "revision": "candidate",
+        "check": "test-connectivity-watchdog.sh",
+        "kind": "internal_shape_assertion",
+        "reason": "test required a specific sleep quote spelling rather than observing the actual 60-second sleeper",
+        "latest_result": "PASS"
+      }
+    ]
+  },
+  "exclusions": [
+    "Prepared routing and DNS asset checks requiring --with-routing-assets.",
+    "Privileged Linux network-namespace route-deletion gate conditional on GITHUB_ACTIONS=true.",
+    "Physical Android traffic, carrier/hotspot behavior, live eBPF attachment and end-to-end proxy throughput."
+  ],
+  "attempt_logs": {
+    "baseline": {
+      "file": "host-baseline.log",
+      "sha256": "c484a20dc124312b60e55e32e3873bf0a36b71e5ee39d5915a56c5b5599c20e8"
+    },
+    "candidate": {
+      "file": "host-candidate.log",
+      "sha256": "59ab83e556de92f66a957d2c0ad55d4e78816c5a2e0a409ba8b43aac0f0d9678"
+    },
+    "baseline_corrected_fixture": {
+      "file": "baseline-migration-corrected-fixture.log",
+      "sha256": "5a94db026b94f221d999a159fbd0395709a336b401257c7bdb0a97224c41a386"
+    }
+  },
+  "latest_check_results": {
+    "config-json": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "singbox-subscription-protocol-smoke.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-action-menu.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-action-routing.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-ad-routing.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-acceptance-contract.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-adb.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-avd-storage.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-network-benchmark.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-network-soak.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-probe.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-tun-proof.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-android-utf8.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-anthropic-routing.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-api-endpoint.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-app-routing-policy.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-block-apply-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-block-conf-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-bundled-rules.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-ci-submodules.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-clash-subscriptions.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-config-empty-recovery.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-config-lock-budget.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-config-lock-ownership.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-config-lock-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-config-permissions.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-config-repository-migration.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-config-template-pin.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-connectivity-watchdog.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-dataplane-policy-pins.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-dns-capture-fast-path.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-dns-leak-guard-timeout.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-dns-output-order.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-dns-profile-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-ebpf-transparent-mode.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-fake-magisk-curl.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-fake-magisk-kernel.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-feedback-snapshot.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-fswatch-lifecycle.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-hook-utils.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-hotspot-routing.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-hotspot-watchdog-lifecycle.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-install-config-refresh.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-install-config-template.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-kamfw-i18n.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-kernel-route-lifecycle.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-lib-dir-override-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-magicnet-i18n.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-maintained-routing.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-mcp-phase-config.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-module-entrypoints.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-network-access-upgrade.py": {"baseline_original_fixture": "FAIL", "candidate": "PASS"},
+    "test-network-check.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-network-policy-bridge.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-pid-validation.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-policy-architecture.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-process-cgroup-detach.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-release-cache.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-release-integrity.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-release-workflow.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-repository-hygiene.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-route-apply-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-routing-entrypoints.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-routing-modern.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-routing-optimizer.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-rule-hash-retry.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-runtime-fingerprint-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-runtime-temp-dirs.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-service-selectors.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-dataplane-preflight.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-graceful-stop.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-ownership.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-pid-discovery.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-readiness.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-route-apply-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-runtime-memory.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-singbox-tristate-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-start-stop-rollback.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-startup-diagnostics.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-startup-network-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-submodule-updates.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-activation-order.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-baseline-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-core-path.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-fetch-policy.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-input-source-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-lifecycle.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-network.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-signal-safety.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-stop-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-transaction-atomicity.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-transaction-journal-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-update-lock-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-subscription-usage.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-supervisor-orphan-prefilter.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-supervisor-pid-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-supervisor-start-policy.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-supervisor-zombie.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-tailscale-login.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-tailscale-route-order.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-transparent-mode-config-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-transparent-recovery.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-tun-interface-safety.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-website-probe.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-webui-build-cache.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-webui-lockfile-sync.sh": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test-xtables-registration.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"},
+    "test_config_routing.py": {"baseline_original_fixture": "PASS", "candidate": "PASS"}
+  },
+  "final_integration": {
+    "revision": "81a60108477d31ca6131f930f955580ad4fa8ba1",
+    "kamfw_revision": "a7788737b938a9ed930645befe2526b626999a22",
+    "scope": "Targeted shell integration after upstream separated MagicNet controller.lock from kamfw lifecycle.lock. The earlier full 108 results remain attached to d58dbdc, not this later commit.",
+    "full_host_suite_rerun": false,
+    "targeted_manifest_checks": 3,
+    "passed": 3,
+    "failed": 0,
+    "tests": [
+      {
+        "label": "test-fswatch-lifecycle.sh",
+        "result": "PASS",
+        "exit_code": 0,
+        "command": "PATH=/workspace/scratch/9b5df97c03c7/host-tools/bin:/workspace/scratch/d050d6bac77d/host-tools/usr/bin:$PATH bash scripts/test-fswatch-lifecycle.sh",
+        "source_sha256": "a28321bac71f8c6fa2efb5bbb391e6b670418d64ef4e3c4929963fbe0a6fc5c7",
+        "log_sha256": "b9c6ddf57f27c77221abbfd1e72cd5bb702e58a8156cd7afef386d2bfdfb1cea",
+        "observed_output": "Fswatch lifecycle passed: bash\nFswatch lifecycle passed: sh\nFswatch lifecycle passed: mksh\nFswatch lifecycle passed: busybox\n.Real kamfw fswatch passed: bash / util-linux\nReal kamfw fswatch passed: bash / busybox\nReal kamfw fswatch passed: sh / util-linux\nReal kamfw fswatch passed: sh / busybox\nReal kamfw fswatch passed: /workspace/scratch/d050d6bac77d/host-tools/usr/bin/mksh / util-linux\nReal kamfw fswatch passed: /workspace/scratch/d050d6bac77d/host-tools/usr/bin/mksh / busybox\nReal kamfw fswatch passed: /workspace/scratch/d050d6bac77d/host-tools/usr/bin/busybox / util-linux\nReal kamfw fswatch passed: /workspace/scratch/d050d6bac77d/host-tools/usr/bin/busybox / busybox\n..\n----------------------------------------------------------------------\nRan 3 tests in 23.827s\n\nOK"
+      },
+      {
+        "label": "test-connectivity-watchdog.sh",
+        "result": "PASS",
+        "exit_code": 0,
+        "command": "PATH=/workspace/scratch/9b5df97c03c7/host-tools/bin:/workspace/scratch/d050d6bac77d/host-tools/usr/bin:$PATH bash scripts/test-connectivity-watchdog.sh",
+        "source_sha256": "644d462c4c94293efbe5ee1e63934ef7b5b4e67df4caaad8ad68c9a9a2ed546f",
+        "log_sha256": "8fa2bc2ddde13f6953eb4d618c442f4ed1844bb96835a882cbef2a4464590d7c",
+        "observed_output": "connectivity watchdog lifecycle test passed"
+      },
+      {
+        "label": "test-supervisor-start-policy.sh",
+        "result": "PASS",
+        "exit_code": 0,
+        "command": "PATH=/workspace/scratch/9b5df97c03c7/host-tools/bin:/workspace/scratch/d050d6bac77d/host-tools/usr/bin:$PATH bash scripts/test-supervisor-start-policy.sh",
+        "source_sha256": "f40a4fa16095a5edcbe57a855449d029c4bf841bc1013c2cf0a06d7eed38625e",
+        "log_sha256": "c7747da711c83c56301050af01b7481f9e8c39c2d0ae561efa814298f33b141d",
+        "observed_output": "supervisor start policy test passed"
+      }
+    ],
+    "retained_behavioral_fixture": {
+      "path": "scripts/test-connectivity-watchdog.sh",
+      "sha256": "644d462c4c94293efbe5ee1e63934ef7b5b4e67df4caaad8ad68c9a9a2ed546f",
+      "policy": "Retained real owned-child sleep-60 observation instead of upstream generated-script quote assertions."
+    },
+    "real_nested_lock_review": {
+      "fixture": "scripts/test-fswatch-kamfw.py",
+      "source_sha256": "ca0fbbeccbf9e497da77b374e06d345208777b1a815940ce50955300111c8cda",
+      "unit_test_methods": 3,
+      "controlled_controller_race_shells": [
+        "bash",
+        "sh",
+        "mksh",
+        "busybox sh"
+      ],
+      "real_start_stop_concurrent_start_matrix": {
+        "shells": [
+          "bash",
+          "sh",
+          "mksh",
+          "busybox sh"
+        ],
+        "backends": [
+          "util-linux flock",
+          "BusyBox flock/start-stop-daemon"
+        ],
+        "combinations_passed": 8
+      },
+      "additional_real_scenarios": {
+        "held_inner_lifecycle_lock_serializes_start_and_stop": {
+          "shell": "sh",
+          "backends": 2,
+          "passed": 2
+        },
+        "held_controller_lock_fails_without_launch_within_9_to_14_seconds": {
+          "shell": "sh",
+          "backend": "util-linux",
+          "passed": 1
+        }
+      },
+      "behavior_verified": [
+        "Idempotent start retains a single owned worker.",
+        "Four concurrent starts publish only one worker.",
+        "Start and stop serialize across distinct real controller/lifecycle lock files.",
+        "Both lock files are released after startup and neither is inherited by the detached watcher.",
+        "Stop removes PID ownership and leaves no matching worker.",
+        "Controller lock contention has a bounded failure and succeeds after release."
+      ],
+      "host_adaptations": [
+        "The platform CLI proc-reader boundary is replaced with a Python reader of real host /proc.",
+        "The small bootstrap fixture provides logging/translation stubs and loads the shipped fswatch.sh.",
+        "The BusyBox adapter maps Android /system/bin/sh to host /bin/sh; real BusyBox flock and start-stop-daemon still execute."
+      ],
+      "limits": [
+        "This fixture does not exercise the complete production .kamfwrc bootstrap or native Android proc-reader executable.",
+        "Permission-denied/indeterminate proc discovery is not a scenario in the new nested-lock fixture.",
+        "These are host process/lock tests, not Android device or network-dataplane acceptance."
+      ]
+    },
+    "nested_lock_origin": {
+      "classification": "pre_existing_default_state_path_deadlock",
+      "baseline_revision": "aefcbfbab80fe14008e4467eb0292251f7ce8f89",
+      "baseline_kamfw_revision": "bb0dc7582ee2c27e31e49d2d3b714b97528defef",
+      "basis": "Static evidence from both immutable original source revisions; no claim of an additional original-version runtime reproduction.",
+      "conditions": "Default kamfw fswatch state directory, a stopped watcher that reaches framework start, and a functioning BusyBox or util-linux flock backend.",
+      "evidence": [
+        {
+          "repository": "MagicNet",
+          "path": "src/MagicNet/lib/magicnet/supervisors.sh",
+          "blob": "fe344f3be5728e35457b5aa0560d8f4ba5ff945d",
+          "functions": [
+            "magicnet_fswatch_locked",
+            "magicnet_fswatch_locked_worker",
+            "magicnet_fswatch_start_unlocked"
+          ],
+          "observations": [
+            "Line455 acquires ${KAM_HOME:-$MODDIR}/.state/fswatch/$(magicnet_fswatch_name).lifecycle.lock with magicnet_metadata_guard.",
+            "The worker closes its inherited fd8, then line476 invokes fswatch start while the guard-owning parent waits."
+          ]
+        },
+        {
+          "repository": "MagicNet",
+          "path": "src/MagicNet/lib/magicnet/primitives.sh",
+          "blob": "eb5ceb6609fd4de2603aef7a02a97e9e2c6901c9",
+          "function": "magicnet_metadata_guard",
+          "observations": [
+            "The parent opens fd8 on the guard file and locks that descriptor.",
+            "It runs the requested worker before returning, so the parent-held lock outlives the nested start call."
+          ]
+        },
+        {
+          "repository": "kamfw",
+          "path": "fswatch.sh",
+          "blob": "9e107329d8000dab9dcf1444f024c103ffa2b23b",
+          "functions": [
+            "fswatch_lifecycle_lock_file",
+            "fswatch_run_locked",
+            "fswatch_start"
+          ],
+          "observations": [
+            "Lines225-229 derive ${pid_file%.pid}.lifecycle.lock, the same default .state/fswatch/<name>.lifecycle.lock.",
+            "Lines678-679 unconditionally send fswatch_start through fswatch_run_locked.",
+            "Line281 invokes blocking BusyBox flock on that path; line297 invokes blocking util-linux flock -o on that path."
+          ]
+        }
+      ],
+      "causal_chain": "The inner flock opens the same inode through a new open-file description while the outer parent still holds its lock and waits for the inner start. Closing only the worker inherited fd8 cannot release the parent lock. Both sides therefore wait in the original composition.",
+      "fix_at_final_revision": "MagicNet now holds <name>.controller.lock; kamfw retains its independent <name>.lifecycle.lock.",
+      "previous_test_gap": "The prior MagicNet lifecycle race fixture substituted fswatch start, while generic kamfw tests ran the framework layer alone; neither exercised the two real lock acquisitions together."
+    },
+    "not_rerun": [
+      {
+        "scope": "Long DNS rule-order and kernel route-ownership matrices and the rest of the full host suite",
+        "reason": "Unaffected shell algorithms were already covered by the full d58dbdc run; the final shell source delta is confined to the fswatch controller lock path/comments."
+      },
+      {
+        "scope": "Supervisor PID/orphan/zombie gates",
+        "reason": "Inspection shows their relevant checks use unchanged direct ownership/stop helpers or stub magicnet_fswatch_stop; the changed real lock composition is exercised by the new lifecycle integration fixture."
+      }
+    ],
+    "submodule_delta_since_full_run": {
+      "from": "ea8758bf7f9c831931a99dfaa454356c81ed191a",
+      "to": "a7788737b938a9ed930645befe2526b626999a22",
+      "changed_paths": [
+        "tests/test_contracts.py"
+      ],
+      "production_source_changed": false
+    },
+    "other_upstream_changes": "Rust/native Android diagnostics changes in 81a601 are outside this targeted shell validation section."
+  }
+}

@@ -247,7 +247,8 @@ def installed_controls(device, out: Path, evidence: dict) -> None:
         service = machine('service status', 'service.status', 15)
         supervisors = service.get('supervisors')
         fswatch = supervisors.get('fswatch') if isinstance(supervisors, dict) else None
-        require(isinstance(fswatch, str) and re.fullmatch(r'[1-9][0-9]{0,9}', fswatch) is not None,
+        require(isinstance(fswatch, str) and re.fullmatch(r'[1-9][0-9]{0,9}', fswatch) is not None
+                and int(fswatch) <= 2147483647,
                 'installed fswatch supervisor is not confirmed running')
         evidence['fswatch_running'] = True
 

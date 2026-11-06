@@ -1,0 +1,312 @@
+{
+  "schema": 1,
+  "baseline": "/workspace/scratch/9b5df97c03c7/baselines/magicnet-android",
+  "candidate": "/workspace/scratch/9b5df97c03c7/magicnet-android",
+  "cases_per_shell": 269,
+  "shells": {
+    "bash": {
+      "cases_passed": 269,
+      "compact_json_cases_passed": 32,
+      "selector_128_nodes": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 1127.355689,
+            "peak_rss_kib": 5376
+          },
+          {
+            "ms": 1182.832695,
+            "peak_rss_kib": 5376
+          },
+          {
+            "ms": 1231.484319,
+            "peak_rss_kib": 5376
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 23.335163,
+            "peak_rss_kib": 4992
+          },
+          {
+            "ms": 28.906536,
+            "peak_rss_kib": 4992
+          },
+          {
+            "ms": 30.738,
+            "peak_rss_kib": 4992
+          }
+        ],
+        "baseline_median_ms": 1182.832695,
+        "candidate_median_ms": 28.906536,
+        "baseline_median_peak_rss_kib": 5376,
+        "candidate_median_peak_rss_kib": 4992
+      },
+      "block_128_domains": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 1389.702969,
+            "peak_rss_kib": 5376
+          },
+          {
+            "ms": 1474.15919,
+            "peak_rss_kib": 5376
+          },
+          {
+            "ms": 1399.495934,
+            "peak_rss_kib": 5376
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 46.742681,
+            "peak_rss_kib": 4992
+          },
+          {
+            "ms": 50.582939,
+            "peak_rss_kib": 4992
+          },
+          {
+            "ms": 45.154395,
+            "peak_rss_kib": 4992
+          }
+        ],
+        "baseline_median_ms": 1399.495934,
+        "candidate_median_ms": 46.742681,
+        "baseline_median_peak_rss_kib": 5376,
+        "candidate_median_peak_rss_kib": 4992
+      }
+    },
+    "sh": {
+      "cases_passed": 269,
+      "compact_json_cases_passed": 32,
+      "selector_128_nodes": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 821.714794,
+            "peak_rss_kib": 1536
+          },
+          {
+            "ms": 882.271638,
+            "peak_rss_kib": 1536
+          },
+          {
+            "ms": 852.841974,
+            "peak_rss_kib": 1536
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 14.548645,
+            "peak_rss_kib": 1408
+          },
+          {
+            "ms": 14.430322,
+            "peak_rss_kib": 1408
+          },
+          {
+            "ms": 14.783808,
+            "peak_rss_kib": 1408
+          }
+        ],
+        "baseline_median_ms": 852.841974,
+        "candidate_median_ms": 14.548645,
+        "baseline_median_peak_rss_kib": 1536,
+        "candidate_median_peak_rss_kib": 1408
+      },
+      "block_128_domains": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 1076.304756,
+            "peak_rss_kib": 1536
+          },
+          {
+            "ms": 1043.333236,
+            "peak_rss_kib": 1536
+          },
+          {
+            "ms": 1024.483546,
+            "peak_rss_kib": 1536
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 36.316069,
+            "peak_rss_kib": 2176
+          },
+          {
+            "ms": 34.584732,
+            "peak_rss_kib": 2176
+          },
+          {
+            "ms": 37.009623,
+            "peak_rss_kib": 2176
+          }
+        ],
+        "baseline_median_ms": 1043.333236,
+        "candidate_median_ms": 36.316069,
+        "baseline_median_peak_rss_kib": 1536,
+        "candidate_median_peak_rss_kib": 2176
+      }
+    },
+    "mksh": {
+      "cases_passed": 269,
+      "compact_json_cases_passed": 32,
+      "selector_128_nodes": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 2980.377116,
+            "peak_rss_kib": 2716
+          },
+          {
+            "ms": 2867.875264,
+            "peak_rss_kib": 2712
+          },
+          {
+            "ms": 3052.747243,
+            "peak_rss_kib": 2704
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 62.511723,
+            "peak_rss_kib": 2580
+          },
+          {
+            "ms": 49.498915,
+            "peak_rss_kib": 2580
+          },
+          {
+            "ms": 46.440051,
+            "peak_rss_kib": 2580
+          }
+        ],
+        "baseline_median_ms": 2980.377116,
+        "candidate_median_ms": 49.498915,
+        "baseline_median_peak_rss_kib": 2712,
+        "candidate_median_peak_rss_kib": 2580
+      },
+      "block_128_domains": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 2709.858286,
+            "peak_rss_kib": 2720
+          },
+          {
+            "ms": 2538.856069,
+            "peak_rss_kib": 2724
+          },
+          {
+            "ms": 2510.655771,
+            "peak_rss_kib": 2704
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 96.925982,
+            "peak_rss_kib": 2580
+          },
+          {
+            "ms": 105.838896,
+            "peak_rss_kib": 2584
+          },
+          {
+            "ms": 99.244573,
+            "peak_rss_kib": 2580
+          }
+        ],
+        "baseline_median_ms": 2538.856069,
+        "candidate_median_ms": 99.244573,
+        "baseline_median_peak_rss_kib": 2720,
+        "candidate_median_peak_rss_kib": 2580
+      }
+    },
+    "busybox-ash": {
+      "cases_passed": 269,
+      "compact_json_cases_passed": 32,
+      "selector_128_nodes": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 567.868333,
+            "peak_rss_kib": 2416
+          },
+          {
+            "ms": 550.237751,
+            "peak_rss_kib": 2416
+          },
+          {
+            "ms": 530.520562,
+            "peak_rss_kib": 2416
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 26.192977,
+            "peak_rss_kib": 2436
+          },
+          {
+            "ms": 26.518206,
+            "peak_rss_kib": 2436
+          },
+          {
+            "ms": 30.315938,
+            "peak_rss_kib": 2436
+          }
+        ],
+        "baseline_median_ms": 550.237751,
+        "candidate_median_ms": 26.518206,
+        "baseline_median_peak_rss_kib": 2416,
+        "candidate_median_peak_rss_kib": 2436
+      },
+      "block_128_domains": {
+        "iterations": 5,
+        "runs": 3,
+        "baseline": [
+          {
+            "ms": 692.698889,
+            "peak_rss_kib": 2416
+          },
+          {
+            "ms": 650.496026,
+            "peak_rss_kib": 2416
+          },
+          {
+            "ms": 683.684798,
+            "peak_rss_kib": 2416
+          }
+        ],
+        "candidate": [
+          {
+            "ms": 34.481966,
+            "peak_rss_kib": 2288
+          },
+          {
+            "ms": 40.469107,
+            "peak_rss_kib": 2288
+          },
+          {
+            "ms": 37.423756,
+            "peak_rss_kib": 2288
+          }
+        ],
+        "baseline_median_ms": 683.684798,
+        "candidate_median_ms": 37.423756,
+        "baseline_median_peak_rss_kib": 2416,
+        "candidate_median_peak_rss_kib": 2288
+      }
+    }
+  }
+}
