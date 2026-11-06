@@ -1,3 +1,6 @@
+#[cfg(test)]
+use crate::process::parse_rss_kib;
+use crate::process::{process_state, singbox_rss_kib};
 use std::fs;
 use std::path::Path;
 
@@ -147,45 +150,27 @@ fn machine_value(app: &App, command: &[&str]) -> Result<Value, MachineError> {
                     message: "application network-policy action failed",
                 })
         }
-        [command] if *command == "capabilities" => Ok(capabilities_value()),
-        [command, action] if *command == "service" && *action == "status" => {
-            Ok(service_status_value(app))
-        }
-        [command, action] if *command == "core" && *action == "status" => {
-            Ok(core_status_value(app))
-        }
-        [command, action] if *command == "supervisor" && *action == "status" => {
-            Ok(supervisor_status_value(app))
-        }
-        [command, action] if *command == "transparent" && *action == "status" => {
-            Ok(transparent_status_value(app))
-        }
-        [command, action] if *command == "dns" && *action == "status" => Ok(dns_status_value(app)),
-        [command, action] if *command == "network" && *action == "status" => {
-            Ok(network_status_value(app))
-        }
+        ["capabilities"] => Ok(capabilities_value()),
+        ["service", "status"] => Ok(service_status_value(app)),
+        ["core", "status"] => Ok(core_status_value(app)),
+        ["supervisor", "status"] => Ok(supervisor_status_value(app)),
+        ["transparent", "status"] => Ok(transparent_status_value(app)),
+        ["dns", "status"] => Ok(dns_status_value(app)),
+        ["network", "status"] => Ok(network_status_value(app)),
         ["network", "preflight"] => Ok(envelope(
             "network.preflight",
             crate::network::DnsCaptureCapabilities::observe(app).as_value(),
         )),
-        [command, action] if *command == "sub" && *action == "status" => sub_status_value(app),
-        [command, action] if *command == "sub" && *action == "inspect" => {
-            subscription::inspect(app)
-        }
-        [command, action] if *command == "wifi" && *action == "inspect" => {
-            crate::wifi::inspect_machine(app)
-                .map(|data| envelope("wifi.inspect", data))
-                .map_err(|_| MachineError {
-                    code: "machine.wifi_observation_failed",
-                    message: "unable to inspect Wi-Fi configuration and live network",
-                })
-        }
-        [command, action] if *command == "wifi" && *action == "status" => {
-            Ok(wifi_status_value(app))
-        }
-        [command, action] if *command == "hotspot" && *action == "status" => {
-            Ok(hotspot_status_value(app))
-        }
+        ["sub", "status"] => sub_status_value(app),
+        ["sub", "inspect"] => subscription::inspect(app),
+        ["wifi", "inspect"] => crate::wifi::inspect_machine(app)
+            .map(|data| envelope("wifi.inspect", data))
+            .map_err(|_| MachineError {
+                code: "machine.wifi_observation_failed",
+                message: "unable to inspect Wi-Fi configuration and live network",
+            }),
+        ["wifi", "status"] => Ok(wifi_status_value(app)),
+        ["hotspot", "status"] => Ok(hotspot_status_value(app)),
         _ => Err(MachineError {
             code: "machine.unsupported_command",
             message: "unsupported machine command",
@@ -724,21 +709,6 @@ fn directory_regular_file_count(path: &Path) -> usize {
         .unwrap_or(0)
 }
 
-fn process_state(summary: &str) -> &'static str {
-    if summary == "stopped" {
-        "stopped"
-    } else if summary == "unknown" {
-        "unknown"
-    } else if summary
-        .split(',')
-        .all(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        "running"
-    } else {
-        "unknown"
-    }
-}
-
 fn selected_core(app: &App) -> String {
     config_value(
         app,
@@ -807,23 +777,6 @@ fn config_value(
     } else {
         "invalid".to_string()
     }
-}
-
-fn singbox_rss_kib(summary: &str) -> Option<u64> {
-    summary.split(',').try_fold(0u64, |total, pid| {
-        let pid = pid.parse::<u32>().ok()?;
-        let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-        total.checked_add(parse_rss_kib(&status)?)
-    })
-}
-
-fn parse_rss_kib(status: &str) -> Option<u64> {
-    let mut fields = status
-        .lines()
-        .find_map(|line| line.strip_prefix("VmRSS:"))?
-        .split_whitespace();
-    let value = fields.next()?.parse().ok()?;
-    (fields.next()? == "kB").then_some(value)
 }
 
 #[cfg(test)]

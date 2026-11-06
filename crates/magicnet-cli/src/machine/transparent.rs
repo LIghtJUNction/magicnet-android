@@ -51,6 +51,15 @@ impl Status {
 }
 
 pub(super) fn snapshot(app: &App, process_state: &str, configured_mode: &str) -> Status {
+    snapshot_with_probe(app, process_state, configured_mode, tun_interface_ready)
+}
+
+fn snapshot_with_probe(
+    app: &App,
+    process_state: &str,
+    configured_mode: &str,
+    tun_probe: impl FnOnce(Option<&Value>) -> bool,
+) -> Status {
     let config = read_regular_text(&app.moddir.join(CONFIG), 4 * 1024 * 1024)
         .and_then(|text| serde_json::from_str::<Value>(&text).ok());
     let inbound = config
@@ -86,7 +95,7 @@ pub(super) fn snapshot(app: &App, process_state: &str, configured_mode: &str) ->
 
     if effective_type != "ebpf" {
         let ready = match process_state {
-            "running" => Some(tun_interface_ready(inbound)),
+            "running" => Some(tun_probe(inbound)),
             "stopped" => Some(false),
             _ => None,
         };
@@ -334,7 +343,10 @@ mod tests {
         )
         .unwrap();
         for state in ["running", "stopped", "unknown"] {
-            let status = super::snapshot(&app, state, "tun");
+            let status = super::snapshot_with_probe(&app, state, "tun", |inbound| {
+                assert_eq!(inbound.unwrap()["interface_name"], "lo");
+                true
+            });
             assert_eq!(status.local_ready, None, "{state}");
             assert_eq!(status.shared_ready, None, "{state}");
             assert_eq!(
@@ -345,6 +357,20 @@ mod tests {
                     _ => None,
                 }
             );
+        }
+    }
+
+    #[test]
+    fn tun_readiness_requires_interface_evidence_only_for_a_running_core() {
+        let fixture = crate::test_support::temp_app();
+        let app = crate::App::for_test(fixture.moddir.clone());
+        let status = super::snapshot_with_probe(&app, "running", "tun", |_| false);
+        assert_eq!(status.dataplane_ready, Some(false));
+        for (state, ready) in [("stopped", Some(false)), ("unknown", None)] {
+            let status = super::snapshot_with_probe(&app, state, "tun", |_| {
+                panic!("must not probe the interface without a running core")
+            });
+            assert_eq!(status.dataplane_ready, ready);
         }
     }
 

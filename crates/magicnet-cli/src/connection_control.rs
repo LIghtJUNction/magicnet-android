@@ -297,43 +297,12 @@ fn format_close_summary(targets: usize, closed: usize, failed: usize) -> String 
 }
 
 fn curl_text(app: &App, path: &str) -> Result<String, String> {
-    let output = crate::trusted_curl(app)
-        .args([
-            "-fsS",
-            "--max-time",
-            "4",
-            "--max-filesize",
-            "8388608",
-            &format!("{}{}", app.api, path),
-        ])
-        .output()
-        .map_err(|err| format!("run curl: {err}"))?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+    let bytes = crate::webui_api::api_response(app, "GET", path, "", 4, 8 * 1024 * 1024)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn curl_delete(app: &App, path: &str) -> Result<(), String> {
-    let output = crate::trusted_curl(app)
-        .args([
-            "-fsS",
-            "-X",
-            "DELETE",
-            "--max-time",
-            "4",
-            "--max-filesize",
-            "1048576",
-            &format!("{}{}", app.api, path),
-        ])
-        .output()
-        .map_err(|err| format!("run curl: {err}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+    crate::webui_api::api_response(app, "DELETE", path, "", 4, 1024 * 1024).map(|_| ())
 }
 
 fn value_text(value: &Value) -> String {

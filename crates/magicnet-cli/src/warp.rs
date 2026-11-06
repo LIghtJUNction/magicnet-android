@@ -139,31 +139,10 @@ fn test_warp(app: &App) -> Result<(), String> {
 
 fn select_final(app: &App, outbound: &str) -> Result<(), String> {
     let payload = format!(r#"{{"name":"{outbound}"}}"#);
-    let endpoint = format!("{}/proxies/final", app.api);
-    let output = crate::trusted_curl(app)
-        .args([
-            "-fsS",
-            "--max-time",
-            "5",
-            "--max-filesize",
-            "1048576",
-            "-X",
-            "PUT",
-            "-H",
-            "Content-Type: application/json",
-            "--data",
-            &payload,
-            &endpoint,
-        ])
-        .output()
-        .map_err(|err| format!("run curl: {err}"))?;
-    if output.status.success() {
-        println!("[info] final selector set to {outbound}");
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("select final outbound failed: {}", stderr.trim()))
-    }
+    crate::webui_api::api_response(app, "PUT", "/proxies/final", &payload, 5, 1024 * 1024)
+        .map_err(|error| format!("select final outbound failed: {error}"))?;
+    println!("[info] final selector set to {outbound}");
+    Ok(())
 }
 
 fn warp_enabled(app: &App) -> bool {

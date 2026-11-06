@@ -1340,20 +1340,17 @@ pub(crate) fn clear_node_cache(app: &App) {
 }
 
 pub(crate) fn read_kv(path: PathBuf) -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    let text = fs::read_to_string(path).unwrap_or_default();
-    for line in text.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let value = value
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'')
-            .to_string();
-        map.insert(key.trim().to_string(), value);
-    }
-    map
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(key, value)| {
+            (
+                key.trim().to_owned(),
+                value.trim().trim_matches('"').trim_matches('\'').to_owned(),
+            )
+        })
+        .collect()
 }
 
 /// Whether a value is inert when written unquoted into a `.`-sourced
@@ -1375,10 +1372,17 @@ pub(crate) fn write_kv(
     relative: &Path,
     values: &[(&str, String)],
 ) -> Result<(), String> {
-    let text = values
+    let capacity = values
         .iter()
-        .map(|(key, value)| format!("{key}={value}\n"))
-        .collect::<String>();
+        .map(|(key, value)| key.len() + value.len() + 2)
+        .sum();
+    let mut text = String::with_capacity(capacity);
+    for (key, value) in values {
+        text.push_str(key);
+        text.push('=');
+        text.push_str(value);
+        text.push('\n');
+    }
     write_text_file(app, relative, &text)
 }
 

@@ -1698,77 +1698,67 @@ pub(crate) fn subscription_refresh_counts(path: &Path) -> (usize, usize) {
 }
 
 pub(crate) fn redact(text: &str) -> String {
+    let mut parts = text.split_whitespace();
+    let mut output = String::with_capacity(text.len());
     let mut redact_next = 0;
-    let parts = text.split_whitespace().collect::<Vec<_>>();
-    parts
-        .iter()
-        .enumerate()
-        .map(|(index, part)| {
-            let part = *part;
-            let lower = part.to_ascii_lowercase();
-            if redact_next > 0 {
-                redact_next -= 1;
-                return "<redacted-value>".to_string();
-            }
-            if lower.contains("http://") || lower.contains("https://") {
-                "<redacted-url>".to_string()
-            } else if contains_sensitive_assignment(&lower) {
-                "<redacted-sensitive>".to_string()
-            } else if let Some(has_inline_value) = sensitive_key(part) {
-                let is_safe_url_status = !has_inline_value
-                    && part
-                        .trim_matches(|ch: char| matches!(ch, '(' | ')' | ',' | ';' | '"' | '\''))
-                        .eq_ignore_ascii_case("url")
-                    && parts
-                        .get(index + 1)
-                        .is_some_and(|next| next.eq_ignore_ascii_case("is"))
-                    && parts.get(index + 2).is_some_and(|next| {
-                        next.trim_matches(|ch: char| {
-                            matches!(ch, '(' | ')' | ',' | ';' | '"' | '\'')
-                        })
-                        .eq_ignore_ascii_case("configured")
-                    });
-                if is_safe_url_status {
-                    part.to_string()
-                } else {
-                    let url_precedes_copula = !has_inline_value
-                        && part
-                            .trim_matches(|ch: char| {
-                                matches!(ch, '(' | ')' | ',' | ';' | '"' | '\'')
-                            })
-                            .eq_ignore_ascii_case("url")
-                        && parts.get(index + 1).is_some_and(|next| {
-                            matches!(next.to_ascii_lowercase().as_str(), "is" | "was")
-                        });
-                    redact_next = if has_inline_value {
-                        0
-                    } else if url_precedes_copula {
-                        2
-                    } else {
-                        1
-                    };
-                    "<redacted-sensitive>".to_string()
-                }
-            } else if looks_like_email(part) {
-                "<redacted-email>".to_string()
-            } else if looks_like_mac(part) {
-                "<redacted-mac>".to_string()
-            } else if looks_like_stable_interface_id(part) {
-                "<redacted-interface-id>".to_string()
-            } else if contains_non_loopback_ip(part) {
-                "<redacted-ip>".to_string()
-            } else if looks_like_hostname(part) {
-                "<redacted-host>".to_string()
-            } else if part.starts_with('/') || part.contains("=/") {
-                "<redacted-path>".to_string()
-            } else if looks_like_opaque_token(part) {
-                "<redacted-token>".to_string()
+    while let Some(part) = parts.next() {
+        let lower = part.to_ascii_lowercase();
+        let replacement = if redact_next > 0 {
+            redact_next -= 1;
+            "<redacted-value>"
+        } else if lower.contains("http://") || lower.contains("https://") {
+            "<redacted-url>"
+        } else if contains_sensitive_assignment(&lower) {
+            "<redacted-sensitive>"
+        } else if let Some(inline) = sensitive_key(&lower) {
+            let is_url = !inline && trim_key(&lower) == "url";
+            let mut ahead = parts.clone();
+            let next = ahead.next().unwrap_or("");
+            let after = ahead.next().unwrap_or("");
+            if is_url
+                && next.eq_ignore_ascii_case("is")
+                && trim_key(after).eq_ignore_ascii_case("configured")
+            {
+                part
             } else {
-                part.to_string()
+                let copula =
+                    is_url && (next.eq_ignore_ascii_case("is") || next.eq_ignore_ascii_case("was"));
+                redact_next = if inline {
+                    0
+                } else if copula {
+                    2
+                } else {
+                    1
+                };
+                "<redacted-sensitive>"
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        } else if looks_like_email(part) {
+            "<redacted-email>"
+        } else if looks_like_mac(part) {
+            "<redacted-mac>"
+        } else if looks_like_stable_interface_id(part) {
+            "<redacted-interface-id>"
+        } else if contains_non_loopback_ip(part) {
+            "<redacted-ip>"
+        } else if looks_like_hostname(part) {
+            "<redacted-host>"
+        } else if part.starts_with('/') || part.contains("=/") {
+            "<redacted-path>"
+        } else if looks_like_opaque_token(part) {
+            "<redacted-token>"
+        } else {
+            part
+        };
+        if !output.is_empty() {
+            output.push(' ');
+        }
+        output.push_str(replacement);
+    }
+    output
+}
+
+fn trim_key(value: &str) -> &str {
+    value.trim_matches(['(', ')', ',', ';', '"', '\''])
 }
 
 fn contains_sensitive_assignment(value: &str) -> bool {

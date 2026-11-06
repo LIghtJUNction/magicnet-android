@@ -15,9 +15,7 @@ pub(crate) fn ecapture_cmd(app: &App, args: &[String]) -> Result<(), String> {
         "status" => status(app),
         "version" => version(app),
         "help" => help(app, args.get(1).map(String::as_str)),
-        "tls" => text_capture(app, "tls", &args[1..]),
-        "gotls" => text_capture(app, "gotls", &args[1..]),
-        "nspr" => text_capture(app, "nspr", &args[1..]),
+        command @ ("tls" | "gotls" | "nspr") => text_capture(app, command, &args[1..]),
         "pcap" => pcap_capture(app, &args[1..]),
         _ => Err(usage()),
     }
@@ -46,7 +44,7 @@ fn status(app: &App) -> Result<(), String> {
         }
     );
     if is_executable(&bin) {
-        print_command_output(run_with_timeout(
+        print_command_output(&run_with_timeout(
             &bin,
             &["--version"],
             Duration::from_secs(2),
@@ -58,7 +56,7 @@ fn status(app: &App) -> Result<(), String> {
 fn version(app: &App) -> Result<(), String> {
     let bin = require_bin(app)?;
     let outcome = run_with_timeout(&bin, &["--version"], Duration::from_secs(3));
-    print_command_output(outcome);
+    print_command_output(&outcome);
     Ok(())
 }
 
@@ -71,7 +69,7 @@ fn help(app: &App, command: Option<&str>) -> Result<(), String> {
         Some("pcap") => run_with_timeout(&bin, &["tls", "--help"], Duration::from_secs(3)),
         _ => run_with_timeout(&bin, &["--help"], Duration::from_secs(3)),
     };
-    print_command_output(outcome);
+    print_command_output(&outcome);
     Ok(())
 }
 
@@ -100,7 +98,7 @@ fn text_capture(app: &App, command: &str, args: &[String]) -> Result<(), String>
     ];
     println!("running ecapture {command} for {seconds}s (pid={pid}, uid={uid})");
     let outcome = run_with_timeout(&bin, &capture_args, Duration::from_secs(seconds));
-    print_command_output(outcome.clone());
+    print_command_output(&outcome);
     println!("log={}", log.display());
     println!("events={}", events.display());
     finish_capture(outcome)
@@ -134,7 +132,7 @@ fn pcap_capture(app: &App, args: &[String]) -> Result<(), String> {
         parsed.seconds, ifname
     );
     let outcome = run_with_timeout(&bin, &refs, Duration::from_secs(parsed.seconds));
-    print_command_output(outcome.clone());
+    print_command_output(&outcome);
     println!("pcap={}", pcap.display());
     println!("log={}", log.display());
     finish_capture(outcome)
@@ -274,6 +272,73 @@ fn numeric_or_all(value: Option<&str>, name: &str) -> Result<String, String> {
         .map_err(|_| format!("invalid {name}: {value}"))
 }
 
+fn bin_path(app: &App) -> PathBuf {
+    app.moddir.join("bin/ecapture")
+}
+
+fn require_bin(app: &App) -> Result<PathBuf, String> {
+    let bin = bin_path(app);
+    if is_executable(&bin) {
+        Ok(bin)
+    } else {
+        Err(format!(
+            "ecapture binary is missing or not executable: {}",
+            bin.display()
+        ))
+    }
+}
+
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
+        && fs::metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+struct RunOutcome {
+    stdout: String,
+    stderr: String,
+    code: Option<i32>,
+    timed_out: bool,
+}
+
+fn run_with_timeout(program: &Path, args: &[&str], timeout: Duration) -> RunOutcome {
+    let mut command = Command::new(program);
+    command.args(args);
+    match crate::run_bounded_command(command, timeout, MAX_CAPTURE_OUTPUT_BYTES) {
+        Ok(output) => RunOutcome {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            code: output.status.and_then(|status| status.code()),
+            timed_out: output.timed_out,
+        },
+        Err(err) => RunOutcome {
+            stdout: String::new(),
+            stderr: format!("failed to run {}: {err}", program.display()),
+            code: Some(127),
+            timed_out: false,
+        },
+    }
+}
+
+fn print_command_output(outcome: &RunOutcome) {
+    let stdout = outcome.stdout.trim();
+    let stderr = outcome.stderr.trim();
+    if !stdout.is_empty() {
+        println!("{stdout}");
+    }
+    if !stderr.is_empty() {
+        eprintln!("{stderr}");
+    }
+}
+
+fn usage() -> String {
+    "Usage: cli ecapture {status|version|help [tls|gotls|nspr|pcap]|tls [seconds] [pid|all] [uid|all]|gotls [seconds] [pid|all] [uid|all]|nspr [seconds] [pid|all] [uid|all]|pcap [seconds] <ifname> [pcap-filter ...]}".to_string()
+}
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,71 +423,3 @@ mod tests {
         assert!(parse_pcap_args(&args).is_err());
     }
 }
-
-fn bin_path(app: &App) -> PathBuf {
-    app.moddir.join("bin/ecapture")
-}
-
-fn require_bin(app: &App) -> Result<PathBuf, String> {
-    let bin = bin_path(app);
-    if is_executable(&bin) {
-        Ok(bin)
-    } else {
-        Err(format!(
-            "ecapture binary is missing or not executable: {}",
-            bin.display()
-        ))
-    }
-}
-
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
-        && fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-}
-
-#[derive(Clone)]
-struct RunOutcome {
-    stdout: String,
-    stderr: String,
-    code: Option<i32>,
-    timed_out: bool,
-}
-
-fn run_with_timeout(program: &Path, args: &[&str], timeout: Duration) -> RunOutcome {
-    let mut command = Command::new(program);
-    command.args(args);
-    match crate::run_bounded_command(command, timeout, MAX_CAPTURE_OUTPUT_BYTES) {
-        Ok(output) => RunOutcome {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            code: output.status.and_then(|status| status.code()),
-            timed_out: output.timed_out,
-        },
-        Err(err) => RunOutcome {
-            stdout: String::new(),
-            stderr: format!("failed to run {}: {err}", program.display()),
-            code: Some(127),
-            timed_out: false,
-        },
-    }
-}
-
-fn print_command_output(outcome: RunOutcome) {
-    let stdout = outcome.stdout.trim();
-    let stderr = outcome.stderr.trim();
-    if !stdout.is_empty() {
-        println!("{stdout}");
-    }
-    if !stderr.is_empty() {
-        eprintln!("{stderr}");
-    }
-}
-
-fn usage() -> String {
-    "Usage: cli ecapture {status|version|help [tls|gotls|nspr|pcap]|tls [seconds] [pid|all] [uid|all]|gotls [seconds] [pid|all] [uid|all]|nspr [seconds] [pid|all] [uid|all]|pcap [seconds] <ifname> [pcap-filter ...]}".to_string()
-}
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;

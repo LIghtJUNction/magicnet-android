@@ -119,22 +119,10 @@ fn test_all_targets(app: &App, args: &[String]) -> Vec<String> {
 }
 
 fn read_proxy_selector(app: &App) -> Result<Value, String> {
-    let output = crate::trusted_curl(app)
-        .args([
-            "-fsS",
-            "--max-time",
-            "5",
-            "--max-filesize",
-            "8388608",
-            &format!("{}/proxies/proxy", app.api),
-        ])
-        .output()
-        .map_err(|err| format!("run curl: {err}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("read proxy selector failed: {}", stderr.trim()));
-    }
-    serde_json::from_slice(&output.stdout).map_err(|err| format!("parse proxy selector: {err}"))
+    let bytes =
+        crate::webui_api::api_response(app, "GET", "/proxies/proxy", "", 5, 8 * 1024 * 1024)
+            .map_err(|error| format!("read proxy selector failed: {error}"))?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("parse proxy selector: {error}"))
 }
 
 fn resolve_node_names(app: &App, limit: usize, cache_enabled: bool, cache: &Path) -> Vec<String> {

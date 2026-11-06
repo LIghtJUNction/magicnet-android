@@ -1,5 +1,4 @@
 use serde_json::Value;
-use std::time::Duration;
 
 pub(crate) fn node_delay(app: &crate::App, name: &str) -> Result<i64, String> {
     let clean = name.trim();
@@ -7,13 +6,10 @@ pub(crate) fn node_delay(app: &crate::App, name: &str) -> Result<i64, String> {
         return Err("node name is empty".to_string());
     }
     let endpoint = delay_endpoint(&app.api, clean);
-    let body = crate::webui_api::local_curl_output(
-        app,
-        &["-fsS", "--max-time", "7", &endpoint],
-        Duration::from_secs(8),
-        1024 * 1024,
-        None,
-    )?;
+    let path = endpoint
+        .strip_prefix(&app.api)
+        .expect("local delay endpoint");
+    let body = crate::webui_api::api_response(app, "GET", path, "", 7, 1024 * 1024)?;
     parse_delay(&String::from_utf8_lossy(&body))
 }
 
@@ -25,15 +21,18 @@ fn delay_endpoint(api: &str, name: &str) -> String {
 }
 
 pub(crate) fn encode_path_segment(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
-            }
-            _ => format!("%{byte:02X}"),
-        })
-        .collect()
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut output = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            output.push(byte as char);
+        } else {
+            output.push('%');
+            output.push(HEX[(byte >> 4) as usize] as char);
+            output.push(HEX[(byte & 15) as usize] as char);
+        }
+    }
+    output
 }
 
 fn parse_delay(text: &str) -> Result<i64, String> {

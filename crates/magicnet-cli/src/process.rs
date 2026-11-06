@@ -278,6 +278,39 @@ pub(crate) fn singbox_pid_summary(app: &App) -> String {
     }
 }
 
+pub(crate) fn process_state(summary: &str) -> &'static str {
+    match summary {
+        "stopped" => "stopped",
+        "unknown" => "unknown",
+        value
+            if value
+                .split(',')
+                .all(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit())) =>
+        {
+            "running"
+        }
+        _ => "unknown",
+    }
+}
+
+pub(crate) fn parse_rss_kib(status: &str) -> Option<u64> {
+    let mut fields = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))?
+        .split_whitespace();
+    let value = fields.next()?.parse().ok()?;
+    (fields.next()? == "kB").then_some(value)
+}
+
+pub(crate) fn singbox_rss_kib(summary: &str) -> Option<u64> {
+    // The summary contains only module-owned PIDs; never measure another VPN.
+    summary.split(',').try_fold(0u64, |total, pid| {
+        let pid = pid.parse::<u32>().ok()?;
+        let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+        total.checked_add(parse_rss_kib(&status)?)
+    })
+}
+
 pub(crate) fn owned_singbox_pids(app: &App) -> Result<Vec<String>, String> {
     let candidates = named_process_candidates("sing-box")?;
     if candidates.is_empty() {

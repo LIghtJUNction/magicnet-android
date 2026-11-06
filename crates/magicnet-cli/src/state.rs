@@ -1,3 +1,4 @@
+use crate::process::process_state;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
@@ -276,21 +277,6 @@ fn service_record(app: &App) -> StateRecord {
             "startup_error",
             regular_nonempty(&app.moddir.join(STARTUP_ERROR)),
         )
-}
-
-fn process_state(summary: &str) -> &'static str {
-    if summary == "stopped" {
-        "stopped"
-    } else if summary == "unknown" {
-        "unknown"
-    } else if summary
-        .split(',')
-        .all(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        "running"
-    } else {
-        "unknown"
-    }
 }
 
 fn transparent_record(app: &App, config: Option<&Value>) -> StateRecord {

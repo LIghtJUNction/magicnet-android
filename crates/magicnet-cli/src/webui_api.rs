@@ -413,72 +413,67 @@ fn traffic_sample(app: &App) -> Result<serde_json::Value, String> {
 }
 
 fn curl(app: &App, path: &str) -> Result<(), String> {
-    if !crate::process::trusted_curl_path(app).is_file() {
-        return print_local_response(app, "GET", path, "");
-    }
-    run_curl(
-        app,
-        &["-fsS", "--max-time", "4", &format!("{}{}", app.api, path)],
-    )
+    print_api_response(app, "GET", path, "")
 }
 
 fn curl_delete(app: &App, path: &str) -> Result<(), String> {
-    if !crate::process::trusted_curl_path(app).is_file() {
-        return print_local_response(app, "DELETE", path, "");
-    }
-    run_curl(
-        app,
-        &[
-            "-fsS",
-            "-X",
-            "DELETE",
-            "--max-time",
-            "4",
-            &format!("{}{}", app.api, path),
-        ],
-    )
+    print_api_response(app, "DELETE", path, "")
 }
 
 fn curl_put_json(app: &App, path: &str, payload: &str) -> Result<(), String> {
-    if !crate::process::trusted_curl_path(app).is_file() {
-        return print_local_response(app, "PUT", path, payload);
-    }
-    run_curl(
-        app,
-        &[
-            "-fsS",
-            "-X",
-            "PUT",
-            "-H",
-            "Content-Type: application/json",
-            "--data",
-            payload,
-            "--max-time",
-            "5",
-            &format!("{}{}", app.api, path),
-        ],
-    )
+    print_api_response(app, "PUT", path, payload)
 }
 
 fn curl_patch_json(app: &App, path: &str, payload: &str) -> Result<(), String> {
+    print_api_response(app, "PATCH", path, payload)
+}
+
+fn print_api_response(app: &App, method: &str, path: &str, payload: &str) -> Result<(), String> {
+    let timeout = if matches!(method, "PUT" | "PATCH") {
+        5
+    } else {
+        4
+    };
+    let body = api_response(app, method, path, payload, timeout, 8 * 1024 * 1024)?;
+    print!("{}", String::from_utf8_lossy(&body));
+    Ok(())
+}
+
+/// One transport boundary for selectors, node tests and connection control.
+/// Never retry a write after sending it; both backends enforce a total deadline.
+pub(crate) fn api_response(
+    app: &App,
+    method: &str,
+    path: &str,
+    payload: &str,
+    seconds: u64,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
     if !crate::process::trusted_curl_path(app).is_file() {
-        return print_local_response(app, "PATCH", path, payload);
-    }
-    run_curl(
-        app,
-        &[
-            "-fsS",
-            "-X",
-            "PATCH",
-            "-H",
-            "Content-Type: application/json",
-            "--data",
+        let body = crate::local_http::request_with_timeout(
+            &app.api,
+            method,
+            path,
             payload,
-            "--max-time",
-            "5",
-            &format!("{}{}", app.api, path),
-        ],
-    )
+            Duration::from_secs(seconds),
+        )?;
+        return if body.len() <= limit {
+            Ok(body)
+        } else {
+            Err("local API response exceeds the read limit".into())
+        };
+    }
+    let endpoint = format!("{}{path}", app.api);
+    let timeout = seconds.to_string();
+    let mut args = vec!["-fsS", "--max-time", &timeout];
+    if method != "GET" {
+        args.extend(["-X", method]);
+    }
+    if matches!(method, "PUT" | "PATCH") {
+        args.extend(["-H", "Content-Type: application/json", "--data", payload]);
+    }
+    args.push(&endpoint);
+    local_curl_output(app, &args, Duration::from_secs(seconds + 1), limit, None)
 }
 
 pub(crate) fn clash_mode_cmd(app: &App, args: &[String]) -> Result<(), String> {
@@ -581,17 +576,7 @@ pub(crate) fn curl_put_selection(app: &App, group: &str, payload: &str) -> Resul
 }
 
 pub(crate) fn curl_get_json(app: &App, path: &str) -> Result<serde_json::Value, String> {
-    if !crate::process::trusted_curl_path(app).is_file() {
-        let body = crate::local_http::request(&app.api, "GET", path, "")?;
-        return serde_json::from_slice(&body).map_err(|err| format!("parse API response: {err}"));
-    }
-    let body = local_curl_output(
-        app,
-        &["-fsS", "--max-time", "3", &format!("{}{}", app.api, path)],
-        Duration::from_secs(4),
-        8 * 1024 * 1024,
-        None,
-    )?;
+    let body = api_response(app, "GET", path, "", 3, 8 * 1024 * 1024)?;
     serde_json::from_slice(&body).map_err(|err| format!("parse API response: {err}"))
 }
 
@@ -600,14 +585,6 @@ fn close_connection(app: &App, id: &str) -> Result<(), String> {
         return Err("Usage: cli api close <id>".to_string());
     }
     curl_delete(app, &format!("/connections/{}", encode_path_segment(id)))
-}
-
-fn run_curl(app: &App, args: &[&str]) -> Result<(), String> {
-    // Existing curl deadlines are four/five seconds. Allow one second of
-    // transport shutdown before the independent parent deadline cleans up.
-    let body = local_curl_output(app, args, Duration::from_secs(6), 8 * 1024 * 1024, None)?;
-    print!("{}", String::from_utf8_lossy(&body));
-    Ok(())
 }
 
 pub(crate) fn local_curl_output(
@@ -639,12 +616,6 @@ pub(crate) fn local_curl_output(
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     Ok(output.stdout)
-}
-
-fn print_local_response(app: &App, method: &str, path: &str, payload: &str) -> Result<(), String> {
-    let body = crate::local_http::request(&app.api, method, path, payload)?;
-    print!("{}", String::from_utf8_lossy(&body));
-    Ok(())
 }
 
 #[cfg(test)]

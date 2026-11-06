@@ -187,48 +187,51 @@ fn command_text(program: &str, args: &[&str]) -> String {
 }
 
 fn redact_text(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            let lower = line.to_ascii_lowercase();
-            let secret_header = ["authorization", "x-magicnet-mcp-secret"]
-                .iter()
-                .filter_map(|header| {
-                    lower.match_indices(header).find_map(|(index, _)| {
-                        lower[index + header.len()..]
-                            .trim_start()
-                            .starts_with(':')
-                            .then_some(index)
-                    })
+    let mut output = String::with_capacity(text.len());
+    for (index, line) in text.lines().enumerate() {
+        if index != 0 {
+            output.push('\n');
+        }
+        let lower = line.to_ascii_lowercase();
+        let secret_header = ["authorization", "x-magicnet-mcp-secret"]
+            .iter()
+            .filter_map(|header| {
+                lower.match_indices(header).find_map(|(index, _)| {
+                    lower[index + header.len()..]
+                        .trim_start()
+                        .starts_with(':')
+                        .then_some(index)
                 })
-                .min();
-            let prefix = secret_header.map_or(line, |index| &line[..index]);
-            let mut tokens = prefix
-                .split_whitespace()
-                .map(redact_token)
-                .collect::<Vec<_>>();
-            // Header credentials may span several words; discard the rest of this line.
-            if secret_header.is_some() {
-                tokens.push("<redacted-secret>".to_string());
+            })
+            .min();
+        let prefix = secret_header.map_or(line, |index| &line[..index]);
+        let start = output.len();
+        for token in prefix.split_whitespace() {
+            if output.len() != start {
+                output.push(' ');
             }
-            tokens.join(" ")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn redact_token(token: &str) -> String {
-    let lower = token.to_ascii_lowercase();
-    if lower.contains("http://") || lower.contains("https://") {
-        return "<redacted-url>".to_string();
+            let lower = token.to_ascii_lowercase();
+            output.push_str(if lower.contains("http://") || lower.contains("https://") {
+                "<redacted-url>"
+            } else if ["token=", "secret=", "password=", "passwd="]
+                .iter()
+                .any(|key| lower.contains(key))
+            {
+                "<redacted-secret>"
+            } else {
+                token
+            });
+        }
+        // Header credentials can span multiple tokens. Nothing after the
+        // first sensitive header belongs in a public log response.
+        if secret_header.is_some() {
+            if output.len() != start {
+                output.push(' ');
+            }
+            output.push_str("<redacted-secret>");
+        }
     }
-    if lower.contains("token=")
-        || lower.contains("secret=")
-        || lower.contains("password=")
-        || lower.contains("passwd=")
-    {
-        return "<redacted-secret>".to_string();
-    }
-    token.to_string()
+    output
 }
 
 #[cfg(test)]

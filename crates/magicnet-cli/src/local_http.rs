@@ -14,11 +14,12 @@ enum ResponseMode {
     FirstLine,
 }
 
+#[cfg(test)]
 pub(crate) fn request(api: &str, method: &str, path: &str, body: &str) -> Result<Vec<u8>, String> {
     request_with_timeout(api, method, path, body, Duration::from_secs(3))
 }
 
-fn request_with_timeout(
+pub(crate) fn request_with_timeout(
     api: &str,
     method: &str,
     path: &str,
@@ -69,78 +70,86 @@ fn request_response(
         "{method} {path} HTTP/1.0\r\nHost: {authority}\r\nConnection: close\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
         body.len()
     );
-    let mut outgoing = head.into_bytes();
-    outgoing.extend_from_slice(body.as_bytes());
-    let mut sent = 0;
-    while sent < outgoing.len() {
-        stream
-            .set_write_timeout(Some(remaining(deadline)?))
-            .map_err(|_| "local API timeout failed")?;
-        let count = stream
-            .write(&outgoing[sent..])
-            .map_err(|_| "local API write failed")?;
-        if count == 0 {
-            return Err("local API write failed".into());
+    // Keep the caller's body borrowed; joining it to the request head used to
+    // allocate a second copy of every large configuration write.
+    for mut bytes in [head.as_bytes(), body.as_bytes()] {
+        while !bytes.is_empty() {
+            stream
+                .set_write_timeout(Some(remaining(deadline)?))
+                .map_err(|_| "local API timeout failed")?;
+            let count = stream.write(bytes).map_err(|_| "local API write failed")?;
+            if count == 0 {
+                return Err("local API write failed".into());
+            }
+            bytes = &bytes[count..];
         }
-        sent += count;
     }
-    let mut response = Vec::new();
-    let mut framing = None;
+
+    let mut response = Vec::with_capacity(8192);
+    let mut buffer = [0; 8192];
+    let mut framing: Option<Option<usize>> = None;
     loop {
         stream
             .set_read_timeout(Some(remaining(deadline)?))
             .map_err(|_| "local API timeout failed")?;
-        let mut buffer = [0u8; 8192];
-        let count = stream.read(&mut buffer).map_err(|error| {
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-            ) {
-                "local API deadline exceeded"
-            } else {
-                "local API read failed"
-            }
-        })?;
+        let count = stream
+            .read(&mut buffer)
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+                    "local API deadline exceeded"
+                }
+                _ => "local API read failed",
+            })?;
         if count == 0 {
-            break;
+            let length = framing.ok_or("incomplete local API headers")?;
+            if length.is_some_and(|length| length != response.len()) {
+                return Err("incomplete local API response".into());
+            }
+            return Ok(response);
         }
+        // Only the three bytes adjoining this read can begin a delimiter
+        // missed by the previous scan. Header parsing therefore stays linear.
+        let search_start = response.len().saturating_sub(3);
         response.extend_from_slice(&buffer[..count]);
         if framing.is_none() {
-            if let Some(end) = response.windows(4).position(|w| w == b"\r\n\r\n") {
-                if end + 4 > MAX_HEAD {
+            let Some(end) = response[search_start..]
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|offset| offset + search_start)
+            else {
+                if response.len() > MAX_HEAD {
                     return Err("local API headers too large".into());
                 }
-                framing = Some((end + 4, parse_head(&response[..end])?));
-            } else if response.len() > MAX_HEAD {
+                continue;
+            };
+            if end + 4 > MAX_HEAD {
                 return Err("local API headers too large".into());
             }
+            framing = Some(parse_head(&response[..end])?);
+            // Retain the receive allocation for the body. split_off copied
+            // the full response while both large buffers were still live.
+            let start = end + 4;
+            response.copy_within(start.., 0);
+            response.truncate(response.len() - start);
         }
-        if let Some((start, length)) = framing {
-            let size = response.len() - start;
-            if size > MAX_BODY || length.is_some_and(|length| size > length) {
-                return Err("local API response too large or incorrectly framed".into());
+        let length = framing.expect("parsed response head");
+        if response.len() > MAX_BODY || length.is_some_and(|length| response.len() > length) {
+            return Err("local API response too large or incorrectly framed".into());
+        }
+        if let ResponseMode::FirstLine = mode {
+            let end = response.iter().position(|byte| *byte == b'\n');
+            if end.unwrap_or(response.len()) > MAX_LINE {
+                return Err("local API stream sample too large".into());
             }
-            if let ResponseMode::FirstLine = mode {
-                let line = &response[start..];
-                let end = line.iter().position(|byte| *byte == b'\n');
-                if end.unwrap_or(line.len()) > MAX_LINE {
-                    return Err("local API stream sample too large".into());
-                }
-                if let Some(end) = end {
-                    return Ok(line[..end].to_vec());
-                }
+            if let Some(end) = end {
+                response.truncate(end);
+                return Ok(response);
             }
-            if length == Some(size) {
-                break;
-            }
+        }
+        if length == Some(response.len()) {
+            return Ok(response);
         }
     }
-    let (start, length) = framing.ok_or("incomplete local API headers")?;
-    let body = response.split_off(start);
-    if length.is_some_and(|length| length != body.len()) {
-        return Err("incomplete local API response".into());
-    }
-    Ok(body)
 }
 
 fn remaining(deadline: Instant) -> Result<Duration, String> {

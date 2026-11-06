@@ -101,93 +101,77 @@ fn reconcile_state(app: &App, phase: &str) {
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
-    if let Err(err) = utils::mark_inherited_fds_cloexec() {
-        if args.iter().any(|arg| arg == "--json") {
+    let json = args.iter().any(|arg| arg == "--json");
+    if let Err(error) = utils::mark_inherited_fds_cloexec() {
+        if json {
             println!(
                 "{}",
                 serde_json::json!({
-                    "schema": 1,
-                    "ok": false,
-                    "command": "machine.error",
-                    "error": {
-                        "code": "machine.io",
-                        "message": "unable to isolate inherited file descriptors"
-                    }
+                    "schema": 1, "ok": false, "command": "machine.error",
+                    "error": {"code": "machine.io", "message": "unable to isolate inherited file descriptors"}
                 })
             );
         }
-        eprintln!("[error] isolate inherited file descriptors: {err}");
-        std::process::exit(1);
-    }
-    let internal = match args.first().map(String::as_str) {
-        Some("__proc-cmdline") => Some(utils::proc_cmdline_command(&args[1..])),
-        Some("__proc-comm") => Some(utils::proc_comm_command(&args[1..])),
-        Some("__proc-stat") => Some(utils::proc_stat_command(&args[1..])),
-        Some("__proc-pids") => Some(process::proc_named_pids_command(&args[1..])),
-        Some("__proc-script-pids") => Some(process::proc_script_pids_command(&args[1..])),
-        _ => None,
-    };
-    if let Some(result) = internal {
-        let code = match result {
-            Ok(()) => 0,
-            Err(err) => {
-                eprintln!("[error] {err}");
-                2
-            }
-        };
-        std::process::exit(code);
+        exit_result(
+            Err(format!("isolate inherited file descriptors: {error}")),
+            1,
+        );
     }
 
+    // Once --json appears, only the machine dispatcher can own the request.
+    // Internal helpers must never print raw proc data around a JSON envelope.
+    if !json {
+        if let Some(result) = proc_command(&args) {
+            exit_result(result, 2);
+        }
+    }
     let app = App::from_env();
-    let core_launch = match args.as_slice() {
-        [command] if command == "__singbox-launch" => Some(process::launch_singbox(&app)),
-        [command] if command == "__singbox-launch-worker" => {
-            Some(process::launch_singbox_worker(&app))
+    let result = if json {
+        machine::dispatch(&app, &args).expect("explicit machine request")
+    } else {
+        match args.first().map(String::as_str) {
+            Some("__singbox-launch") if args.len() == 1 => process::launch_singbox(&app),
+            Some("__singbox-launch-worker") if args.len() == 1 => {
+                process::launch_singbox_worker(&app)
+            }
+            Some("__module-update-worker") => {
+                module_update::worker(&app, &args[1..]).map_err(str::to_owned)
+            }
+            Some("__override-materialize") if args.len() == 1 => {
+                let result = overrides::materialize(&app).map_err(str::to_owned);
+                reconcile_state(&app, "override-materialize");
+                result
+            }
+            _ => dispatch(&app, &args),
         }
-        _ => None,
     };
-    if let Some(result) = core_launch {
-        if let Err(err) = result {
-            eprintln!("[error] {err}");
-            std::process::exit(1);
-        }
-        return;
-    }
-    if args
-        .first()
-        .is_some_and(|arg| arg == "__module-update-worker")
-        && !args.iter().any(|arg| arg == "--json")
-    {
-        if let Err(code) = module_update::worker(&app, &args[1..]) {
-            eprintln!("[error] {code}");
-            std::process::exit(1);
-        }
-        return;
-    }
-    if args.as_slice() == ["__override-materialize"] {
-        let result = overrides::materialize(&app);
-        reconcile_state(&app, "override-materialize");
-        if let Err(code) = result {
-            eprintln!("[error] {code}");
-            std::process::exit(1);
-        }
-        return;
-    }
-    // Observations must not become filesystem writers. Publish once after a
-    // control command, including failed commands that may have rolled back.
-    // Explicit state reconciliation and long-lived producers own publication;
-    // machine requests remain read-only and internal proc readers bypass this.
-    let publish_state = commands::needs_state_reconcile(&args);
-    let result = machine::dispatch(&app, &args).unwrap_or_else(|| dispatch(&app, &args));
-    if publish_state {
+    // Failed mutations also publish the observed rollback result. Observations
+    // and detached producers remain read-only or publish at their own boundary.
+    if commands::needs_state_reconcile(&args) {
         reconcile_state(&app, "post-command");
     }
-    let code = match result {
-        Ok(()) => 0,
-        Err(err) => {
-            eprintln!("[error] {err}");
-            1
+    exit_result(result, 1);
+}
+
+fn proc_command(args: &[String]) -> Option<Result<(), String>> {
+    let command = args.first()?.as_str();
+    let args = &args[1..];
+    Some(match command {
+        "__proc-cmdline" => utils::proc_cmdline_command(args),
+        "__proc-comm" => utils::proc_comm_command(args),
+        "__proc-stat" => utils::proc_stat_command(args),
+        "__proc-pids" => process::proc_named_pids_command(args),
+        "__proc-script-pids" => process::proc_script_pids_command(args),
+        _ => return None,
+    })
+}
+
+fn exit_result(result: Result<(), String>, failure_code: i32) -> ! {
+    match result {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("[error] {error}");
+            std::process::exit(failure_code);
         }
-    };
-    std::process::exit(code);
+    }
 }
