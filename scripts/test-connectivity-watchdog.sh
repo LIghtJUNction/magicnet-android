@@ -62,7 +62,8 @@ tracked=$(cat "$pid_file")
 test "$(magicnet_supervisor_orphan_pids watchdog)" = "$tracked"
 magicnet_supervisor_pidfile_matches "$pid_file" "$tracked"
 grep -F "connectivity tick" "${pid_file%.pid}.loop.sh" >/dev/null
-grep -F "sleep '60'" "${pid_file%.pid}.loop.sh" >/dev/null
+grep -Fx "_watch_interval='60'" "${pid_file%.pid}.loop.sh" >/dev/null
+grep -F 'sleep "$_watch_interval"' "${pid_file%.pid}.loop.sh" >/dev/null
 
 # The persistent sleeper must not inherit the launcher lock, and another
 # startup must keep the same healthy process instead of repeatedly replacing it.

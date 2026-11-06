@@ -453,20 +453,23 @@ magicnet_fswatch_prune_names() {
 }
 
 magicnet_fswatch_locked() {
-    magicnet_metadata_guard "${KAM_HOME:-$MODDIR}/.state/fswatch/$(magicnet_fswatch_name).lifecycle.lock" \
+    # Serialize MagicNet's status/recheck/start sequence separately from kamfw.
+    # fswatch start acquires its own lifecycle lock through a new open file
+    # description; holding that same inode here would deadlock the child.
+    magicnet_metadata_guard "${KAM_HOME:-$MODDIR}/.state/fswatch/$(magicnet_fswatch_name).controller.lock" \
         100 magicnet_fswatch_locked_worker "$@"
 }
 
 magicnet_fswatch_locked_worker() (
     # The guard-owning parent waits for this worker. A detached watcher must
-    # never inherit the lifecycle descriptor and keep future starts/stops out.
+    # never inherit the controller descriptor and keep future starts/stops out.
     exec 8>&-
     "$@"
 )
 
 magicnet_fswatch_start_unlocked() {
     # Service and boot-completed can both observe "stopped" before either
-    # launches. Recheck under the lifecycle guard before kamfw's start, which
+    # launches. Recheck under the controller guard before kamfw's start, which
     # deliberately replaces a watcher even when an existing one is healthy.
     if fswatch status "$1" >/dev/null 2>&1; then
         return 0

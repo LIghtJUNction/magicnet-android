@@ -152,6 +152,8 @@ pub(super) fn bundle(app: &App) -> String {
         "connectivity",
         "magicnet-kernel",
         "fswatch",
+        "supervisors",
+        "connectivity-watchdog",
     ] {
         collector.append(&format!("recent logs: {name}"), &log_tail(app, name));
     }

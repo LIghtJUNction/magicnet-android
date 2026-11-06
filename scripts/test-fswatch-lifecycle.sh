@@ -31,7 +31,7 @@ magicnet_json_escape() { printf '%s' "$1"; }
 . "$MODDIR/lib/magicnet/supervisors.sh"
 magicnet_module_disabled() { return 1; }
 magicnet_trim_log_file() { :; }
-guard="$MODDIR/.state/fswatch/magicnet-config.lifecycle.lock"
+guard="$MODDIR/.state/fswatch/magicnet-config.controller.lock"
 pid_file="$MODDIR/.state/fswatch/magicnet-config.pid"
 events="$MODDIR/events"
 exec 7>"$MODDIR/other-descriptor"
@@ -156,3 +156,7 @@ retained'
 SHELL
     printf 'Fswatch lifecycle passed: %s\n' "${shell##*/}"
 done
+
+# The controlled race fixture above deliberately models start publication.
+# Also exercise kamfw's real nested flock and detached watcher implementation.
+python3 "$ROOT/scripts/test-fswatch-kamfw.py"

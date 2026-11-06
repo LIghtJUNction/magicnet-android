@@ -201,6 +201,171 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(value['outbounds'], [{'type': 'direct', 'tag': 'direct'}])
 
 
+class InstalledControlsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.out = Path(self.tmp.name)
+        self.device = Mock()
+        self.evidence = {}
+        self.calls = []
+        self.service = {'supervisors': {'fswatch': '123'}}
+        self.connectivity = {
+            'target': 'https://www.google.com/generate_204', 'path': 'mixed_proxy',
+            'status': 'unknown', 'reason': 'not_checked', 'primary_reason': 'not_checked',
+            'warning': False, 'checked_at': None, 'next_check_at': None,
+            'retry_in_seconds': None, 'consecutive_failures': 0, 'probe_count': 0,
+            'backoff_seconds': 300, 'latency_ms': None, 'http_status': None,
+            'secondary_status': 'not_run', 'direct_status': 'not_run', 'last_action': 'none',
+            'action_status': 'none', 'last_action_at': None, 'last_refresh_at': None,
+        }
+        sections = ('platform and versions', 'system resources', 'subscription lifecycle',
+                    'canonical state', 'connectivity history', 'configuration structure',
+                    'configuration: route', 'configuration: dns', 'service status', 'core resources',
+                    'sing-box version', 'sing-box configuration check', 'routes: ipv4 rules',
+                    'routes: ipv6 rules', 'routes: ipv4 routes', 'routes: ipv6 routes',
+                    'transparent TUN and eBPF observation', 'collection summary')
+        self.report = ('MagicNet canonical support bundle\nschema=1\nformat=diagnostic-text-v1\n'
+                       'privacy=redacted\nexternal_network_probes=not_run\nstate_mutations=none\n'
+                       + ''.join(f'\n[{section}]\nstatus=available\n' for section in sections)
+                       + 'end_of_report=true\n').encode()
+        self.export = {'path': SIM.SUPPORT_EXPORT, 'bytes': len(self.report)}
+        self.overrides = {}
+        self.device.kshell.side_effect = self.kshell
+        self.device.run.side_effect = self.pull
+
+    def kshell(self, command, *, timeout, check=True):
+        self.calls.append(command)
+        self.assertGreater(timeout, 0)
+        self.assertLessEqual(timeout, 60)
+        if command in self.overrides:
+            return self.overrides[command]
+        if command == SIM.MOD + '/cli supervisor start all':
+            return cp()
+        for suffix, name, data in (
+            ('service status', 'service.status', self.service),
+            ('connectivity status', 'connectivity.status', self.connectivity),
+            ('support export', 'support.export', self.export),
+        ):
+            if command == SIM.MOD + '/cli --json ' + suffix:
+                return cp(json.dumps({'schema': 1, 'ok': True, 'command': name, 'data': data}))
+        if command == (f'test -f {SIM.SUPPORT_EXPORT} && test ! -L {SIM.SUPPORT_EXPORT} && '
+                       f'{SIM.BB} wc -c < {SIM.SUPPORT_EXPORT}'):
+            return cp(str(len(self.report)) + '\n')
+        self.fail('unexpected device command')
+
+    def pull(self, operation, source, destination, *, timeout):
+        self.assertEqual(operation, 'pull')
+        self.assertEqual(source, SIM.SUPPORT_EXPORT)
+        self.assertLessEqual(timeout, 15)
+        Path(destination).write_bytes(self.report)
+        return cp()
+
+    def check(self):
+        SIM.installed_controls(self.device, self.out, self.evidence)
+
+    def test_installed_contracts_and_export_evidence_without_forced_network_probe(self):
+        self.connectivity['unrecognized_private_field'] = 'private-canary'
+        self.check()
+        self.assertEqual(self.evidence['status'], 'passed')
+        self.assertTrue(self.evidence['fswatch_running'])
+        self.assertFalse(self.evidence['active_connectivity_probe_requested'])
+        self.assertEqual(self.evidence['support_export']['bytes'], len(self.report))
+        self.assertEqual((self.out / 'diagnostic-export.txt').read_bytes(), self.report)
+        self.assertEqual(json.loads((self.out / 'installed-controls.json').read_text()), self.evidence)
+        self.assertNotIn('private-canary', json.dumps(self.evidence))
+        self.assertEqual(self.calls[:4], [SIM.MOD + '/cli ' + args for args in (
+            'supervisor start all', '--json service status', '--json connectivity status',
+            '--json support export')])
+        self.assertEqual(len(self.calls), 5)
+        self.assertEqual(len(SIM.PHASES), 12)
+
+    def test_supervisor_start_timeout_is_failure_and_stops_further_checks(self):
+        self.overrides[SIM.MOD + '/cli supervisor start all'] = cp('private-canary', 124, 'private-canary')
+        with self.assertRaisesRegex(RuntimeError, 'supervisor_start failed \\(exit 124\\)'):
+            self.check()
+        self.assertEqual(self.evidence['status'], 'failed')
+        self.assertEqual(self.evidence['stage'], 'supervisor_start')
+        self.assertEqual(len(self.calls), 1)
+        self.device.run.assert_not_called()
+        self.assertNotIn('private-canary', (self.out / 'installed-controls.json').read_text())
+
+    def test_fswatch_must_have_confirmed_live_pid(self):
+        for value in ('stopped', 'unknown', '0', '-1', '123 extra', 123, None):
+            with self.subTest(value=value):
+                self.service['supervisors']['fswatch'] = value
+                with self.assertRaisesRegex(RuntimeError, 'not confirmed running'):
+                    self.check()
+                self.assertEqual(self.evidence['stage'], 'service_status')
+        self.device.run.assert_not_called()
+
+    def test_machine_errors_wrong_schema_and_extra_stdout_are_rejected(self):
+        for args, name, data in (
+            ('service status', 'service.status', self.service),
+            ('connectivity status', 'connectivity.status', self.connectivity),
+            ('support export', 'support.export', self.export),
+        ):
+            valid = {'schema': 1, 'ok': True, 'command': name, 'data': data}
+            for value in (json.dumps(valid | {'schema': True}), json.dumps(valid | {'ok': False}),
+                          json.dumps(valid | {'command': 'machine.error'}),
+                          'banner\n' + json.dumps(valid), json.dumps(valid) + '\n{}',
+                          json.dumps(valid).replace('"ok": true', '"ok": false, "ok": true')):
+                with self.subTest(command=name, value=value):
+                    command = SIM.MOD + '/cli --json ' + args
+                    self.overrides[command] = cp(value)
+                    with self.assertRaisesRegex(RuntimeError, 'machine envelope'):
+                        self.check()
+                    self.overrides.clear()
+        self.device.run.assert_not_called()
+
+    def test_incomplete_or_unproven_connectivity_status_is_rejected(self):
+        original = self.connectivity.copy()
+        for changes in ({'status': 'online'}, {'backoff_seconds': 0}, {'warning': 1},
+                        {'reason': 'private raw text'}, {'probe_count': False}, {'path': 'direct'}):
+            with self.subTest(changes=changes):
+                self.connectivity = original | changes
+                with self.assertRaises(RuntimeError):
+                    self.check()
+        self.connectivity = original.copy()
+        del self.connectivity['checked_at']
+        with self.assertRaisesRegex(RuntimeError, 'missing connectivity checked_at'):
+            self.check()
+        self.device.run.assert_not_called()
+
+    def test_export_path_size_and_receipt_must_match_the_actual_file(self):
+        original = self.export.copy()
+        for changes in ({'path': '/data/local/tmp/report.txt'}, {'bytes': 0}, {'bytes': True},
+                        {'bytes': SIM.SUPPORT_LIMIT + 1}, {'bytes': len(self.report) + 1}):
+            with self.subTest(changes=changes):
+                self.export = original | changes
+                with self.assertRaises(RuntimeError):
+                    self.check()
+        self.device.run.assert_not_called()
+        self.export = original
+
+        def wrong_pull(*args, **kwargs):
+            self.pull(*args, **kwargs)
+            (self.out / 'diagnostic-export.txt').write_text('truncated')
+
+        self.device.run.side_effect = wrong_pull
+        with self.assertRaisesRegex(RuntimeError, 'artifact size'):
+            self.check()
+
+    def test_export_required_sections_and_completion_marker_are_mandatory(self):
+        original = self.report
+        for content in (original.replace(b'[connectivity history]', b'[other history]'),
+                        original.replace(b'[routes: ipv4 routes]', b'[missing routes]'),
+                        original.replace(b'privacy=redacted', b'privacy=unknown'),
+                        original.replace(b'end_of_report=true\n', b'')):
+            with self.subTest(content=content):
+                self.report = content
+                self.export['bytes'] = len(content)
+                with self.assertRaisesRegex(RuntimeError, 'diagnostic export'):
+                    self.check()
+                self.assertEqual(self.evidence['status'], 'failed')
+                self.assertEqual(self.evidence['stage'], 'export_content')
+
+
 class DeviceTests(unittest.TestCase):
     def device(self):
         with patch.dict(os.environ, ENV):
@@ -342,6 +507,115 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(order, ['boot', 'root', 'late-load'])
         self.assertEqual(run.call_args.args, ('reboot',))
         late.assert_called_once_with()
+
+    def test_reboot_timeout_requires_new_boot_and_all_postconditions_without_replay(self):
+        device = self.device()
+        device.verified = True
+        device.late_load_on_reboot = True
+        new_boot = '11234567-0123-0123-0123-0123456789ab'
+        values = {'cat /proc/sys/kernel/random/boot_id': BOOT,
+                  'getprop sys.boot_completed; cat /proc/sys/kernel/random/boot_id': '1\n' + new_boot,
+                  'getenforce': 'Enforcing'}
+        with patch.object(device, 'run', return_value=cp('private-canary', 124, 'private-canary')) as run, \
+             patch.object(device, 'shell', side_effect=lambda command, **_: cp(values[command])), \
+             patch.object(device, 'root') as root, patch.object(device, 'late_load_kernelsu') as late:
+            device.reboot()
+        run.assert_called_once_with('reboot', check=False)
+        root.assert_called_once_with()
+        late.assert_called_once_with()
+        self.assertEqual(device.reboot_checks, [{
+            'status': 'passed', 'command_exit_code': 124, 'command_result': 'timeout',
+            'new_boot_observed': True, 'root_verified': True, 'selinux_enforcing': True,
+            'kernelsu_reactivation': 'verified',
+        }])
+        receipt = json.dumps(device.reboot_checks)
+        for private in (BOOT, new_boot, 'private-canary'):
+            self.assertNotIn(private, receipt)
+
+    def test_reboot_timeout_cannot_pass_unchanged_missing_or_incomplete_boot(self):
+        new_boot = '11234567-0123-0123-0123-0123456789ab'
+        for observation in (cp('1\n' + BOOT), cp('1\nmalformed'), cp('0\n' + new_boot),
+                            cp('1\n' + new_boot, 1), cp('', 1, 'device offline')):
+            with self.subTest(observation=observation):
+                device = self.device()
+                device.verified = True
+                device.late_load_on_reboot = True
+                elapsed = [0]
+
+                def shell(command, **_):
+                    if command == 'cat /proc/sys/kernel/random/boot_id':
+                        return cp(BOOT)
+                    self.assertEqual(command, 'getprop sys.boot_completed; cat /proc/sys/kernel/random/boot_id')
+                    elapsed[0] = 300
+                    return observation
+
+                with patch.object(device, 'run', return_value=cp(rc=124)) as run, \
+                     patch.object(device, 'shell', side_effect=shell), \
+                     patch.object(device, 'root') as root, patch.object(device, 'late_load_kernelsu') as late, \
+                     patch.object(SIM.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                     patch.object(SIM.time, 'sleep'), self.assertRaisesRegex(RuntimeError, 'boot deadline'):
+                    device.reboot()
+                run.assert_called_once_with('reboot', check=False)
+                root.assert_not_called()
+                late.assert_not_called()
+                self.assertEqual(device.reboot_checks[0]['status'], 'failed')
+                self.assertEqual(device.reboot_checks[0]['command_result'], 'timeout')
+                self.assertFalse(device.reboot_checks[0]['new_boot_observed'])
+
+    def test_reboot_non_timeout_command_errors_fail_before_boot_observation(self):
+        for code in (1, 127, 137, -9):
+            device = self.device()
+            device.verified = True
+            with patch.object(device, 'shell', return_value=cp(BOOT)), \
+                 patch.object(device, 'run', return_value=cp(rc=code, stderr='private-canary')) as run, \
+                 patch.object(device, 'wait_boot') as wait, \
+                 self.assertRaisesRegex(RuntimeError, 'ADB reboot failed'):
+                device.reboot()
+            run.assert_called_once_with('reboot', check=False)
+            wait.assert_not_called()
+            self.assertEqual(device.reboot_checks[0]['status'], 'failed')
+            self.assertEqual(device.reboot_checks[0]['command_result'], 'failed')
+            self.assertNotIn('private-canary', json.dumps(device.reboot_checks))
+
+    def test_reboot_timeout_never_swallows_root_selinux_or_kernelsu_failure(self):
+        for failure in ('root', 'selinux', 'kernelsu'):
+            with self.subTest(failure=failure):
+                device = self.device()
+                device.verified = True
+                device.late_load_on_reboot = True
+
+                def shell(command, **_):
+                    if command == 'cat /proc/sys/kernel/random/boot_id':
+                        return cp(BOOT)
+                    if command == 'getprop sys.boot_completed; cat /proc/sys/kernel/random/boot_id':
+                        return cp('1\n11234567-0123-0123-0123-0123456789ab')
+                    self.assertEqual(command, 'getenforce')
+                    return cp('Permissive' if failure == 'selinux' else 'Enforcing')
+
+                with patch.object(device, 'run', return_value=cp(rc=124)) as run, \
+                     patch.object(device, 'shell', side_effect=shell), \
+                     patch.object(device, 'root', side_effect=RuntimeError('root failed') if failure == 'root' else None), \
+                     patch.object(device, 'late_load_kernelsu', side_effect=RuntimeError('KernelSU failed')) as late, \
+                     self.assertRaises(RuntimeError):
+                    device.reboot()
+                run.assert_called_once_with('reboot', check=False)
+                receipt = device.reboot_checks[0]
+                self.assertEqual(receipt['status'], 'failed')
+                self.assertTrue(receipt['new_boot_observed'])
+                self.assertEqual(receipt['root_verified'], failure != 'root')
+                self.assertEqual(receipt['selinux_enforcing'], failure == 'kernelsu')
+                self.assertEqual(receipt['kernelsu_reactivation'], 'pending')
+                self.assertEqual(late.call_count, int(failure == 'kernelsu'))
+
+    def test_reboot_requires_a_valid_old_identity_before_issuing_the_command(self):
+        device = self.device()
+        device.verified = True
+        with patch.object(device, 'shell', return_value=cp('private-canary')), \
+             patch.object(device, 'run') as run, self.assertRaisesRegex(RuntimeError, 'old boot identity'):
+            device.reboot()
+        run.assert_not_called()
+        self.assertEqual(device.reboot_checks[0]['command_result'], 'not_run')
+        self.assertNotIn('private-canary', json.dumps(device.reboot_checks))
 
     def test_root_waits_for_restarted_adbd_and_checks_real_uid(self):
         device = self.device()

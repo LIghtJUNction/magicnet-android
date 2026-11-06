@@ -40,6 +40,8 @@ KSUD_LAUNCH = '/data/adb/ksu/ci-ksud'
 # run as u:r:su:s0. The older u:r:ksu:s0 type is not created by this kernel.
 KSU_DOMAIN = 'u:r:su:s0'
 BB = '/data/adb/ksu/bin/busybox'
+SUPPORT_EXPORT = '/sdcard/Download/MagicNet/MagicNet-diagnostics.txt'
+SUPPORT_LIMIT = 512 * 1024
 PROVENANCE = '.ci-fixture.json'
 PAYLOADS = ('bin/magicnet-cli', 'bin/sing-box', 'bin/jq', 'bin/yq')
 # Optional components must be replaced when present, never silently omitted.
@@ -217,6 +219,115 @@ def has_owned_network(text: str) -> bool:
     return bool(re.search(r'magicnet|sing-box|(?:lookup|table)\s+2022\b', text, re.I))
 
 
+def installed_controls(device, out: Path, evidence: dict) -> None:
+    """Check installed CLI contracts without requesting any fresh network probe."""
+    started = time.monotonic()
+    evidence.update({'schema': 1, 'status': 'failed',
+                     'active_connectivity_probe_requested': False})
+
+    def command(args, timeout):
+        result = device.kshell(MOD + '/cli ' + args, timeout=timeout, check=False)
+        require(result.returncode == 0,
+                f'installed control {evidence["stage"]} failed (exit {bounded_exit_code(result.returncode)})')
+        return result.stdout
+
+    def machine(args, name, timeout):
+        text = command('--json ' + args, timeout)
+        require(len(text.encode('utf-8')) <= 65536, 'installed machine response exceeds limit')
+        try:
+            return decode_status(text, name)
+        except (ValueError, TypeError, RuntimeError):
+            raise RuntimeError('invalid installed ' + name + ' machine envelope') from None
+
+    try:
+        evidence['stage'] = 'supervisor_start'
+        command('supervisor start all', 60)
+        evidence['supervisor_start_exit_code'] = 0
+        evidence['stage'] = 'service_status'
+        service = machine('service status', 'service.status', 15)
+        supervisors = service.get('supervisors')
+        fswatch = supervisors.get('fswatch') if isinstance(supervisors, dict) else None
+        require(isinstance(fswatch, str) and re.fullmatch(r'[1-9][0-9]{0,9}', fswatch) is not None,
+                'installed fswatch supervisor is not confirmed running')
+        evidence['fswatch_running'] = True
+
+        evidence['stage'] = 'connectivity_status'
+        connectivity = machine('connectivity status', 'connectivity.status', 10)
+        require(connectivity.get('target') == 'https://www.google.com/generate_204'
+                and connectivity.get('path') == 'mixed_proxy', 'invalid connectivity target or path')
+        for key, allowed in {
+            'status': ('unknown', 'pending', 'online', 'degraded', 'offline', 'paused', 'stale'),
+            'secondary_status': ('not_run', 'online', 'failed'),
+            'direct_status': ('not_run', 'online', 'failed'),
+            'last_action': ('none', 'repair', 'refresh', 'restart', 'deferred'),
+            'action_status': ('none', 'pending', 'ok', 'failed', 'busy'),
+        }.items():
+            require(connectivity.get(key) in allowed, 'invalid connectivity ' + key)
+        for key in ('reason', 'primary_reason'):
+            value = connectivity.get(key)
+            require(isinstance(value, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,63}', value) is not None,
+                    'invalid connectivity ' + key)
+        require(type(connectivity.get('warning')) is bool, 'invalid connectivity warning')
+        for key in ('consecutive_failures', 'probe_count', 'backoff_seconds', 'checked_at',
+                    'next_check_at', 'retry_in_seconds', 'latency_ms', 'http_status',
+                    'last_action_at', 'last_refresh_at'):
+            require(key in connectivity, 'missing connectivity ' + key)
+            value = connectivity[key]
+            nullable = key not in ('consecutive_failures', 'probe_count', 'backoff_seconds')
+            require((nullable and value is None) or (type(value) is int and value >= 0),
+                    'invalid connectivity ' + key)
+        require(60 <= connectivity['backoff_seconds'] <= 1800, 'invalid connectivity backoff')
+        if connectivity['status'] == 'online':
+            require(connectivity['http_status'] == 204 and (connectivity['checked_at'] or 0) > 0
+                    and connectivity['latency_ms'] is not None, 'unproven online connectivity')
+        evidence['connectivity'] = {key: connectivity[key] for key in (
+            'target', 'path', 'status', 'reason', 'primary_reason', 'warning',
+            'checked_at', 'next_check_at', 'retry_in_seconds', 'consecutive_failures',
+            'probe_count', 'backoff_seconds', 'latency_ms', 'http_status',
+            'secondary_status', 'direct_status', 'last_action', 'action_status',
+            'last_action_at', 'last_refresh_at',
+        )}
+
+        evidence['stage'] = 'support_export'
+        exported = machine('support export', 'support.export', 40)
+        require(exported.get('path') == SUPPORT_EXPORT, 'unexpected diagnostic export path')
+        size = exported.get('bytes')
+        require(type(size) is int and 0 < size <= SUPPORT_LIMIT, 'invalid diagnostic export size')
+        evidence['support_export'] = {'path': SUPPORT_EXPORT, 'bytes': size}
+        evidence['stage'] = 'export_size'
+        actual = device.kshell(f'test -f {SUPPORT_EXPORT} && test ! -L {SUPPORT_EXPORT} && '
+                               f'{BB} wc -c < {SUPPORT_EXPORT}', timeout=5)
+        require(actual.stdout.strip().isdigit() and int(actual.stdout.strip()) == size,
+                'diagnostic export device size does not match receipt')
+        evidence['stage'] = 'export_pull'
+        destination = out / 'diagnostic-export.txt'
+        device.run('pull', SUPPORT_EXPORT, str(destination), timeout=15)
+        require(destination.stat().st_size == size, 'diagnostic export artifact size does not match receipt')
+        evidence['stage'] = 'export_content'
+        text = destination.read_text(encoding='utf-8')
+        required_sections = (
+            'platform and versions', 'system resources', 'subscription lifecycle',
+            'canonical state', 'connectivity history', 'configuration structure',
+            'configuration: route', 'configuration: dns', 'service status', 'core resources',
+            'sing-box version', 'sing-box configuration check', 'routes: ipv4 rules',
+            'routes: ipv6 rules', 'routes: ipv4 routes', 'routes: ipv6 routes',
+            'transparent TUN and eBPF observation', 'collection summary',
+        )
+        require(all(f'\n[{name}]\n' in text for name in required_sections),
+                'diagnostic export is missing required sections')
+        require(text.startswith('MagicNet canonical support bundle\nschema=1\nformat=diagnostic-text-v1\n')
+                and '\nprivacy=redacted\n' in text
+                and '\nexternal_network_probes=not_run\n' in text
+                and '\nstate_mutations=none\n' in text
+                and text.endswith('end_of_report=true\n'), 'diagnostic export is incomplete or invalid')
+        evidence['support_export'].update({'artifact': destination.name, 'sha256': digest(destination),
+                                           'required_sections': list(required_sections)})
+        evidence.update({'stage': 'complete', 'status': 'passed'})
+    finally:
+        evidence['seconds'] = round(time.monotonic() - started, 3)
+        (out / 'installed-controls.json').write_text(json.dumps(evidence, indent=2) + '\n')
+
+
 # Exercise the same regex operations as startup using public, synthetic input.
 # A crash is a broken runtime, never a legitimate "no nodes" result.
 NODE_PATTERN = r'"type"[[:space:]]*:[[:space:]]*"(vless|hysteria2|trojan|vmess|shadowsocks|wireguard|tuic|anytls|socks)"'
@@ -325,6 +436,7 @@ class Device:
         self.late_load_on_reboot = False
         self.busybox_checks = []
         self.root_checks = []
+        self.reboot_checks = []
         self.stop_checks = []
         self.boot_log = ROOT / 'artifacts/android-kernelsu/emulator.log'
 
@@ -557,14 +669,31 @@ class Device:
 
     def reboot(self):
         require(self.verified, 'device identity not verified')
+        evidence = {'status': 'failed', 'command_exit_code': None, 'command_result': 'not_run',
+                    'new_boot_observed': False, 'root_verified': False, 'selinux_enforcing': False,
+                    'kernelsu_reactivation': 'pending' if self.late_load_on_reboot else 'not_requested'}
+        require(len(self.reboot_checks) < 16, 'ADB reboot history budget exceeded')
+        self.reboot_checks.append(evidence)
         old = self.shell('cat /proc/sys/kernel/random/boot_id').stdout.strip()
         require(re.fullmatch(r'[0-9a-f-]{36}', old) is not None, 'missing old boot identity')
-        self.run('reboot')
+        # ADB may lose its reply when the old daemon exits. A timeout is unknown,
+        # not success: issue exactly one reboot and require an independently
+        # observed new, fully booted Android instance before any continuation.
+        result = self.run('reboot', check=False)
+        evidence['command_exit_code'] = bounded_exit_code(result.returncode)
+        evidence['command_result'] = ('timeout' if result.returncode == 124 else
+                                      'completed' if result.returncode == 0 else 'failed')
+        require(result.returncode in (0, 124), f'ADB reboot failed (exit {result.returncode})')
         self.wait_boot(previous=old)
+        evidence['new_boot_observed'] = True
         self.root()
+        evidence['root_verified'] = True
         require(self.shell('getenforce').stdout.strip() == 'Enforcing', 'SELinux changed across reboot')
+        evidence['selinux_enforcing'] = True
         if self.late_load_on_reboot:
             self.late_load_kernelsu()
+            evidence['kernelsu_reactivation'] = 'verified'
+        evidence['status'] = 'passed'
 
     def ready(self, timeout: float = 90):
         deadline = time.monotonic() + timeout
@@ -994,6 +1123,9 @@ def main() -> int:
                 device.ready()
                 device.kshell(f'p=$({BB} pidof sing-box) && test -n "$p" && '
                               f'for n in $p; do test "$(cat /proc/$n/attr/current)" = {KSU_DOMAIN} || exit 1; done')
+                controls = {}
+                report.provenance['installed_controls'] = controls
+                installed_controls(device, out, controls)
             with report.phase('app-uid-tun-controls'):
                 tun_controls(device, out, 'app-uid-tun-controls')
             with report.phase('invalid-config-rollback'):
@@ -1039,6 +1171,7 @@ def main() -> int:
         if device is not None:
             report.provenance['busybox_checks'] = device.busybox_checks
             report.provenance['root_checks'] = device.root_checks
+            report.provenance['reboot_checks'] = device.reboot_checks
             report.provenance['stop_checks'] = device.stop_checks
         report.write()
         if device is not None:

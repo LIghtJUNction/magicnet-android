@@ -34,6 +34,12 @@ impl Fixture {
         .unwrap();
         fs::write(root.join(".state/machines/connectivity.state"), "schema=1\ndomain=connectivity\nphase=offline\nreason=dns_failure\nboot=PRIVATE-BOOT-CANARY\n").unwrap();
         fs::write(root.join(".log/sing-box.log"), "ERROR outbound/vless[PRIVATE-NODE-CANARY] dial hidden.invalid failed password=PASSWORD-CANARY\nERROR Authorization: Bearer PRIVATE-HEADER-CANARY extra-secret\n").unwrap();
+        fs::write(root.join(".log/supervisors.log"), "ERROR magicnet_supervisors_start: timed out after 180000ms\nERROR Authorization: Bearer SUPERVISOR-SECRET-CANARY\n").unwrap();
+        fs::write(
+            root.join(".log/connectivity-watchdog.log"),
+            "ERROR watchdog: worker failed to enter loop\n",
+        )
+        .unwrap();
         let core = root.join("bin/sing-box");
         fs::write(&core, "#!/bin/sh\ncase \"$1\" in version) echo 'sing-box version simulated' ;; check) echo 'ERROR configuration invalid password=PASSWORD-CANARY' >&2; exit 2 ;; *) exit 1 ;; esac\n").unwrap();
         fs::set_permissions(core, fs::Permissions::from_mode(0o755)).unwrap();
@@ -101,6 +107,8 @@ fn machine_export_creates_one_complete_file_and_keeps_service_state_unchanged() 
         "firewall: iptables-save",
         "transparent TUN and eBPF observation",
         "recent logs: sing-box",
+        "recent logs: supervisors",
+        "recent logs: connectivity-watchdog",
         "collection summary",
     ] {
         assert!(
@@ -115,11 +123,14 @@ fn machine_export_creates_one_complete_file_and_keeps_service_state_unchanged() 
         "PRIVATE-HEADER-CANARY",
         "extra-secret",
         "PRIVATE-BOOT-CANARY",
+        "SUPERVISOR-SECRET-CANARY",
         "10112",
     ] {
         assert!(!report.contains(private), "leaked {private}");
     }
     assert!(report.contains("exit_code=2"));
+    assert!(report.contains("timed out after 180000ms"));
+    assert!(report.contains("worker failed to enter loop"));
     assert!(report.contains("external_network_probes=not_run"));
     assert!(report.ends_with("end_of_report=true\n"));
     assert!(report.len() <= 512 * 1024);
