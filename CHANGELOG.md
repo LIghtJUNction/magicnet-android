@@ -1,4 +1,4 @@
-# v1.8.5 (2026-11-05)
+# v1.8.5 (Unreleased)
 
 - Reject the exact domains `flash.sec.miui.com`,
   `fraud-detection.engine.miui.com`, `eps.caict.ac.cn`, and
@@ -8,6 +8,14 @@
   the existing DNS, sniff, ICMP, and `0.0.0.0` handling. Match exact hostnames;
   keep existing routing for parent domains, subdomains, and other ports on
   `dm.wo.com.cn`.
+- Route 16 defined Chinese education service domain suffixes through the
+  existing `cn-direct` selector, which defaults to direct, with matching local
+  encrypted DNS rules. Cover `edu.cn`, education public services, university
+  course platforms, and the listed Chinese academic resource services.
+- Keep mode, LAN, user and app, advertising, and DNS guard rules ahead of the
+  education rules; prefer these education domains over later foreign academic,
+  AI, game, development, and media categories. Reuse existing selectors and
+  rule assets.
 
 See [release notes](docs/releases/v1.8.5.md) for validation requirements and
 matching scope. No device install or real-app traffic verification was performed.

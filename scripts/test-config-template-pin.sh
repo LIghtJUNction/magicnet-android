@@ -6,6 +6,7 @@ CONFIG_DIR="$ROOT/src/MagicNet/.config/sing-box"
 REPOSITORY_CONFIG="$ROOT/src/MagicNet/.config/magicnet/singbox-config-repo.conf"
 CLI_CONFIG="$ROOT/crates/magicnet-cli/src/config_editor.rs"
 CUSTOMIZE="$ROOT/src/MagicNet/customize.sh"
+INSTALL_CONFIG="$ROOT/src/MagicNet/lib/magicnet/install_config.sh"
 WEBUI_CONFIG="$ROOT/webui/src/components/pages/ConfigPage.vue"
 
 fail() {
@@ -49,6 +50,10 @@ grep -Fq "'MAGICNET_SINGBOX_CONFIG_REPO_REF=$submodule_ref'" "$CUSTOMIZE" ||
     fail "installer default repository ref does not match the MagicSingBox submodule"
 grep -Fq "'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=$template_sha256'" "$CUSTOMIZE" ||
     fail "installer default repository digest does not match pinned config.json"
+grep -Fq "'MAGICNET_SINGBOX_CONFIG_REPO_REF=$submodule_ref'" "$INSTALL_CONFIG" ||
+    fail "upgrade migration repository ref does not match the MagicSingBox submodule"
+grep -Fq "'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=$template_sha256'" "$INSTALL_CONFIG" ||
+    fail "upgrade migration repository digest does not match pinned config.json"
 grep -Fq "const DEFAULT_CONFIG_REPO_REF = \"$submodule_ref\";" "$WEBUI_CONFIG" ||
     fail "WebUI default repository ref does not match the MagicSingBox submodule"
 grep -Fq "const DEFAULT_CONFIG_REPO_SHA256 = \"$template_sha256\";" "$WEBUI_CONFIG" ||

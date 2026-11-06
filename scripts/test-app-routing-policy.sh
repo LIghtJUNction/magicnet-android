@@ -1343,19 +1343,39 @@ assert_bundled_reject_guards_survive_app_policy() (
   "$JQ_BIN" '[.route.rules[] | select(.action == "reject" and has("domain"))]' \
     "$MODDIR/.config/sing-box/config.json" >"$WORK/bundled-reject-guards.json"
   "$JQ_BIN" -e 'length == 2' "$WORK/bundled-reject-guards.json" >/dev/null
+  "$JQ_BIN" '
+    def education: ((.domain_suffix // []) | index("edu.cn")) != null;
+    {route: [.route.rules[] | select(education)], dns: [.dns.rules[] | select(education)]}
+  ' "$MODDIR/.config/sing-box/config.json" >"$WORK/bundled-education-policy.json"
+  "$JQ_BIN" -e '
+    (.route | length) == 1 and (.dns | length) == 1
+    and .route[0].outbound == "cn-direct"
+    and .dns[0].server == "bootstrap-local-dns"
+    and .route[0].domain_suffix == .dns[0].domain_suffix
+  ' "$WORK/bundled-education-policy.json" >/dev/null
   for mode in blacklist whitelist; do
     printf 'MAGICNET_APP_MODE=%s\n' "$mode" >"$MODDIR/.config/magicnet/app-mode.conf"
     apply_policy
     apply_policy
     # Exercise the real policy rewrite twice: port scope and guard precedence
-    # must survive both app modes without duplication or widening.
+    # must survive both app modes without duplication or widening. Explicit
+    # app choices precede the unchanged education route; its DNS policy survives.
     # shellcheck disable=SC2016
-    "$JQ_BIN" -e --slurpfile expected "$WORK/bundled-reject-guards.json" '
+    "$JQ_BIN" -e --slurpfile expected "$WORK/bundled-reject-guards.json" \
+      --slurpfile education "$WORK/bundled-education-policy.json" '
+      def education_rule: ((.domain_suffix // []) | index("edu.cn")) != null;
       ([.route.rules[] | select(.action == "reject" and has("domain"))] == $expected[0])
+      and ([.route.rules[] | select(education_rule)] == $education[0].route)
+      and ([.dns.rules[] | select(education_rule)] == $education[0].dns)
       and ((.route.rules | to_entries) as $rules
         | ([$rules[] | select(.value.action == "reject" and (.value | has("domain"))) | .key] | max) as $guard
         | ([$rules[] | select(.value.clash_mode != null or .value.package_name != null) | .key] | min) as $policy
         | $policy != null and $guard < $policy)
+      and ((.route.rules | to_entries) as $rules
+        | ([$rules[] | select(.value | education_rule) | .key][0]) as $education_index
+        | [$rules[] | select((.value.package_name // [])
+            | any(. == "__magicnet_app_direct__" or . == "__magicnet_app_proxy__")) | .key] as $apps
+        | ($apps | length) == 2 and all($apps[]; . < $education_index))
     ' "$MODDIR/.config/sing-box/config.json" >/dev/null
   done
 )

@@ -429,6 +429,67 @@ mod tests {
         assert_eq!(config, old);
     }
     #[test]
+    fn bundled_education_defaults_follow_user_overrides_and_survive_undo() {
+        let old: Value = serde_json::from_str(include_str!(
+            "../../../src/MagicNet/.config/sing-box/config.json"
+        ))
+        .unwrap();
+        let overlay = json!({"schema":1,"outbounds":[],"rules":[
+            {"kind":"domain","value":"pku.edu.cn","outbound":"proxy"},
+            {"kind":"app","value":"com.example.campus","outbound":"proxy"}
+        ]});
+        let mut config = old.clone();
+        let owned = apply(&mut config, &overlay).unwrap();
+        let is_education = |rule: &Value| {
+            rule["domain_suffix"]
+                .as_array()
+                .is_some_and(|domains| domains.iter().any(|domain| domain == "edu.cn"))
+        };
+        for (section, owned_key, target_key, target) in [
+            ("route", "route_rules", "outbound", "cn-direct"),
+            ("dns", "dns_rules", "server", "bootstrap-local-dns"),
+        ] {
+            let original = old[section]["rules"].as_array().unwrap();
+            let education: Vec<_> = original.iter().filter(|rule| is_education(rule)).collect();
+            assert_eq!(
+                education.len(),
+                1,
+                "missing bundled {section} education rule"
+            );
+            assert_eq!(education[0][target_key], target);
+            let current = config[section]["rules"].as_array().unwrap();
+            assert_eq!(
+                current
+                    .iter()
+                    .filter(|rule| is_education(rule))
+                    .collect::<Vec<_>>(),
+                education
+            );
+            let education_index = current.iter().position(is_education).unwrap();
+            let compiled = owned[owned_key].as_array().unwrap();
+            assert_eq!(compiled.len(), 2);
+            for added in compiled {
+                let added_index = current.iter().position(|rule| rule == added).unwrap();
+                assert!(
+                    added_index < education_index,
+                    "{section} user choice must precede education"
+                );
+                for guard in original
+                    .iter()
+                    .filter(|rule| rule.get("clash_mode").is_some() || rule["action"] == "reject")
+                {
+                    let guard_index = current.iter().position(|rule| rule == guard).unwrap();
+                    assert!(
+                        guard_index < added_index,
+                        "{section} guard must precede user choice"
+                    );
+                }
+            }
+        }
+        undo(&mut config, &owned).unwrap();
+        assert_eq!(config, old);
+    }
+    #[test]
     fn collisions_cycles_and_missing_targets_are_rejected() {
         let mut o = overlay();
         o["outbounds"][0]["tag"] = json!("direct");

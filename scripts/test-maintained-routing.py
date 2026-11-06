@@ -2,8 +2,8 @@
 """Check routing contracts and first matches against the actual upstream assets.
 
 The structural mode needs no network/assets; --assets also executes sing-box's
-rule-set matcher. The only service-domain exception is the audited WeChat DNS
-projection; mixed domain/IP rule sets must remain routing-only.
+rule-set matcher. Education defaults use an audited inline suffix policy. The
+WeChat DNS projection excludes IP matchers; mixed rule sets remain routing-only.
 """
 
 import functools
@@ -30,6 +30,11 @@ outbounds = {entry["tag"]: entry for entry in config["outbounds"]}
 # the mixed Karing classifier remains routing-only.
 WECHAT_ROUTE_TAG = "karing-acl4ssr-wechat"
 WECHAT_DNS_TAG = "service-wechat-dns"
+EDUCATION_SUFFIXES = {
+    "edu.cn", "moe.gov.cn", "chsi.com.cn", "smartedu.cn", "neea.cn", "ncss.cn",
+    "icourse163.org", "icourses.cn", "xuetangx.com", "yuketang.cn", "chaoxing.com",
+    "zhihuishu.com", "eol.cn", "cnki.net", "wanfangdata.com.cn", "cqvip.com",
+}
 
 
 def values(value):
@@ -52,6 +57,13 @@ assert definitions[WECHAT_DNS_TAG] == {
     "type": "local", "tag": WECHAT_DNS_TAG,
     "format": "binary", "path": "rules/service-wechat-dns.srs",
 }
+for rules, target_key, target in ((routes, "outbound", "cn-direct"),
+                                  (dns, "server", "bootstrap-local-dns")):
+    education = [r for r in rules if set(r.get("domain_suffix", [])) == EDUCATION_SUFFIXES]
+    assert len(education) == 1, "expected one bounded education default per section"
+    assert set(education[0]) == {"domain_suffix", target_key}
+    assert education[0][target_key] == target
+    assert len(education[0]["domain_suffix"]) == len(EDUCATION_SUFFIXES)
 assert routes[0] == {"port": 53, "action": "hijack-dns"}
 # Protocol-only ICMP policy is checked separately from domain classifiers.
 assert {"protocol": "icmp", "outbound": "block"} in routes
@@ -65,7 +77,7 @@ for rule in routes + dns:
     assert "domain_keyword" not in rule, (
         "broad hand-maintained keyword routing returned"
     )
-    if "domain_suffix" in rule:
+    if "domain_suffix" in rule and set(rule["domain_suffix"]) != EDUCATION_SUFFIXES:
         assert set(rule["domain_suffix"]) <= {
             "local",
             "home.arpa",
