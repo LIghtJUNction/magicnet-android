@@ -216,7 +216,7 @@ class CurlProofTests(unittest.TestCase):
                                 'positive_gets': 1, 'hostname_reject_gets': 0, 'default_reject_gets': 0})
         self.assertEqual(set(result['versions']), {'curl', 'libcurl', 'openssl', 'zlib'})
         self.assertEqual(result['versions']['curl'], result['versions']['libcurl'])
-        self.assertTrue(all(re.fullmatch(r'[0-9]+(?:\.[0-9]+){2}', value)
+        self.assertTrue(all(re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,3}', value)
                             for value in result['versions'].values()))
         self.assertEqual(self.device.curled, 3)
         self.assert_clean()
@@ -448,6 +448,35 @@ class CurlProofTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 self.device.kshell(PROOF.clean_command(args), timeout=1, check=False)
             executor.assert_not_called()
+
+
+class VersionSyntaxTests(unittest.TestCase):
+    def capabilities(self, versions):
+        device = Mock()
+        device.kshell.side_effect = [cp(PROOF.KSU_DOMAIN), cp(PROOF.CURL),
+            cp(f'curl {versions[0]} (host-fixture) libcurl/{versions[1]} '
+               f'OpenSSL/{versions[2]} zlib/{versions[3]}\nProtocols: http https\nFeatures: SSL libz\n'),
+            cp('--resolve --compressed --max-filesize --proto --proto-redir')]
+        with patch.object(PROOF, 'inspect_embedded_ca'):
+            return PROOF.capabilities(device, PROOF.Budget())
+
+    def test_numeric_library_versions_accept_two_to_four_components(self):
+        for values in (('8.5.0', '8.5.0', '3.0.13', '1.3'),
+                       ('8.22', '8.22', '3.5', '1.3'),
+                       ('8.22.0', '8.22.0', '3.5.8', '1.3.2'),
+                       ('8.22.0.1', '8.22.0.1', '3.5.8.1', '1.3.2.1')):
+            with self.subTest(values=values):
+                self.assertEqual(self.capabilities(values),
+                                 dict(zip(('curl', 'libcurl', 'openssl', 'zlib'), values)))
+
+    def test_unknown_or_excessively_long_version_tokens_remain_invalid(self):
+        for index in range(4):
+            for value in ('1', '1.2.3.4.5', '1..2', '1.2x', '1.2-unknown', 'v1.2'):
+                versions = ['8.22.0', '8.22.0', '3.5.8', '1.3.2']
+                versions[index] = value
+                with self.subTest(index=index, value=value), self.assertRaisesRegex(
+                        RuntimeError, '^curl_version_unknown$'):
+                    self.capabilities(versions)
 
 
 class EmbeddedCaTests(unittest.TestCase):

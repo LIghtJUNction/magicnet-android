@@ -85,10 +85,13 @@ def capabilities(device, budget):
     lines = version.splitlines()
     require(lines and lines[0].startswith('curl '), 'curl_version_unknown')
     versions = {}
-    for name, pattern in (('curl', r'^curl ([0-9]+(?:\.[0-9]+){2})(?:\s|$)'),
-                          ('libcurl', r'\blibcurl/([0-9]+(?:\.[0-9]+){2})(?:\s|$)'),
-                          ('openssl', r'\bOpenSSL/([0-9]+(?:\.[0-9]+){2})(?:\s|$)'),
-                          ('zlib', r'\bzlib/([0-9]+(?:\.[0-9]+){2})(?:\s|$)')):
+    # Library releases legitimately include two components (for example zlib
+    # 1.3). This parses evidence only; the installed Android caller separately
+    # requires exact equality with all locked production versions.
+    for name, pattern in (('curl', r'^curl ([0-9]+(?:\.[0-9]+){1,3})(?:\s|$)'),
+                          ('libcurl', r'\blibcurl/([0-9]+(?:\.[0-9]+){1,3})(?:\s|$)'),
+                          ('openssl', r'\bOpenSSL/([0-9]+(?:\.[0-9]+){1,3})(?:\s|$)'),
+                          ('zlib', r'\bzlib/([0-9]+(?:\.[0-9]+){1,3})(?:\s|$)')):
         match = re.search(pattern, lines[0])
         require(match is not None, 'curl_version_unknown')
         versions[name] = match[1]
