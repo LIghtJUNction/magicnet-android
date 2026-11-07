@@ -162,8 +162,7 @@ class WorkflowContractTests(unittest.TestCase):
         commands = '\n'.join(step.get('run', '') for step in steps)
         for script in ('test-ci-test-cache.py', 'test-ci-quality.py'):
             self.assertIn('python3 scripts/' + script, commands)
-        self.assertIn('actionlint@v1.7.12', commands)
-        self.assertIn('.github/workflows/quality.yml', commands)
+        self.assertIn('bash scripts/check-workflows.sh', commands)
 
     def test_read_only_permissions_and_pinned_actions(self):
         self.assertEqual(self.config['permissions'], {'contents': 'read'})
