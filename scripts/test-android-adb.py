@@ -19,7 +19,12 @@ class AdbDeadlineTests(unittest.TestCase):
         adb.write_text('''#!/bin/sh
 case "$FAKE_ADB" in
   stall) exec sleep 60 ;;
-  boot) case "$*" in *getprop*) echo 1;; esac; exit 0 ;;
+  boot)
+    case "$*" in
+      *wait-for-device*) sleep "${FAKE_ADB_BOOT_DELAY:-0}" ;;
+      *getprop*) echo 1 ;;
+    esac
+    exit 0 ;;
   fail) exit 37 ;;
 esac
 ''')
@@ -46,8 +51,19 @@ esac
         self.assertEqual(result.returncode, 37)
 
     def test_successful_boot_still_works(self):
-        result = self.run_shell('wait_boot', FAKE_ADB='boot')
+        # Bash SECONDS has whole-second resolution. A success check must not
+        # inherit the one-second budget used to force the timeout cases.
+        result = self.run_shell('wait_boot', FAKE_ADB='boot', MAGICNET_BOOT_TIMEOUT='5')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_delayed_ready_device_distinguishes_success_and_timeout_budgets(self):
+        # Model bounded ADB startup overhead without relying on the wall-clock
+        # phase: the old budget must expire, while the success budget must pass.
+        for budget, expected in (('1', 1), ('5', 0)):
+            with self.subTest(budget=budget):
+                result = self.run_shell('wait_boot', FAKE_ADB='boot',
+                                        FAKE_ADB_BOOT_DELAY='1.2', MAGICNET_BOOT_TIMEOUT=budget)
+                self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_bad_deadline_is_rejected(self):
         for value in ('0', '-1', '1;exit 0', '601'):
