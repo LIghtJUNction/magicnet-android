@@ -134,10 +134,10 @@ fn preflight_policy(app: &App, policy: &NetworkPolicy) -> Result<(), String> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct NetworkPolicy {
-    ipv6_mode: &'static str,
-    mtu: u16,
-    udp_timeout: &'static str,
+pub(crate) struct NetworkPolicy {
+    pub(crate) ipv6_mode: &'static str,
+    pub(crate) mtu: u16,
+    pub(crate) udp_timeout: &'static str,
 }
 
 impl Default for NetworkPolicy {
@@ -214,7 +214,10 @@ fn apply_network_policy(app: &App, guard: &ConfigApplyGuard) -> Result<(), Strin
 
 impl NetworkPolicy {
     fn load(app: &App) -> Self {
-        let values = read_kv(app.moddir.join(NETWORK_POLICY_CONF));
+        Self::from_values(&read_kv(app.moddir.join(NETWORK_POLICY_CONF)))
+    }
+
+    pub(crate) fn from_values(values: &HashMap<String, String>) -> Self {
         Self {
             ipv6_mode: normalize_ipv6_mode(
                 values

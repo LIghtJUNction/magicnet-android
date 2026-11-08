@@ -14,9 +14,7 @@ pub(crate) fn close_connections_through_chain(
     app: &App,
     selector_tag: &str,
 ) -> Result<ConnectionCloseSummary, String> {
-    let text = curl_text(app, "/connections")?;
-    let root: Value =
-        serde_json::from_str(&text).map_err(|err| format!("parse connections: {err}"))?;
+    let root = read_connections(app)?;
     let ids = connection_ids_through_chain(&root, selector_tag);
     let targets = ids.len();
     let mut failed = 0usize;
@@ -68,21 +66,16 @@ pub(crate) fn close_matching_connections(app: &App, query: &str) -> Result<(), S
     if clean.is_empty() {
         return Err("Usage: cli api close-matching <query>".to_string());
     }
-    let text = curl_text(app, "/connections")?;
-    let root: Value =
-        serde_json::from_str(&text).map_err(|err| format!("parse connections: {err}"))?;
-    let mut targets = matching_connections(&root, clean);
-    targets.sort_by_key(|target| std::cmp::Reverse(target.bytes));
-    targets.truncate(8);
-    close_targets(app, targets)
+    close_selected(app, clean, 8)
 }
 
 pub(crate) fn close_top_connections(app: &App, count: &str) -> Result<(), String> {
-    let limit = close_top_limit(count);
-    let text = curl_text(app, "/connections")?;
-    let root: Value =
-        serde_json::from_str(&text).map_err(|err| format!("parse connections: {err}"))?;
-    let mut targets = matching_connections(&root, "");
+    close_selected(app, "", close_top_limit(count))
+}
+
+fn close_selected(app: &App, query: &str, limit: usize) -> Result<(), String> {
+    let root = read_connections(app)?;
+    let mut targets = matching_connections(&root, query);
     targets.sort_by_key(|target| std::cmp::Reverse(target.bytes));
     targets.truncate(limit);
     close_targets(app, targets)
@@ -278,10 +271,7 @@ pub(crate) fn print_close_all_summary(app: &App) -> Result<(), String> {
 }
 
 fn connection_count(app: &App) -> Result<usize, String> {
-    let text = curl_text(app, "/connections")?;
-    let root: Value =
-        serde_json::from_str(&text).map_err(|err| format!("parse connections: {err}"))?;
-    Ok(root
+    Ok(read_connections(app)?
         .get("connections")
         .and_then(Value::as_array)
         .map(Vec::len)
@@ -296,9 +286,10 @@ fn format_close_summary(targets: usize, closed: usize, failed: usize) -> String 
     format!("targets={targets}\nclosed={closed}\nfailed={failed}\n")
 }
 
-fn curl_text(app: &App, path: &str) -> Result<String, String> {
-    let bytes = crate::webui_api::api_response(app, "GET", path, "", 4, 8 * 1024 * 1024)?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+fn read_connections(app: &App) -> Result<Value, String> {
+    let bytes = crate::webui_api::api_response(app, "GET", "/connections", "", 4, 8 * 1024 * 1024)?;
+    serde_json::from_str(&String::from_utf8_lossy(&bytes))
+        .map_err(|err| format!("parse connections: {err}"))
 }
 
 fn curl_delete(app: &App, path: &str) -> Result<(), String> {

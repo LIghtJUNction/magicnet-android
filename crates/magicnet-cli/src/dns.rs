@@ -69,10 +69,8 @@ fn dns_test_curl_args(url: &str) -> Vec<&str> {
     ]
 }
 
-fn dns_status(app: &App) {
-    let profile = dns_profile(app);
-    println!("profile={profile}");
-    let (primary, secondary, transport) = match profile.as_str() {
+pub(crate) fn profile_servers(profile: &str) -> (&'static str, Option<&'static str>, &'static str) {
+    match profile {
         "cloudflare-udp" => ("1.1.1.1", Some("1.0.0.1"), "udp"),
         "cloudflare-dot" => ("tls://1.1.1.1", Some("tls://1.0.0.1"), "dot"),
         "cloudflare-doh" => (
@@ -81,7 +79,13 @@ fn dns_status(app: &App) {
             "doh",
         ),
         _ => ("doh-cloudflare", None, "default"),
-    };
+    }
+}
+
+fn dns_status(app: &App) {
+    let profile = dns_profile(app);
+    let (primary, secondary, transport) = profile_servers(&profile);
+    println!("profile={profile}");
     println!("primary={primary}");
     if let Some(secondary) = secondary {
         println!("secondary={secondary}");
@@ -117,7 +121,7 @@ fn apply_dns_profile(app: &App, profile: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn normalize_profile(profile: &str) -> Result<&'static str, String> {
+pub(crate) fn normalize_profile(profile: &str) -> Result<&'static str, String> {
     match profile {
         "default" | "system" | "local" => Ok("default"),
         "cloudflare" | "cloudflare-doh" | "1.1.1.1-doh" | "doh" => Ok("cloudflare-doh"),

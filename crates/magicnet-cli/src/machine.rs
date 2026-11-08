@@ -369,16 +369,7 @@ fn supervisor_data(app: &App) -> Value {
 
 fn dns_status_value(app: &App) -> Value {
     let profile = dns_profile(app);
-    let (primary, secondary, transport) = match profile.as_str() {
-        "cloudflare-udp" => ("1.1.1.1", Some("1.0.0.1"), "udp"),
-        "cloudflare-dot" => ("tls://1.1.1.1", Some("tls://1.0.0.1"), "dot"),
-        "cloudflare-doh" => (
-            "https://cloudflare-dns.com/dns-query",
-            Some("https://1.0.0.1/dns-query"),
-            "doh",
-        ),
-        _ => ("doh-cloudflare", None, "default"),
-    };
+    let (primary, secondary, transport) = crate::dns::profile_servers(&profile);
     envelope(
         "dns.status",
         json!({
@@ -392,23 +383,7 @@ fn dns_status_value(app: &App) -> Value {
 
 fn network_status_value(app: &App) -> Value {
     let values = read_kv(app.moddir.join(NETWORK_POLICY_CONF));
-    let configured_ipv6_mode = normalize_ipv6_mode(
-        values
-            .get("MAGICNET_IPV6_MODE")
-            .map(String::as_str)
-            .unwrap_or_default(),
-    );
-    let configured_mtu = values
-        .get("MAGICNET_TUN_MTU")
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| (1280..=1500).contains(value))
-        .unwrap_or(1400);
-    let configured_udp_timeout = normalize_udp_timeout(
-        values
-            .get("MAGICNET_UDP_TIMEOUT")
-            .map(String::as_str)
-            .unwrap_or_default(),
-    );
+    let policy = crate::network::NetworkPolicy::from_values(&values);
     let configured_dns_capture_port = crate::network::configured_dns_capture_port(&values);
     let configured_tun_inet = crate::network::configured_tun_inet(&values);
     let configured_tun_inet6 = crate::network::configured_tun_inet6(&values);
@@ -443,9 +418,9 @@ fn network_status_value(app: &App) -> Value {
         "network.status",
         json!({
             "configured": {
-                "ipv6_mode": configured_ipv6_mode,
-                "mtu": configured_mtu,
-                "udp_timeout": configured_udp_timeout,
+                "ipv6_mode": policy.ipv6_mode,
+                "mtu": policy.mtu,
+                "udp_timeout": policy.udp_timeout,
                 "dns_capture_port": configured_dns_capture_port,
                 "tun_inet": configured_tun_inet,
                 "tun_inet6": configured_tun_inet6,
@@ -734,32 +709,9 @@ fn dns_profile(app: &App) -> String {
     let value = read_kv(app.moddir.join(DNS_CONF))
         .remove("MAGICNET_DNS_PROFILE")
         .unwrap_or_default();
-    match value.as_str() {
-        "cloudflare" | "cloudflare-doh" | "1.1.1.1-doh" | "doh" => "cloudflare-doh",
-        "cloudflare-dot" | "1.1.1.1-dot" | "dot" => "cloudflare-dot",
-        "cloudflare-udp" | "1.1.1.1" | "udp" => "cloudflare-udp",
-        _ => "default",
-    }
-    .to_string()
-}
-
-fn normalize_ipv6_mode(value: &str) -> &'static str {
-    match value {
-        "ipv4_only" | "ipv4-only" | "compat" | "disabled" => "ipv4_only",
-        "prefer_ipv6" | "prefer-ipv6" => "prefer_ipv6",
-        _ => "prefer_ipv4",
-    }
-}
-
-fn normalize_udp_timeout(value: &str) -> &'static str {
-    match value {
-        "1m" => "1m",
-        "3m" => "3m",
-        "10m" => "10m",
-        "15m" => "15m",
-        "30m" => "30m",
-        _ => "5m",
-    }
+    crate::dns::normalize_profile(&value)
+        .unwrap_or("default")
+        .to_string()
 }
 
 fn config_value(
