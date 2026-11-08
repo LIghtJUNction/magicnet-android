@@ -146,8 +146,5 @@ export function buildControlRuntimeInsight(
 export function controlInsightTone(
   status: ControlRuntimeInsight["status"],
 ): string {
-  if (status === "ok") return statusToneClasses("ok");
-  if (status === "danger") return statusToneClasses("danger");
-  if (status === "warning") return statusToneClasses("warning");
-  return statusToneClasses("info");
+  return statusToneClasses(status);
 }

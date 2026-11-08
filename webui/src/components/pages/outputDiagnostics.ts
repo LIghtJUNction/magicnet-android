@@ -59,11 +59,7 @@ export function buildOutputDiagnostic(input: OutputDiagnosticInput): OutputDiagn
 }
 
 export function outputDiagnosticTone(status: OutputDiagnostic["status"]): string {
-  if (status === "ok") return statusToneClasses("ok");
-  if (status === "error") return statusToneClasses("error");
-  if (status === "warning") return statusToneClasses("warning");
-  return statusToneClasses("neutral");
-
+  return statusToneClasses(status);
 }
 
 export function sanitizeOutputText(text: string): string {

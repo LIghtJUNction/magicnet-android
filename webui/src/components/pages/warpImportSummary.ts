@@ -72,11 +72,7 @@ export function formatWarpImportSummaryReport(summary: WarpImportSummary): strin
 }
 
 export function warpImportTone(status: WarpImportSummary["status"]): string {
-  if (status === "error") return statusToneClasses("error");
-  if (status === "warning") return statusToneClasses("warning");
-  if (status === "ok") return statusToneClasses("ok");
-  return statusToneClasses("neutral");
-
+  return statusToneClasses(status);
 }
 
 function parseWireGuard(text: string): {

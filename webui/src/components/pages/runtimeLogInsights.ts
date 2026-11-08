@@ -150,9 +150,5 @@ export function formatRuntimeLogIssueReport(input: RuntimeLogIssueReportInput): 
 }
 
 export function runtimeLogInsightTone(status: RuntimeLogInsight["status"]): string {
-  if (status === "error") return statusToneClasses("error");
-  if (status === "warning") return statusToneClasses("warning");
-  if (status === "ok") return statusToneClasses("ok");
-  return statusToneClasses("neutral");
-
+  return statusToneClasses(status);
 }

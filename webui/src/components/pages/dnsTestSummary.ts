@@ -64,11 +64,7 @@ export function formatDnsTestReport(summary: DnsTestSummary, profile: string, pr
 }
 
 export function dnsStatusTone(status: DnsTestSummary["status"]): string {
-  if (status === "ok") return statusToneClasses("ok");
-  if (status === "warn") return statusToneClasses("warn");
-  if (status === "fail") return statusToneClasses("danger");
-  return statusToneClasses("neutral");
-
+  return statusToneClasses(status === "fail" ? "danger" : status);
 }
 
 function parseFields(lines: string[]): Record<string, string> {

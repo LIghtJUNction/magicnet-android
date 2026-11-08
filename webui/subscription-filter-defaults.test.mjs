@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const component = readFileSync(
-  new URL("./src/components/pages/SubscriptionsPage.vue", import.meta.url),
+  new URL("./src/components/pages/subscriptions/SubscriptionFilterCard.vue", import.meta.url),
   "utf8",
 );
 const installer = readFileSync(

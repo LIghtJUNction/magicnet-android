@@ -109,9 +109,7 @@ export function formatNetworkSnapshotReport(
 export function networkInsightTone(
   tone: NetworkSnapshotInsight["tone"],
 ): string {
-  if (tone === "ok") return statusToneClasses("ok");
-  if (tone === "warn") return statusToneClasses("warn");
-  return statusToneClasses("neutral");
+  return statusToneClasses(tone === "info" ? "neutral" : tone);
 }
 
 function collectInterfaceNames(text: string): string[] {

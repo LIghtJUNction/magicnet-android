@@ -65,10 +65,7 @@ export function formatWebuiInstallPlanReport(plan: WebuiInstallPlan): string {
 }
 
 export function webuiInstallPlanTone(status: WebuiInstallPlan["status"]): string {
-  if (status === "danger") return statusToneClasses("danger");
-  if (status === "warning") return statusToneClasses("warning");
-  return statusToneClasses("ok");
-
+  return statusToneClasses(status);
 }
 
 function archiveKind(pathname: string): string {

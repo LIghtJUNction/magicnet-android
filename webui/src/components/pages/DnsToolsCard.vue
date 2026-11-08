@@ -29,12 +29,6 @@ const pendingDnsPlan = computed(() => pendingDnsProfile.value
   : null);
 const dnsPlanCopied = ref(false);
 const quickDomains = ["www.gstatic.com", "cloudflare.com", "dns.google", "www.baidu.com"] as const;
-const dnsProfiles = [
-  "default",
-  "cloudflare-doh",
-  "cloudflare-dot",
-  "cloudflare-udp",
-] as const;
 const dnsSummary = computed(() => parseDnsTestSummary(dnsTestOutput.value, testedDomain.value));
 
 async function runSetDnsProfile(profile: string): Promise<void> {

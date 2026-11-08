@@ -35,14 +35,6 @@ export function buildWebuiPanelInsight(checks: WebuiVerifyCheck[], verifyOutput:
       missing: [...missing, ...notReported]
     };
   }
-  if (!checks.length) {
-    return {
-      status: "warning",
-      title: t("未识别校验结果"),
-      detail: t("webui verify 有输出，但未解析到标准检查项。"),
-      missing: []
-    };
-  }
   return {
     status: "ok",
     title: t("面板校验通过"),
@@ -52,9 +44,5 @@ export function buildWebuiPanelInsight(checks: WebuiVerifyCheck[], verifyOutput:
 }
 
 export function webuiInsightTone(status: WebuiPanelInsight["status"]): string {
-  if (status === "ok") return statusToneClasses("ok");
-  if (status === "missing") return statusToneClasses("missing");
-  if (status === "warning") return statusToneClasses("warning");
-  return statusToneClasses("neutral");
-
+  return statusToneClasses(status);
 }

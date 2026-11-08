@@ -50,9 +50,6 @@ import { buildSubscriptionUsageOverview } from "@/composables/subscriptionUsage"
 import SubscriptionLifecycleRecord from "./subscriptions/SubscriptionLifecycleRecord.vue";
 import { pendingSubscriptionDraft, takePendingSubscriptionDraft } from "./subscriptionDraft";
 
-// 默认节点过滤词与提示（清空并保存即可关闭过滤）：
-const filterPresets = ["免费", "free", "HK", "香港", "TW", "台湾"] as const;
-
 const {
   state,
   startPrivateBackgroundCli,

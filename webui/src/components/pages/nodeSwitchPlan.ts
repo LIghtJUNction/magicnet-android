@@ -60,11 +60,7 @@ export function formatNodeSwitchPlanReport(plan: NodeSwitchPlan): string {
 }
 
 export function nodeSwitchPlanTone(status: NodeSwitchPlan["status"]): string {
-  if (status === "switch") return statusToneClasses("switch");
-  if (status === "warning") return statusToneClasses("danger");
-  if (status === "keep") return statusToneClasses("keep");
-  return statusToneClasses("neutral");
-
+  return statusToneClasses(status === "warning" ? "danger" : status);
 }
 
 function plan(

@@ -42,11 +42,7 @@ export function buildConnectionClosePlan(
 }
 
 export function connectionClosePlanTone(status: ConnectionClosePlan["status"]): string {
-  if (status === "danger") return statusToneClasses("danger");
-  if (status === "warning") return statusToneClasses("warning");
-  if (status === "ok") return statusToneClasses("ok");
-  return statusToneClasses("neutral");
-
+  return statusToneClasses(status);
 }
 
 export function formatConnectionCloseDetail(plan: ConnectionClosePlan): string {
