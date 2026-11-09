@@ -238,6 +238,35 @@ def validate_helper_lifecycle(loss, before, before_helper):
             'Route helper calibration changed other rules or does not describe the fault core')
 
 
+def uplink_observation(value, interface, uid, minimum_attempts):
+    require(isinstance(value, dict), 'Local uplink lacks an independent observation')
+    state = value.get('state')
+    require(matches(state, {'status': 'present', 'warning': False,
+                            'consecutive_failures': 0, 'recovery_limit': 3})
+            and type(state.get('recovery_attempts')) is int
+            and minimum_attempts <= state['recovery_attempts'] <= 3
+            and positive_int(state.get('checked_at'))
+            and state.get('recovery_status') in
+                ('none', 'pending', 'ok', 'failed', 'busy', 'cooldown', 'exhausted')
+            and all(key in state and (state[key] is None or type(state[key]) is int and state[key] >= 0)
+                    for key in ('next_check_at', 'retry_in_seconds', 'last_recovery_at')),
+            'Local uplink lacks a present production route observation')
+    routes = text_rows(value.get('routes'), 'uplink routes')
+    require(matches(value, {'selected_default': True, 'ready': True})
+            and any(row.startswith('default ') and 'linkdown' not in row
+                    and re.search(r'\bdev ' + interface + r'(?: |$)', row) for row in routes),
+            'Local uplink lacks its original default route or service readiness')
+    tcp = value.get('tcp')
+    result = tcp.get('result') if isinstance(tcp, dict) else None
+    require(matches(tcp, {'called': True}) and 'reason' not in tcp
+            and matches(result, {'complete': True, 'ok': True, 'uid': uid,
+                                 'accepted': 1, 'reason': 'sentinel'})
+            and result.get('transport', 'tcp') == 'tcp'
+            and positive_int(result.get('elapsed_ms')) and result['elapsed_ms'] <= 15000,
+            'Local uplink lacks a completed application-UID TCP control')
+    return state
+
+
 def validate_route_recovery(evidence):
     require(matches(evidence, {'schema': 1, 'status': 'verified',
                               'scope': 'disposable-android-app-uid-tun',
@@ -326,13 +355,12 @@ def validate_route_recovery(evidence):
                     for key in ('down_flags', 'up_flags'))
             and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
             'Local uplink reconnect was not verified')
-    uplink = reconnect.get('recovery_after')
-    require(matches(uplink, {'status': 'present', 'warning': False,
-                            'consecutive_failures': 0, 'recovery_limit': 3})
-            and type(uplink.get('recovery_attempts')) is int
-            and recovered['recovery_attempts'] <= uplink['recovery_attempts'] <= 3
-            and positive_int(uplink.get('checked_at')),
-            'Local uplink reconnect lacks a production route observation')
+    baseline = uplink_observation(reconnect.get('baseline'), reconnect['interface'],
+                                  evidence['app_uid'], recovered['recovery_attempts'])
+    final = uplink_observation(reconnect.get('last_observation'), reconnect['interface'],
+                              evidence['app_uid'], baseline['recovery_attempts'])
+    require(matches(reconnect.get('recovery_after'), final) and final == reconnect['recovery_after'],
+            'Local uplink recovery does not match its last complete observation')
 
 
 def validate_report(report, sha):

@@ -38,6 +38,16 @@ def udp_result(ok):
             'request_attempted': True}
 
 
+def uplink_observation(state):
+    return {'state': state.copy(),
+            'routes': ['default via 10.0.2.2 dev eth0 table eth0',
+                       'default via 192.168.1.1 dev wlan0 table wlan0'],
+            'selected_default': True, 'ready': True,
+            'tcp': {'called': True, 'result': {
+                'complete': True, 'ok': True, 'uid': 10123,
+                'reason': 'sentinel', 'accepted': 1, 'elapsed_ms': 12}}}
+
+
 def eth0_rules(net_id):
     return [f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
             f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0']
@@ -100,7 +110,8 @@ def completed_report():
     previous = {'status': 'present', 'recovery_limit': 3, 'recovery_attempts': 0}
     recovered = {'status': 'present', 'warning': False, 'recovery_status': 'ok',
                  'recovery_limit': 3, 'consecutive_failures': 0,
-                 'recovery_attempts': 1, 'last_recovery_at': 100, 'checked_at': 101}
+                 'recovery_attempts': 1, 'last_recovery_at': 100, 'checked_at': 101,
+                 'next_check_at': 161, 'retry_in_seconds': 200}
     recovery = {
         'schema': 1, 'status': 'verified', 'scope': 'disposable-android-app-uid-tun',
         'positive': True, 'reject': True, 'positive_after': True, 'restored': True, 'app_uid': 10123,
@@ -129,6 +140,8 @@ def completed_report():
                              'control_transport_verified': True, 'control_channel_survived': True,
                              'restore_guard_finished': True,
                              'down_flags': 4098, 'up_flags': 4163,
+                             'baseline': uplink_observation(recovered),
+                             'last_observation': uplink_observation(recovered | {'checked_at': 102}),
                              'recovery_after': recovered | {'checked_at': 102}},
     }
     return {
@@ -685,9 +698,84 @@ class AndroidReportGateTests(unittest.TestCase):
         for attempts in (1, 2, 3):
             with self.subTest(attempts=attempts):
                 report = completed_report()
-                observed = report['provenance']['route_recovery']['uplink_reconnect']['recovery_after']
+                reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+                observed = reconnect['recovery_after']
                 observed.update(recovery_attempts=attempts, checked_at=50)
+                reconnect['last_observation']['state'] = observed.copy()
                 GATE.validate_report(report, SHA)
+
+    def test_uplink_requires_complete_baseline_and_last_observations(self):
+        changes = (((), None), (('state',), None), (('state', 'status'), 'unknown'),
+                   (('state', 'warning'), True), (('state', 'consecutive_failures'), 1),
+                   (('state', 'recovery_attempts'), True), (('state', 'checked_at'), 0),
+                   (('state', 'next_check_at'), False), (('state', 'recovery_status'), 'unknown'),
+                   (('ready',), None), (('ready',), False), (('ready',), 1))
+        for name in ('baseline', 'last_observation'):
+            for path, value in changes:
+                with self.subTest(name=name, path=path, value=value):
+                    report = completed_report()
+                    reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+                    target = reconnect
+                    for key in (name, *path)[:-1]:
+                        target = target[key]
+                    target[(name, *path)[-1]] = value
+                    self.assert_rejected(report)
+            report = completed_report()
+            report['provenance']['route_recovery']['uplink_reconnect'].pop(name)
+            self.assert_rejected(report)
+
+    def test_uplink_recomputes_original_interface_default_in_both_observations(self):
+        for name in ('baseline', 'last_observation'):
+            for routes in (None, [], ['default via 10.0.2.2 dev eth0'],
+                           ['192.168.1.0/24 dev wlan0 scope link'],
+                           ['default via 192.168.1.1 dev wlan0 linkdown'],
+                           ['default via 192.168.1.1 dev wlan01'],
+                           ['default via 192.168.1.1 dev wlan0\n']):
+                with self.subTest(name=name, routes=routes):
+                    report = completed_report()
+                    report['provenance']['route_recovery']['uplink_reconnect'][name]['routes'] = routes
+                    self.assert_rejected(report)
+            for selected in (False, 1, None):
+                report = completed_report()
+                report['provenance']['route_recovery']['uplink_reconnect'][name]['selected_default'] = selected
+                self.assert_rejected(report)
+        report = completed_report()
+        report['provenance']['route_recovery']['uplink_reconnect']['interface'] = 'eth0'
+        GATE.validate_report(report, SHA)
+
+    def test_uplink_requires_actual_same_uid_tcp_success_before_and_after(self):
+        for name in ('baseline', 'last_observation'):
+            for tcp in (None, {}, {'called': False, 'reason': 'not_ready'},
+                        {'called': True, 'reason': 'probe_error'},
+                        {'called': True, 'result': udp_result(True)}):
+                with self.subTest(name=name, tcp=tcp):
+                    report = completed_report()
+                    report['provenance']['route_recovery']['uplink_reconnect'][name]['tcp'] = tcp
+                    self.assert_rejected(report)
+            for key, value in (('complete', False), ('complete', 1), ('ok', False),
+                               ('uid', 0), ('uid', 10124), ('uid', True),
+                               ('accepted', 0), ('accepted', True), ('reason', 'timeout'),
+                               ('elapsed_ms', 0), ('elapsed_ms', True), ('elapsed_ms', 15001)):
+                with self.subTest(name=name, key=key, value=value):
+                    report = completed_report()
+                    tcp = report['provenance']['route_recovery']['uplink_reconnect'][name]['tcp']
+                    tcp['result'][key] = value
+                    self.assert_rejected(report)
+
+    def test_uplink_observations_bind_final_state_and_preserve_budget(self):
+        report = completed_report()
+        reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+        reconnect['last_observation']['state']['checked_at'] += 1
+        self.assert_rejected(report)
+        report = completed_report()
+        reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+        reconnect['baseline']['state']['recovery_attempts'] = 0
+        self.assert_rejected(report)
+        reconnect['baseline']['state']['recovery_attempts'] = 2
+        self.assert_rejected(report)
+        reconnect['last_observation']['state']['recovery_attempts'] = 2
+        reconnect['recovery_after']['recovery_attempts'] = 2
+        GATE.validate_report(report, SHA)
 
     def test_report_reader_is_bounded_and_rejects_ambiguous_json(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,8 +1,9 @@
 # Android KernelSU network checks
 
 The **Android KernelSU Acceptance** workflow runs on pull requests, main pushes,
-merge queues and release calls, with an optional manual public benchmark. It
-installs the module into a disposable Android 15/API 35 `google_apis` x86_64 emulator. The AVD keeps the
+merge queues and release calls, with an optional manual public benchmark.
+New main pushes replace obsolete automatic runs; pinned release calls keep running.
+The job installs the module into a disposable Android 15/API 35 `google_apis` x86_64 emulator. The AVD keeps the
 SDK userspace and ramdisk, but boots a pinned API35/6.6 x86_64 GKI built against
 Android CI build 12525588 with KernelSU v3.2.0 and the required x86_64 syscall
 hardening compatibility patches. The source manifest and build recipe are pinned;
@@ -45,7 +46,9 @@ The harness deletes only live IPv4
 the core generation, `magicnet0` and TUN forwarding table. The test requires
 readiness to become false and a new application connection to fail, then waits
 for the normal `connectivity tick` recovery path to restore both rules and flow.
-It also exercises a controlled virtual uplink down/up transition. Production
+It also exercises a controlled virtual uplink down/up transition, requiring a
+fresh TCP positive control before interruption and retaining the final route,
+readiness and app observation if recovery times out. Production
 grace, confirmation and cooldown periods remain active; the fixture does not
 fabricate canonical state or require Google or a subscription provider.
 The first fixture activation observes the normal stop/start boundary to prove

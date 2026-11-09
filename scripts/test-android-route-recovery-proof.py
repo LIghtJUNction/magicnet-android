@@ -130,6 +130,10 @@ class Device:
                     elapsed_ms=10, transport='udp', receiver_bound=True, receiver_closed=True,
                     request_attempted=True)
 
+    def tcp_app(self):
+        result = self.app()
+        return {key: result[key] for key in proof.APP_FIELDS}
+
     def adb(self, command, timeout=10):
         self.calls.append(command)
         output, rc = '', 0
@@ -776,23 +780,134 @@ class RecoveryTests(unittest.TestCase):
 
     def test_uplink_down_up_preserves_live_adb_and_app_path(self):
         evidence = {}
-        proof.uplink_reconnect(self.control, self.device.app, 10123, evidence)
+        def sentinel():
+            return self.device.tcp_app() | {'url': 'private-value', 'marker': 'private-value'}
+        proof.uplink_reconnect(self.control, sentinel, 10123, evidence)
         self.assertEqual(evidence['status'], 'verified')
         self.assertTrue(evidence['down_observed'])
         self.assertTrue(evidence['up_observed'])
         self.assertTrue(evidence['control_channel_survived'])
         self.assertTrue(evidence['restore_guard_finished'])
+        for key in ('baseline', 'last_observation'):
+            observed = evidence[key]
+            self.assertTrue(observed['selected_default'])
+            self.assertTrue(observed['ready'])
+            self.assertEqual(observed['state']['status'], 'present')
+            self.assertEqual(observed['tcp'], {'called': True, 'result': self.device.tcp_app()})
+        self.assertEqual(evidence['last_observation']['state'], evidence['recovery_after'])
+        self.assertNotIn('private-value', json.dumps(evidence))
+
+    def test_uplink_baseline_must_succeed_before_guard_or_link_mutation(self):
+        for failure in ('state', 'ready', 'tcp', 'udp', 'invalid_result'):
+            self.setUp()
+            evidence, calls = {}, []
+            if failure == 'state':
+                self.device.state = state('unknown')
+            def sentinel():
+                calls.append(True)
+                result = self.device.tcp_app()
+                if failure == 'tcp':
+                    return result | {'ok': False, 'reason': 'timeout', 'accepted': 0, 'elapsed_ms': 5000}
+                if failure == 'udp':
+                    return self.device.app()
+                return result | {'reason': 'private-value'} if failure == 'invalid_result' else result
+            with self.subTest(failure=failure), patch.object(self.control, 'ready', return_value=failure != 'ready'):
+                with self.assertRaisesRegex(RuntimeError, '^uplink_baseline_not_ready$'):
+                    proof.uplink_reconnect(self.control, sentinel, 10123, evidence)
+            self.assertFalse(any('link set' in call or ' nohup ' in call for call in self.device.calls))
+            self.assertEqual(evidence['baseline']['tcp']['called'], failure not in ('state', 'ready'))
+            self.assertEqual(len(calls), int(failure not in ('state', 'ready')))
+            self.assertNotIn('private-value', json.dumps(evidence))
+
+    def test_uplink_timeout_retains_each_failed_predicate_and_short_circuit(self):
+        for failure in ('route', 'state', 'ready', 'tcp'):
+            self.setUp()
+            evidence, ready_calls, tcp_calls = {}, [], []
+            original_adb, original_ready = self.device.adb, self.control.ready
+            def down():
+                return proof.IP + ' link set dev wlan0 down' in self.device.calls
+            def adb(command, **kwargs):
+                result = original_adb(command, **kwargs)
+                if command == proof.IP + ' link set dev wlan0 down':
+                    if failure == 'route':
+                        self.device.uplinks = ['eth0']
+                    if failure == 'state':
+                        self.device.state = state('unknown')
+                return result
+            def ready(expected):
+                ready_calls.append(down())
+                return original_ready(expected) and not (down() and failure == 'ready')
+            def sentinel():
+                tcp_calls.append(down())
+                result = self.device.tcp_app()
+                return (result | {'ok': False, 'reason': 'timeout', 'accepted': 0, 'elapsed_ms': 5000}
+                        if down() and failure == 'tcp' else result)
+            self.control.adb = adb
+            with self.subTest(failure=failure), patch.object(self.control, 'ready', ready), \
+                    patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                    patch.object(proof.time, 'sleep', self.sleep):
+                with self.assertRaisesRegex(RuntimeError, '^uplink_reconnect_deadline$'):
+                    proof.uplink_reconnect(self.control, sentinel, 10123, evidence)
+            observed = evidence['last_observation']
+            self.assertGreaterEqual(self.clock, proof.RECOVERY_TIMEOUT)
+            self.assertTrue(evidence['up_observed'])
+            self.assertTrue(evidence['restore_guard_finished'])
+            self.assertTrue(evidence['baseline']['tcp']['result']['ok'])
+            if failure in ('route', 'state'):
+                self.assertEqual(ready_calls, [False])
+                self.assertIsNone(observed['ready'])
+            if failure != 'tcp':
+                self.assertEqual(tcp_calls, [False])
+                reason = {'route': 'selected_default_missing', 'state': 'tun_not_present',
+                          'ready': 'not_ready'}[failure]
+                self.assertEqual(observed['tcp'], {'called': False, 'reason': reason})
+            else:
+                self.assertTrue(observed['ready'])
+                self.assertTrue(observed['tcp']['called'])
+                self.assertEqual(observed['tcp']['result']['reason'], 'timeout')
+                self.assertEqual(observed['tcp']['result']['accepted'], 0)
+            self.assertEqual(observed['selected_default'], failure != 'route')
+
+    def test_uplink_errors_preserve_partial_evidence_without_raw_exception_text(self):
+        for failure in ('route', 'ready', 'tcp'):
+            self.setUp()
+            evidence = {}
+            original_adb, original_ready = self.device.adb, self.control.ready
+            def down():
+                return proof.IP + ' link set dev wlan0 down' in self.device.calls
+            def adb(command, **kwargs):
+                if down() and failure == 'route' and command == proof.IP + ' -4 route show table all':
+                    return subprocess.CompletedProcess(['adb'], 1, 'private-value', 'private-value')
+                return original_adb(command, **kwargs)
+            def ready(expected):
+                if down() and failure == 'ready':
+                    raise ValueError('private-value')
+                return original_ready(expected)
+            def sentinel():
+                if down() and failure == 'tcp':
+                    raise RuntimeError('private-value')
+                return self.device.tcp_app()
+            self.control.adb = adb
+            with self.subTest(failure=failure), patch.object(self.control, 'ready', ready):
+                with self.assertRaises((RuntimeError, ValueError)):
+                    proof.uplink_reconnect(self.control, sentinel, 10123, evidence)
+            observed = evidence['last_observation']
+            self.assertTrue(evidence['up_observed'])
+            self.assertEqual(observed['tcp']['called'], failure == 'tcp')
+            self.assertEqual(observed['tcp']['reason'], {
+                'route': 'route_not_observed', 'ready': 'readiness_not_observed', 'tcp': 'probe_error'}[failure])
+            self.assertNotIn('private-value', json.dumps(evidence))
 
     def test_uplink_carrying_adb_is_rejected_before_mutation(self):
         self.device.peers += TCP + '\n'
         with self.assertRaisesRegex(RuntimeError, 'uplink_carries_adb_control'):
-            proof.uplink_reconnect(self.control, self.device.app, 10123, {})
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
         self.assertFalse(any('link set' in call for call in self.device.calls))
 
     def test_android_multiple_defaults_use_kernel_selected_egress(self):
         self.device.uplinks = ['eth0', 'wlan0']
         evidence = {}
-        proof.uplink_reconnect(self.control, self.device.app, 10123, evidence)
+        proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
         self.assertEqual(evidence['status'], 'verified')
         self.assertEqual(evidence['interface'], 'wlan0')
         self.assertEqual(evidence['default_interfaces'], ['eth0', 'wlan0'])
@@ -803,13 +918,13 @@ class RecoveryTests(unittest.TestCase):
             self.device.calls.clear()
             self.device.selected_uplink = selected
             with self.subTest(selected=selected), self.assertRaisesRegex(RuntimeError, 'ambiguous_or_missing_uplink'):
-                proof.uplink_reconnect(self.control, self.device.app, 10123, {})
+                proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
             self.assertFalse(any('link set' in call for call in self.device.calls))
 
     def test_failed_down_observation_still_restores_uplink(self):
         self.device.fail_down_observation = True
         with self.assertRaisesRegex(RuntimeError, 'device_command_failed'):
-            proof.uplink_reconnect(self.control, self.device.app, 10123, {})
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
         self.assertIn(proof.IP + ' link set dev wlan0 up', self.device.calls[-3:])
         self.assertTrue(self.device.flags & 1)
 
@@ -823,7 +938,7 @@ class RecoveryTests(unittest.TestCase):
         self.control.adb = adb
         evidence = {}
         with patch.object(proof.time, 'monotonic', lambda: self.clock), patch.object(proof.time, 'sleep', self.sleep):
-            proof.uplink_reconnect(self.control, self.device.app, 10123, evidence)
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
         self.assertEqual(self.clock, 10)
         self.assertTrue(evidence['restore_guard_finished'])
 
@@ -836,7 +951,7 @@ class RecoveryTests(unittest.TestCase):
         self.control.adb = adb
         with patch.object(proof.time, 'monotonic', lambda: self.clock), patch.object(proof.time, 'sleep', self.sleep):
             with self.assertRaisesRegex(RuntimeError, 'uplink_restore_guard_deadline'):
-                proof.uplink_reconnect(self.control, self.device.app, 10123, {})
+                proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
         self.assertTrue(self.device.flags & 1)
         self.assertEqual(self.clock, 15)
 

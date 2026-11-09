@@ -34,7 +34,13 @@ POLL_INTERVAL = 5
 TUN_FIELDS = ('status', 'warning', 'checked_at', 'next_check_at', 'retry_in_seconds',
               'consecutive_failures', 'recovery_attempts', 'recovery_limit',
               'recovery_status', 'last_recovery_at')
-UDP_FIELDS = ('complete', 'ok', 'uid', 'reason', 'accepted', 'elapsed_ms', 'transport',
+APP_FIELDS = ('complete', 'ok', 'uid', 'reason', 'accepted', 'elapsed_ms')
+APP_REASONS = {'identity', 'https_response', 'https_prefix', 'sentinel', 'invalid_app_identity',
+               'invalid_input', 'invalid_operation', 'interrupted', 'dns', 'tls', 'timeout',
+               'connect', 'transport', 'unexpected_redirect', 'unsafe_redirect',
+               'unexpected_http_status', 'unexpected_body', 'body_limit', 'short_body',
+               'sentinel_mismatch', 'adb_timeout', 'adb_transport', 'invalid_response'}
+UDP_FIELDS = APP_FIELDS + ('transport',
               'receiver_bound', 'receiver_closed', 'request_attempted')
 
 
@@ -124,6 +130,20 @@ def udp_result(result, uid, expected):
     return (app_result(result, uid, expected) and result.get('transport') == 'udp'
             and all(result.get(key) is True for key in
                     ('receiver_bound', 'receiver_closed', 'request_attempted')))
+
+
+def app_observation(result):
+    if not (isinstance(result, dict) and all(key in result for key in APP_FIELDS)
+            and all(type(result.get(key)) is bool for key in ('complete', 'ok'))
+            and isinstance(result.get('reason'), str) and result['reason'] in APP_REASONS
+            and (result.get('uid') is None or type(result.get('uid')) is int
+                 and 0 <= result['uid'] <= 2147483647)
+            and all(type(result.get(key)) is int and 0 <= result[key] <= 65000
+                    for key in ('accepted', 'elapsed_ms'))
+            and ('transport' not in result or result['transport'] in ('tcp', 'udp'))):
+        return None
+    fields = APP_FIELDS + (('transport',) if 'transport' in result else ())
+    return {key: result.get(key) for key in fields}
 
 
 def without_helper(snapshot):
@@ -581,6 +601,45 @@ def uplink_reconnect(control, sentinel, uid, evidence):
                 'uplink_carries_adb_control_or_unknown_route')
     evidence['control_transport_verified'] = True
 
+    def begin_observation(key, state=None):
+        observed = {'state': state, 'routes': None, 'selected_default': None, 'ready': None,
+                    'tcp': {'called': False, 'reason': 'state_not_observed' if state is None
+                            else 'route_not_observed'}}
+        evidence[key] = observed
+        return observed
+
+    def recovered(state, key='last_observation'):
+        observed = begin_observation(key, state)
+        routes = observed['routes'] = lines(control.command(IP + ' -4 route show table all'))
+        routed = observed['selected_default'] = any(
+            row.startswith('default ') and 'linkdown' not in row
+            and re.search(r'\bdev ' + interface + r'(?: |$)', row) for row in routes)
+        if not routed:
+            observed['tcp']['reason'] = 'selected_default_missing'
+            return False
+        if state['status'] != 'present':
+            observed['tcp']['reason'] = 'tun_not_present'
+            return False
+        observed['tcp']['reason'] = 'readiness_not_observed'
+        observed['ready'] = control.ready(True)
+        if not observed['ready']:
+            observed['tcp']['reason'] = 'not_ready'
+            return False
+        observed['tcp'] = {'called': True, 'reason': 'probe_error'}
+        try:
+            result = app_observation(sentinel())
+        except Exception:
+            raise RuntimeError('uplink_tcp_probe_failed') from None
+        if result is None:
+            observed['tcp']['reason'] = 'invalid_result'
+            return False
+        observed['tcp'] = {'called': True, 'result': result}
+        return result.get('transport', 'tcp') == 'tcp' and app_result(result, uid, True)
+
+    evidence['stage'] = 'baseline'
+    begin_observation('baseline')
+    require(recovered(control.connectivity(), 'baseline'), 'uplink_baseline_not_ready')
+
     def flags():
         text = control.command('cat /sys/class/net/' + interface + '/flags').strip()
         require(re.fullmatch(r'0x[0-9a-fA-F]+', text), 'invalid_interface_flags')
@@ -620,13 +679,8 @@ def uplink_reconnect(control, sentinel, uid, evidence):
         evidence['up_observed'] = evidence['up_flags'] & 1 == 1
     require(evidence['up_observed'], 'uplink_restore_failed')
     evidence['stage'] = 'reconnect'
+    begin_observation('last_observation')
     control.tick(force=True)
-    def recovered(state):
-        routes = lines(control.command(IP + ' -4 route show table all'))
-        routed = any(row.startswith('default ') and 'linkdown' not in row
-                     and re.search(r'\bdev ' + interface + r'(?: |$)', row) for row in routes)
-        return (routed and state['status'] == 'present' and control.ready(True)
-                and app_result(sentinel(), uid, True))
     evidence['recovery_after'] = control.wait(recovered, RECOVERY_TIMEOUT, 'uplink_reconnect_deadline')
     evidence.update(ready_after_recovery=True, app_after_recovery=True,
                     status='verified', stage='complete')
