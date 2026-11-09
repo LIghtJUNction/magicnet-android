@@ -5,7 +5,7 @@ async function mount(page, failure = "") {
   await page.addInitScript(({ failure, authKey }) => {
     localStorage.setItem("magicnet.webui.onboarding.v1", "dismissed");
     const config = { outbounds: [{ type: "direct", tag: "direct" }], route: { final: "direct" } };
-    window.__tailscale = { paused: [], identity: false, core: "running", lifecycleCalls: 0, revision: 0, config, payload: "", saves: 0, restarts: 0, removals: 0, failure, loginState: failure === "browser" ? "NeedsLogin" : "Running", loginOpened: false };
+    window.__tailscale = { paused: [], identity: false, core: "running", statusReads: 0, lifecycleCalls: 0, revision: 0, config, payload: "", saves: 0, restarts: 0, removals: 0, failure, loginState: failure === "browser" ? "NeedsLogin" : "Running", loginOpened: false };
     window.ksu = {
       spawn(command, _args, _options, callbackName) {
         setTimeout(() => {
@@ -14,7 +14,11 @@ async function mount(page, failure = "") {
           let output = "";
           let errno = 0;
           if (command.includes("config-editor get sing-box")) output = JSON.stringify(fixture.config);
-          else if (command.includes("--json tailscale status")) output = JSON.stringify({schema:1,ok:true,command:"tailscale.status",data:{enabled:fixture.config.endpoints?.some(e=>e.type==='tailscale') || false,resumable:fixture.paused.length>0,logout_pending:false,local_identity:fixture.identity,core:fixture.core,revision:fixture.revision.toString(16).padStart(64,'0')}});
+          else if (command.includes("--json tailscale status")) {
+            fixture.statusReads++;
+            if (fixture.failure === "status") errno = 1;
+            else output = JSON.stringify({schema:1,ok:true,command:"tailscale.status",data:{enabled:fixture.config.endpoints?.some(e=>e.type==='tailscale') || false,resumable:fixture.paused.length>0,logout_pending:false,local_identity:fixture.identity,core:fixture.core,revision:fixture.revision.toString(16).padStart(64,'0')}});
+          }
           else if (/tailscale (disable|enable|logout) /.test(command)) {
             const action=command.match(/tailscale (disable|enable|logout) /)[1];
             fixture.lifecycleCalls++;
@@ -82,6 +86,34 @@ async function expectNoSecret(page) {
   });
   expect(displayed).not.toContain(authKey);
 }
+
+test("status reads settle without triggering another foreground operation", async ({ page }) => {
+  await mount(page);
+  const refresh = page.getByRole("button", { name: "读取连接状态", exact: true });
+  await expect(refresh).toBeEnabled();
+  const reads = await page.evaluate(() => window.__tailscale.statusReads);
+  expect(reads).toBeGreaterThan(0);
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  await expect(page.getByLabel("设备名称", { exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => window.__tailscale.statusReads)).toBe(reads + 1);
+  expect(await page.evaluate(async () => {
+    const { state } = (await import("/src/composables/useMagicNet.ts")).useMagicNet();
+    return { busy: state.busy, queueDepth: state.queueDepth };
+  })).toEqual({ busy: false, queueDepth: 0 });
+});
+
+test("failed status stays unknown and blocks setup until an actual reread succeeds", async ({ page }) => {
+  await mount(page, "status");
+  await expect(page.getByRole("heading", { name: "连接状态未确认", exact: true })).toBeVisible();
+  const connect = page.getByRole("button", { name: "登录 Tailscale 并自动配置", exact: true });
+  await expect(connect).toBeDisabled();
+  expect(await page.evaluate(() => window.__tailscale.saves + window.__tailscale.restarts)).toBe(0);
+  await page.evaluate(() => { window.__tailscale.failure = ""; });
+  await page.getByRole("button", { name: "读取连接状态", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Tailscale 未启用", exact: true })).toBeVisible();
+  await expect(connect).toBeEnabled();
+});
 
 test("connects without JSON editing, prevents duplicate submission and keeps secrets private", async ({ page }) => {
   const errors = [];
