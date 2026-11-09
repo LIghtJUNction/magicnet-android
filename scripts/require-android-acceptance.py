@@ -143,6 +143,13 @@ def validate_route_recovery(evidence):
                     for key in ('down_flags', 'up_flags'))
             and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
             'Local uplink reconnect was not verified')
+    uplink = reconnect.get('recovery_after')
+    require(matches(uplink, {'status': 'present', 'warning': False,
+                            'consecutive_failures': 0, 'recovery_limit': 3})
+            and type(uplink.get('recovery_attempts')) is int
+            and recovered['recovery_attempts'] <= uplink['recovery_attempts'] <= 3
+            and positive_int(uplink.get('checked_at')),
+            'Local uplink reconnect lacks a production route observation')
 
 
 def validate_report(report, sha):

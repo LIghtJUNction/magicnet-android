@@ -151,7 +151,7 @@ class RecoveryTests(unittest.TestCase):
         self.run_control()
         result = self.evidence
         self.assertEqual(result['status'], 'verified')
-        self.assertEqual(result['removed_rule_count'], len(OWNED))
+        self.assertEqual(result['removed_rule_count'], 2)
         self.assertEqual(result['first_missing']['consecutive_failures'], 1)
         self.assertEqual(result['before']['core_pid'], result['fault']['core_pid'])
         self.assertNotEqual(result['before']['core_pid'], result['after']['core_pid'])
@@ -163,8 +163,40 @@ class RecoveryTests(unittest.TestCase):
     def test_exact_zero_selector_may_delete_only_recorded_sibling(self):
         self.device.delete_sibling = True
         self.run_control()
-        self.assertEqual(self.evidence['removed_rule_count'], 4)
+        self.assertEqual(self.evidence['removed_rule_count'], 2)
         self.assertEqual(self.device.rules, FOREIGN + OWNED)
+
+    def test_android_goto_target_survives_lookup_only_fault(self):
+        # Real API 35 artifact: goto 9002 is outside the active ledger, while
+        # nop 9002 is owned. Deleting the nop changes goto to [unresolved].
+        owned = ['9001: from all fwmark 0x400000/0xe00000 lookup 2022',
+                 '9002: from all nop', '32768: not from all fwmark 0x200000/0xe00000 lookup 2022']
+        foreign = FOREIGN + ['9000: from all fwmark 0x200000/0xe00000 goto 9002']
+        ledger = LEDGER.split('rule4=', 1)[0] + ''.join('rule4=' + row + '\n' for row in owned)
+        with patch.dict(globals(), OWNED=owned, FOREIGN=foreign, LEDGER=ledger):
+            self.device = Device()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                result = original(command, **kwargs)
+                if ' rule del ' in command and '9002: from all nop' not in self.device.rules:
+                    self.device.rules = [row + ' [unresolved]' if row.endswith('goto 9002') else row
+                                         for row in self.device.rules]
+                return result
+            self.control = proof.Control(adb, self.evidence)
+            self.run_control()
+            self.assertEqual(self.evidence['owned_rules'], owned)
+            self.assertEqual(self.evidence['removed_rule_count'], 2)
+            self.assertEqual(Counter(self.evidence['fault']['rules']),
+                             Counter(foreign + ['9002: from all nop']))
+            self.assertTrue(all('lookup 2022' in call for call in self.device.calls if ' rule del ' in call))
+        with self.assertRaisesRegex(RuntimeError, 'invalid_rule_snapshot'):
+            proof.rules('9000: from all goto 9002 [unresolved]')
+
+    def test_ledger_without_capture_selectors_never_deletes_goto_or_nop(self):
+        self.device.ledger = '\n'.join(row for row in LEDGER.splitlines() if 'lookup 2022' not in row)
+        with self.assertRaisesRegex(RuntimeError, 'owned_capture_rule_unavailable'):
+            self.run_control()
+        self.assertFalse(any(' rule del ' in call for call in self.device.calls))
 
     def test_foreign_same_priority_aborts_before_any_delete(self):
         self.device.rules.append('9000: from all fwmark 0x42 lookup main')
@@ -216,6 +248,45 @@ class RecoveryTests(unittest.TestCase):
         self.assertGreaterEqual(self.clock, proof.RECOVERY_TIMEOUT)
         self.assertEqual(self.device.pid, 421)
         self.assertFalse(any('service restart' in call for call in self.device.calls))
+
+    def test_background_first_missing_is_read_before_eligible_explicit_tick(self):
+        original = self.device.adb
+        background, ticks = [], []
+        self.clock = 1000
+        def adb(command, **kwargs):
+            if command == proof.CLI + ' connectivity tick':
+                ticks.append(self.clock)
+            result = original(command, **kwargs)
+            if (' rule del ' in command and not background
+                    and not any('lookup 2022' in row for row in self.device.rules)):
+                original(proof.CLI + ' connectivity tick')
+                background.append(self.clock)
+                self.assertEqual(self.device.state['consecutive_failures'], 1)
+            if command != proof.CLI + ' connectivity tick':
+                # Every individual read remains within its real command budget.
+                self.assertGreaterEqual(kwargs.get('timeout', 10), 8)
+                self.clock += 8
+            return result
+        self.control.adb = adb
+        self.run_control()
+        self.assertGreaterEqual(ticks[-1] - background[0], proof.TICK_INTERVAL)
+        self.assertEqual(self.evidence['first_missing']['consecutive_failures'], 1)
+        self.assertEqual(self.evidence['first_missing_identity']['core_pid'], 421)
+        self.assertEqual(self.evidence['after']['core_pid'], 422)
+        self.assertEqual(self.evidence['status'], 'verified')
+
+    def test_wait_reads_pending_confirmation_before_due_tick(self):
+        self.device.rules = FOREIGN + [row for row in OWNED if 'lookup 2022' not in row]
+        self.device.state = state('missing', failures=1)
+        self.clock, self.control.last_tick = 60, 0
+        observed = []
+        def recovered(value):
+            observed.append((value['status'], value['consecutive_failures'], self.device.pid))
+            return value['status'] == 'present' and value['recovery_attempts'] == 1
+        with patch.object(proof.time, 'monotonic', lambda: self.clock), patch.object(proof.time, 'sleep', self.sleep):
+            self.control.wait(recovered, proof.RECOVERY_TIMEOUT, 'test_deadline')
+        self.assertEqual(observed[0], ('missing', 1, 421))
+        self.assertEqual(observed[-1], ('present', 0, 422))
 
     def test_recovery_cannot_destroy_foreign_rules(self):
         self.device.foreign_on_recover = True

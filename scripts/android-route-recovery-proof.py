@@ -183,14 +183,19 @@ class Control:
             self.command(CLI + ' connectivity tick', timeout=180)
             self.last_tick = time.monotonic()
             self.evidence['recovery_tick_count'] += 1
+            return True
+        return False
 
     def wait(self, predicate, timeout, reason):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            self.tick()
             state = self.connectivity()
             if predicate(state):
                 return state
+            if self.tick():
+                state = self.connectivity()
+                if predicate(state):
+                    return state
             time.sleep(min(POLL_INTERVAL, max(0, deadline - time.monotonic())))
         raise RuntimeError(reason)
 
@@ -233,19 +238,26 @@ class Control:
         require(re.fullmatch(r'[0-9a-f-]{36}', boot), 'invalid_boot_identity')
         owned = evidence['owned_rules'] = owned_rules(self.command(
             f'test -f {LEDGER} && test ! -L {LEDGER} && {BB} head -c {LIMIT + 1} {LEDGER}'), boot)
+        require(not Counter(owned) - Counter(before['rules']), 'ledger_rule_missing_before_fault')
+        capture = [row for row in owned if re.search(r'\blookup 2022(?: |$)', row)]
+        require(capture, 'owned_capture_rule_unavailable')
         evidence['recovery_before'] = baseline
         require(app_result(sentinel(), uid, True), 'baseline_app_not_captured')
         evidence['stage'] = 'remove_owned_rpdb'
-        self.remove_owned(before['rules'], owned)
+        # Keep goto targets alive: an unowned goto can reference an owned nop.
+        # Removing only table lookups breaks capture without changing that rule.
+        self.remove_owned(before['rules'], capture)
         fault = evidence['fault'] = self.snapshot()
-        evidence['removed_rule_count'] = sum((Counter(before['rules']) - Counter(fault['rules'])).values())
+        removed = Counter(before['rules']) - Counter(fault['rules'])
+        require(not removed - Counter(capture), 'fault_removed_non_capture_rule')
+        evidence['removed_rule_count'] = sum(removed.values())
         for key, fields in (('core_identity_unchanged', ('core_pid', 'core_start_ticks')),
                             ('tun_unchanged', ('tun_name', 'tun_ifindex')),
                             ('fib_unchanged', ('fib',))):
             evidence[key] = all(before[field] == fault[field] for field in fields)
             require(evidence[key], key + '_failed')
         foreign = Counter(before['rules']) - Counter(owned)
-        evidence['unowned_rules_unchanged'] = Counter(fault['rules']) == foreign
+        evidence['unowned_rules_unchanged'] = Counter(fault['rules']) - Counter(owned) == foreign
         require(evidence['unowned_rules_unchanged'] and evidence['removed_rule_count'] > 0,
                 'fault_not_confined_to_owned_rules')
         require(self.ready(False), 'fault_machine_readiness_not_rejected')
@@ -262,7 +274,6 @@ class Control:
         evidence['app_after_fault'] = False
         evidence['stage'] = 'watchdog_recovery'
         evidence['recovery_tick_count'] = 0
-        self.tick(force=True)  # Normal entry; production still enforces its due time.
 
         def recovered(state):
             if state['status'] == 'missing' and 'first_missing' not in evidence:
@@ -275,6 +286,10 @@ class Control:
             return (state['status'] == 'present' and state['recovery_status'] == 'ok'
                     and state['recovery_attempts'] > baseline['recovery_attempts'])
 
+        # The background watchdog may already have recorded missing=1. Capture
+        # that real observation before an eligible tick can perform recovery.
+        recovered(self.connectivity())
+        self.tick(force=True)  # Normal entry; production still enforces its due time.
         evidence['recovery_after'] = self.wait(recovered, RECOVERY_TIMEOUT, 'automatic_recovery_deadline')
         require('first_missing' in evidence, 'missing_confirmation_not_observed')
         after = evidence['after'] = self.snapshot()

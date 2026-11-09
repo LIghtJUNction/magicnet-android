@@ -43,6 +43,9 @@ def completed_report():
     before = {'core_pid': 400, 'core_start_ticks': 10000, 'tun_name': 'magicnet0',
               'tun_ifindex': 9, 'rules': [unowned, owned], 'fib': ['default dev magicnet0 scope link']}
     previous = {'status': 'present', 'recovery_limit': 3, 'recovery_attempts': 0}
+    recovered = {'status': 'present', 'warning': False, 'recovery_status': 'ok',
+                 'recovery_limit': 3, 'consecutive_failures': 0,
+                 'recovery_attempts': 1, 'last_recovery_at': 100, 'checked_at': 101}
     recovery = {
         'schema': 1, 'status': 'verified', 'scope': 'disposable-android-app-uid-tun',
         'positive': True, 'reject': True, 'positive_after': True, 'restored': True, 'app_uid': 10123,
@@ -60,15 +63,14 @@ def completed_report():
             'recovery_before': previous,
             'first_missing': previous | {'status': 'missing', 'consecutive_failures': 1},
             'first_missing_identity': {'core_pid': 400, 'core_start_ticks': 10000},
-            'recovery_after': {'status': 'present', 'warning': False, 'recovery_status': 'ok',
-                               'recovery_limit': 3, 'consecutive_failures': 0,
-                               'recovery_attempts': 1, 'last_recovery_at': 100, 'checked_at': 101},
+            'recovery_after': recovered,
         },
         'uplink_reconnect': {'status': 'verified', 'interface': 'wlan0', 'down_observed': True,
                              'up_observed': True, 'ready_after_recovery': True, 'app_after_recovery': True,
                              'control_transport_verified': True, 'control_channel_survived': True,
                              'restore_guard_finished': True,
-                             'down_flags': 4098, 'up_flags': 4163},
+                             'down_flags': 4098, 'up_flags': 4163,
+                             'recovery_after': recovered | {'checked_at': 102}},
     }
     return {
         'schema': 1, 'status': 'passed',
@@ -276,6 +278,29 @@ class AndroidReportGateTests(unittest.TestCase):
                 report = completed_report()
                 report['provenance']['route_recovery']['uplink_reconnect'][key] = value
                 self.assert_rejected(report)
+
+    def test_uplink_requires_present_production_observation_with_preserved_budget(self):
+        report = completed_report()
+        report['provenance']['route_recovery']['uplink_reconnect'].pop('recovery_after')
+        self.assert_rejected(report)
+        for key, value in (('status', 'missing'), ('status', 'unknown'), ('status', 'stale'),
+                           ('warning', True), ('warning', 0), ('consecutive_failures', 1),
+                           ('consecutive_failures', False), ('recovery_limit', 4),
+                           ('recovery_attempts', 0), ('recovery_attempts', 4),
+                           ('recovery_attempts', True), ('recovery_attempts', '1'),
+                           ('checked_at', None), ('checked_at', 0), ('checked_at', True)):
+            with self.subTest(key=key, value=value):
+                report = completed_report()
+                report['provenance']['route_recovery']['uplink_reconnect']['recovery_after'][key] = value
+                self.assert_rejected(report)
+
+    def test_uplink_can_recover_without_another_restart_or_use_remaining_budget(self):
+        for attempts in (1, 2, 3):
+            with self.subTest(attempts=attempts):
+                report = completed_report()
+                observed = report['provenance']['route_recovery']['uplink_reconnect']['recovery_after']
+                observed.update(recovery_attempts=attempts, checked_at=50)
+                GATE.validate_report(report, SHA)
 
     def test_report_reader_is_bounded_and_rejects_ambiguous_json(self):
         with tempfile.TemporaryDirectory() as directory:
