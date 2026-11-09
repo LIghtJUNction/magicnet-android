@@ -51,6 +51,9 @@ fabricate canonical state or require Google or a subscription provider.
 The first fixture activation observes the normal stop/start boundary to prove
 ownership of the core's random redirect table. Recovery may replace that proven
 helper; its complete rule/FIB evidence and every other unowned rule are checked.
+Across recovery, an `eth0` network-ID change requires complete [netd observations](https://android.googlesource.com/platform/system/netd/+/refs/tags/android-15.0.0_r23/server/NetworkController.cpp)
+binding both IDs to the same interface, permissions and FIB. Only the two exact
+corresponding Android selectors may change; all other rules remain identical.
 
 The report retains the fault observations, recovery action, app controls and
 configuration/resource restoration. A separate bounded JSON validator requires

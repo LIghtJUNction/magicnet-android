@@ -64,6 +64,80 @@ def text_rows(value, label):
     return Counter(value)
 
 
+def netd_observation(snapshot):
+    observed = snapshot.get('netd')
+    require(isinstance(observed, dict)
+            and observed.keys() == {'networks', 'eth0_ifindex', 'eth0_fib'},
+            'Route snapshot lacks complete netd ownership evidence')
+    networks = observed['networks']
+    require(isinstance(networks, list) and 1 <= len(networks) <= 256,
+            'Invalid netd network inventory')
+    ids, ethernet = [], []
+    for network in networks:
+        require(isinstance(network, dict)
+                and network.keys() == {'net_id', 'type', 'interfaces', 'details'}
+                and type(network['net_id']) is int and 1 <= network['net_id'] <= 65535
+                and isinstance(network['type'], str)
+                and re.fullmatch(r'[A-Z][A-Z0-9_]{0,31}', network['type']),
+                'Invalid netd network identity')
+        interfaces, details = network['interfaces'], network['details']
+        require(isinstance(interfaces, list) and len(interfaces) <= 64
+                and all(isinstance(item, str) and re.fullmatch(r'[a-zA-Z0-9_.-]{1,15}', item)
+                        for item in interfaces)
+                and interfaces == sorted(set(interfaces)),
+                'Invalid or ambiguous netd interface inventory')
+        require(isinstance(details, list) and len(details) <= 64
+                and all(isinstance(item, str) and len(item) <= 2048
+                        and re.fullmatch(r'(Required permission|Per-app UID ranges|Allowed UID ranges): [ -~]+', item)
+                        and item == ' '.join(item.split()) for item in details)
+                and details == sorted(set(details)),
+                'Invalid or ambiguous netd network details')
+        fields = [item.split(':', 1)[0] for item in details]
+        require(len(fields) == len(set(fields)) and 'Allowed UID ranges' in fields
+                and ('Required permission' in fields) == (network['type'] == 'PHYSICAL'),
+                'Incomplete or repeated netd network metadata')
+        ids.append(network['net_id'])
+        if 'eth0' in interfaces:
+            ethernet.append(network)
+    require(ids == sorted(set(ids)) and len(ethernet) == 1 and ethernet[0]['net_id'] >= 100
+            and ethernet[0]['type'] == 'PHYSICAL' and ethernet[0]['interfaces'] == ['eth0']
+            and ethernet[0]['details'] == ['Allowed UID ranges: unrestricted', 'Required permission: NONE'],
+            'Netd does not prove one unrestricted physical eth0 network')
+    fib = observed['eth0_fib']
+    require(type(observed['eth0_ifindex']) is int and 1 <= observed['eth0_ifindex'] <= 0x7fffffff
+            and isinstance(fib, list) and 1 <= len(fib) <= 256
+            and all(isinstance(row, str) and re.fullmatch(r'[ -~]{1,2048}', row)
+                    and row == ' '.join(row.split()) and row.split().count('dev') == 1
+                    and re.search(r'(?:^| )dev eth0(?: |$)', row) for row in fib)
+            and fib == sorted(set(fib)),
+            'Netd eth0 identity or complete interface FIB is unavailable')
+    return ethernet[0]['net_id']
+
+
+def netd_selectors(net_id):
+    return Counter((f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
+                    f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'))
+
+
+def foreign_rules_preserved(before, after, before_rules, after_rules):
+    old_id, new_id = netd_observation(before), netd_observation(after)
+    old, new = before['netd'], after['netd']
+    selectors = [netd_selectors(old_id), netd_selectors(new_id)]
+    require(all(rules[row] == 1 for rules, expected in zip((before_rules, after_rules), selectors)
+                for row in expected), 'Netd identity lacks its two exact unique eth0 policy rules')
+    if old_id == new_id:
+        require(old == new, 'Unchanged netd identity has changed network metadata')
+        return before_rules == after_rules
+    require(old['eth0_ifindex'] == new['eth0_ifindex'] and old['eth0_fib'] == new['eth0_fib']
+            and old_id not in [item['net_id'] for item in new['networks']]
+            and new_id not in [item['net_id'] for item in old['networks']]
+            and [item for item in old['networks'] if item['net_id'] != old_id]
+            == [item for item in new['networks'] if item['net_id'] != new_id],
+            'Netd change is not confined to a new eth0 network identity')
+    # Only independently observed NetIDs authorize these two complete selectors.
+    return before_rules - selectors[0] == after_rules - selectors[1]
+
+
 def route_snapshot(value):
     require(matches(value, {'tun_name': 'magicnet0'})
             and all(positive_int(value.get(key)) for key in
@@ -73,6 +147,8 @@ def route_snapshot(value):
     fib = text_rows(value.get('fib'), 'FIB')
     require(any(re.search(r'\bdev magicnet0\b', row) for row in fib),
             'Route recovery lacks the live TUN FIB')
+    require(all(rules[row] == 1 for row in netd_selectors(netd_observation(value))),
+            'Route snapshot lacks the observed netd eth0 policy rules')
     return rules, fib
 
 
@@ -117,8 +193,8 @@ def validate_helper_lifecycle(loss, before, before_helper):
     require(started['core_start_ticks'] > prior['core_start_ticks']
             and all(started[key] == before[key] for key in ('core_pid', 'core_start_ticks', 'tun_ifindex'))
             and started_helper == before_helper
-            and prior_rules - Counter([prior_helper['rule']])
-            == started_rules - Counter([started_helper['rule']]),
+            and foreign_rules_preserved(prior, started, prior_rules - Counter([prior_helper['rule']]),
+                                        started_rules - Counter([started_helper['rule']])),
             'Route helper calibration changed other rules or does not describe the fault core')
 
 
@@ -156,7 +232,8 @@ def validate_route_recovery(evidence):
     fault_helper = route_helper(fault, fault_rules)
     after_helper = route_helper(after, after_rules)
     validate_helper_lifecycle(loss, before, before_helper)
-    require(before_helper == fault_helper, 'RPDB fault changed the core route helper')
+    require(before_helper == fault_helper and before['netd'] == fault['netd'],
+            'RPDB fault changed the core route helper or netd ownership evidence')
     previous_helper_fib = text_rows(after.get('previous_helper_fib'), 'previous helper FIB')
     if before_helper['table'] == after_helper['table']:
         require(after_helper == before_helper and previous_helper_fib == after_helper['fib'],
@@ -171,8 +248,9 @@ def validate_route_recovery(evidence):
             and sum(removed.values()) == loss['removed_rule_count']
             and not removed - owned and before_rules - owned == fault_rules - owned
             and not owned - after_rules
-            and before_rules - owned - Counter([before_helper['rule']])
-            == after_rules - owned - Counter([after_helper['rule']]),
+            and foreign_rules_preserved(before, after,
+                                        before_rules - owned - Counter([before_helper['rule']]),
+                                        after_rules - owned - Counter([after_helper['rule']])),
             'RPDB snapshots do not prove removal and restoration of owned rules')
     identity = ('core_pid', 'core_start_ticks')
     require(all(before[key] == fault[key] for key in (*identity, 'tun_ifindex'))

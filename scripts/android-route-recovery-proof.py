@@ -25,6 +25,8 @@ IP = '/system/bin/ip'
 LEDGER = MOD + '/.state/network/kernel-route-table.state'
 TUN = 'magicnet0'
 LIMIT = 65536
+NETD_LIMIT = 1024 * 1024
+NETD = '/system/bin/dumpsys -t 5 netd --short'
 TICK_INTERVAL = 60
 BASELINE_TIMEOUT = 180
 RECOVERY_TIMEOUT = 600
@@ -128,15 +130,96 @@ def without_helper(snapshot):
     return Counter(snapshot['rules']) - Counter([snapshot['helper']['rule']])
 
 
+def parse_netd_networks(text):
+    require(isinstance(text, str) and len(text.encode()) <= NETD_LIMIT, 'netd_output_budget')
+    require(not re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|DUMP TIMEOUT|DUMP TRUNCATED', text,
+                          re.IGNORECASE), 'netd_dump_incomplete')
+    rows = [' '.join(row.split()) for row in text.splitlines() if row.strip()]
+    headers = ('NetworkController', 'Networks:', 'Interface <-> last network map:')
+    require(all(rows.count(header) == 1 for header in headers), 'netd_section_ambiguous')
+    controller, start, end = (rows.index(header) for header in headers)
+    require(controller < start < end and start == controller + 2
+            and re.fullmatch(r'Default network: [0-9]{1,5}', rows[controller + 1]),
+            'netd_section_incomplete')
+    networks, ids = [], set()
+    for row in rows[start + 1:end]:
+        require(len(row) <= 2048, 'netd_record_budget')
+        match = re.fullmatch(r'([1-9][0-9]{0,4}) ([A-Z][A-Z0-9_]{0,31})'
+                             r'(?: ([a-zA-Z0-9_.-]{1,15}(?:,[a-zA-Z0-9_.-]{1,15})*))?', row)
+        if match:
+            net_id = int(match[1])
+            interfaces = match[3].split(',') if match[3] else []
+            require(net_id <= 65535 and net_id not in ids and len(networks) < 256
+                    and len(interfaces) <= 64 and len(set(interfaces)) == len(interfaces),
+                    'netd_network_ambiguous')
+            ids.add(net_id)
+            networks.append({'net_id': net_id, 'type': match[2],
+                             'interfaces': sorted(interfaces), 'details': []})
+        else:
+            require(networks and re.fullmatch(
+                r'(Required permission|Per-app UID ranges|Allowed UID ranges): [ -~]+', row),
+                'unknown_netd_record')
+            details = networks[-1]['details']
+            require(len(details) < 64 and row not in details
+                    and not any(item.partition(':')[0] == row.partition(':')[0] for item in details),
+                    'netd_detail_ambiguous')
+            details.append(row)
+    require(networks, 'netd_network_inventory_empty')
+    for network in networks:
+        network['details'].sort()
+        require(sum(row.startswith('Allowed UID ranges: ') for row in network['details']) == 1,
+                'netd_allowed_uids_missing')
+        require(sum(row.startswith('Required permission: ') for row in network['details'])
+                == int(network['type'] == 'PHYSICAL'), 'netd_physical_permission_mismatch')
+    return sorted(networks, key=lambda item: item['net_id'])
+
+
+def ethernet_network(observation):
+    networks = [item for item in observation['networks'] if 'eth0' in item['interfaces']]
+    require(len(networks) == 1 and networks[0]['type'] == 'PHYSICAL'
+            and 100 <= networks[0]['net_id'] <= 65535
+            and networks[0]['interfaces'] == ['eth0']
+            and networks[0]['details'] == ['Allowed UID ranges: unrestricted', 'Required permission: NONE'],
+            'netd_eth0_ownership_unavailable')
+    return networks[0]
+
+
+def ethernet_rules(observation):
+    net_id = ethernet_network(observation)['net_id']
+    return Counter([
+        f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
+        f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'])
+
+
+def foreign_rules_preserved(before, after, before_rules, after_rules):
+    old, new = before['netd'], after['netd']
+    old_network, new_network = ethernet_network(old), ethernet_network(new)
+    old_id, new_id = old_network['net_id'], new_network['net_id']
+    old_pair, new_pair = ethernet_rules(old), ethernet_rules(new)
+    if (any(before_rules[row] != 1 for row in old_pair)
+            or any(after_rules[row] != 1 for row in new_pair)):
+        return False
+    if old_id == new_id:
+        return old == new and before_rules == after_rules
+    old_others = [item for item in old['networks'] if item['net_id'] != old_id]
+    new_others = [item for item in new['networks'] if item['net_id'] != new_id]
+    if not (old['eth0_ifindex'] == new['eth0_ifindex'] and old['eth0_fib'] == new['eth0_fib']
+            and (old_network | {'net_id': new_id}) == new_network and old_others == new_others
+            and old_id not in [item['net_id'] for item in new['networks']]
+            and new_id not in [item['net_id'] for item in old['networks']]):
+        return False
+    return before_rules - old_pair == after_rules - new_pair
+
+
 class Control:
     def __init__(self, adb, evidence):
         self.adb, self.evidence = adb, evidence
         self.last_tick = -float('inf')
 
-    def command(self, text, timeout=10):
+    def command(self, text, timeout=10, *, limit=LIMIT):
         cp = self.adb(text, timeout=timeout)
         require(type(cp.returncode) is int and cp.returncode == 0, 'device_command_failed')
-        require(isinstance(cp.stdout, str) and len(cp.stdout.encode()) <= LIMIT, 'device_output_budget')
+        require(isinstance(cp.stdout, str) and len(cp.stdout.encode()) <= limit, 'device_output_budget')
         return cp.stdout
 
     def machine(self, name):
@@ -205,7 +288,21 @@ class Control:
         require(devices and len(set(devices)) == len(devices), 'empty_or_duplicate_helper_fib')
         return {'rule': candidates[0], 'table': table, 'fib': fib}
 
+    def netd_observation(self):
+        networks = parse_netd_networks(self.command(NETD, limit=NETD_LIMIT))
+        index = self.command('cat /sys/class/net/eth0/ifindex').strip()
+        require(re.fullmatch(r'[1-9][0-9]*', index) and int(index) <= 2147483647,
+                'invalid_eth0_identity')
+        fib = sorted(lines(self.command(IP + ' -4 route show table eth0')))
+        require(fib and len(set(fib)) == len(fib)
+                and all(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?: |$)', row) == ['eth0'] for row in fib),
+                'invalid_eth0_fib')
+        result = {'networks': networks, 'eth0_ifindex': int(index), 'eth0_fib': fib}
+        ethernet_network(result)
+        return result
+
     def snapshot(self):
+        netd = self.netd_observation()
         identity = self.identity()
         index = self.command('cat /sys/class/net/' + TUN + '/ifindex').strip()
         require(re.fullmatch(r'[1-9][0-9]*', index), 'invalid_tun_identity')
@@ -215,6 +312,10 @@ class Control:
                 'foreign_or_empty_tun_fib')
         result['helper'] = self.helper(result['rules'])
         require(self.identity() == identity, 'core_changed_during_snapshot')
+        require(self.netd_observation() == netd, 'netd_changed_during_snapshot')
+        result['netd'] = netd
+        require(all(Counter(result['rules'])[row] == 1 for row in ethernet_rules(netd)),
+                'netd_eth0_rules_not_bound')
         return result
 
     def observe_lifecycle(self, stage):
@@ -237,7 +338,8 @@ class Control:
             before = lifecycle['before_stop']
             after = lifecycle[stage] = self.snapshot()
             require(after['core_start_ticks'] > before['core_start_ticks']
-                    and without_helper(before) == without_helper(after), 'helper_activation_changed_foreign_rules')
+                    and foreign_rules_preserved(before, after, without_helper(before), without_helper(after)),
+                    'helper_activation_changed_foreign_rules')
         else:
             raise RuntimeError('invalid_helper_lifecycle_stage')
 
@@ -331,7 +433,8 @@ class Control:
             evidence[key] = all(before[field] == fault[field] for field in fields)
             require(evidence[key], key + '_failed')
         foreign = without_helper(before) - Counter(owned)
-        evidence['unowned_rules_unchanged'] = without_helper(fault) - Counter(owned) == foreign
+        evidence['unowned_rules_unchanged'] = (before['netd'] == fault['netd']
+                                               and without_helper(fault) - Counter(owned) == foreign)
         require(evidence['unowned_rules_unchanged'] and evidence['removed_rule_count'] > 0,
                 'fault_not_confined_to_owned_rules')
         require(self.ready(False), 'fault_machine_readiness_not_rejected')
@@ -364,6 +467,9 @@ class Control:
         evidence['recovery_after'] = self.wait(recovered, RECOVERY_TIMEOUT, 'automatic_recovery_deadline')
         require('first_missing' in evidence, 'missing_confirmation_not_observed')
         after = evidence['after'] = self.snapshot()
+        evidence['ready_after_recovery'] = self.ready(True)
+        observe_app('recovered_app', True, 'recovered_app_not_captured')
+        evidence['app_after_recovery'] = True
         previous = after['previous_helper_fib'] = self.helper_fib(before['helper']['table'])
         if after['helper']['table'] == before['helper']['table']:
             require(after['helper'] == before['helper'] and Counter(previous) == Counter(after['helper']['fib']),
@@ -374,10 +480,9 @@ class Control:
         require((after['core_pid'], after['core_start_ticks'])
                 != (before['core_pid'], before['core_start_ticks']), 'managed_restart_not_observed')
         require(not Counter(owned) - Counter(after['rules'])
-                and without_helper(after) - Counter(owned) == foreign, 'recovery_rule_set_mismatch')
-        require(self.ready(True), 'recovery_not_ready')
-        evidence['ready_after_recovery'] = True
-        observe_app('recovered_app', True, 'recovered_app_not_captured')
+                and foreign_rules_preserved(before, after, foreign, without_helper(after) - Counter(owned)),
+                'recovery_rule_set_mismatch')
+        require(evidence['ready_after_recovery'], 'recovery_not_ready')
         evidence.update(app_after_recovery=True, status='verified', stage='complete')
 
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Host safety/accounting tests, not evidence of Android packet forwarding."""
 from collections import Counter
+import copy
 import importlib.util
 import json
 import os
@@ -18,12 +19,25 @@ BOOT = '12345678-1234-1234-1234-123456789abc'
 OWNED = ['9000: from all to 172.19.0.0/30 lookup 2022',
          '9000: from all iif lo lookup 2022', '9001: from all goto 9010',
          '9010: from all nop']
+ETH0_RULES = ['16000: from all fwmark 0x10064/0x1ffff iif lo lookup eth0',
+              '23000: from all fwmark 0x64/0x1ffff iif lo lookup eth0']
 FOREIGN = ['0: from all lookup local', '32766: from all lookup main',
-           '18000: from all fwmark 0x64/0x1ffff lookup wlan0']
+           '18000: from all fwmark 0x64/0x1ffff lookup wlan0'] + ETH0_RULES
 LEDGER = ('schema=2\nphase=active\nboot=' + BOOT + '\ntable=2022\ninterface=magicnet0\n'
           + ''.join('rule4=' + row + '\n' for row in OWNED))
 FIB = 'default dev magicnet0 scope link\n'
 HELPER_FIB = ['local 127.0.0.1 dev eth0 scope host', 'local 127.0.0.1 dev wlan0 scope host']
+ETH0_FIB = ['default via 10.0.2.2 dev eth0 proto static',
+            '10.0.2.0/24 dev eth0 proto kernel scope link src 10.0.2.15']
+NETWORKS = [
+    {'net_id': 51, 'type': 'DUMMY', 'interfaces': ['dummy0'], 'details': ['Allowed UID ranges: unrestricted']},
+    {'net_id': 52, 'type': 'UNREACHABLE', 'interfaces': [], 'details': ['Allowed UID ranges: unrestricted']},
+    {'net_id': 99, 'type': 'LOCAL', 'interfaces': [], 'details': ['Allowed UID ranges: unrestricted']},
+    {'net_id': 100, 'type': 'PHYSICAL', 'interfaces': ['eth0'],
+     'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']},
+    {'net_id': 101, 'type': 'PHYSICAL', 'interfaces': ['wlan0'],
+     'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']},
+]
 HEADER = 'sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode'
 TCP = '0: 0F02000A:15B3 0202000A:C012 01 00000000:00000000 00:00000000 00000000 0 0 77'
 
@@ -42,6 +56,9 @@ class Device:
         self.helper_table = 1000001
         self.helpers = {self.helper_table: list(HELPER_FIB)}
         self.rules = FOREIGN + OWNED + [self.helper_rule()]
+        self.networks = copy.deepcopy(NETWORKS)
+        self.eth0_ifindex, self.eth0_fib = 17, list(ETH0_FIB)
+        self.renumber_on_start = False
         self.pid, self.start, self.ifindex = 420, 700, 11
         self.running = True
         self.reuse_helper = False
@@ -77,7 +94,29 @@ class Device:
         self.helper_table += 0 if self.reuse_helper else 1
         self.helpers[self.helper_table] = list(HELPER_FIB)
         self.rules += OWNED + [self.helper_rule()]
+        if self.renumber_on_start:
+            self.renumber_eth0()
         self.running = True
+
+    def renumber_eth0(self):
+        network = next(item for item in self.networks if item['interfaces'] == ['eth0'])
+        old_id = network['net_id']
+        network['net_id'] += 2
+        for prefix in (0x10000, 0):
+            old, new = f'fwmark {prefix | old_id:#x}/', f'fwmark {prefix | network["net_id"]:#x}/'
+            self.rules = [row.replace(old, new) if row.endswith('iif lo lookup eth0') else row
+                          for row in self.rules]
+
+    def netd_dump(self):
+        records = []
+        for network in sorted(self.networks, key=lambda item: item['net_id']):
+            records.append(f'      {network["net_id"]} {network["type"]}'
+                           + (' ' + ','.join(network['interfaces']) if network['interfaces'] else ''))
+            records.extend('        ' + row for row in network['details'])
+            records.append('')
+        return ('NetdNativeService\n  NetworkController\n    Default network: 101\n\n    Networks:\n'
+                + '\n'.join(records) + '\n    Interface <-> last network map:\n'
+                '    Interface addresses:\n    Permission of users:\n    Protectable users:\n')
 
     def app(self):
         captured = self.running and not Counter(OWNED) - Counter(self.rules)
@@ -94,6 +133,12 @@ class Device:
             output = f'{self.pid}\n{self.pid} (sing-box) ' + ' '.join(fields) + '\n'
         elif command == 'cat /sys/class/net/magicnet0/ifindex':
             output = str(self.ifindex)
+        elif command == proof.NETD:
+            output = self.netd_dump()
+        elif command == 'cat /sys/class/net/eth0/ifindex':
+            output = str(self.eth0_ifindex)
+        elif command == proof.IP + ' -4 route show table eth0':
+            output = '\n'.join(self.eth0_fib)
         elif command == proof.IP + ' -4 rule show':
             output = '\n'.join(self.rules)
         elif command == proof.IP + " -4 route show table ' 2022'":
@@ -135,7 +180,7 @@ class Device:
                     self.stop()
                     self.start_core()
                     if self.foreign_on_recover:
-                        self.rules.remove(FOREIGN[-1])
+                        self.rules.remove(FOREIGN[2])
                     self.state = state(attempts=1)
         elif command == proof.IP + ' -4 route show table all':
             output = ''.join(f'default via 10.0.2.2 dev {name} table {name} proto static\n'
@@ -188,6 +233,165 @@ class RecoveryTests(unittest.TestCase):
         self.control.observe_lifecycle('stopped')
         self.control.command(proof.CLI + ' service start sing-box')
         self.control.observe_lifecycle('after_start')
+
+    def test_complete_netd_inventory_is_canonical_and_preserves_uid_metadata(self):
+        self.device.networks[1]['details'].append('Per-app UID ranges: prio 1 uids{ 10000-10001 }')
+        self.device.networks.reverse()
+        text = self.device.netd_dump().replace('      ', '\t').replace('Default network:', 'Default  network:')
+        expected = sorted(copy.deepcopy(self.device.networks), key=lambda item: item['net_id'])
+        for network in expected:
+            network['details'].sort()
+        self.assertEqual(proof.parse_netd_networks(text), expected)
+        self.assertEqual(self.control.netd_observation(),
+                         {'networks': expected, 'eth0_ifindex': 17, 'eth0_fib': sorted(ETH0_FIB)})
+
+    def test_missing_ambiguous_truncated_or_unknown_netd_records_are_rejected(self):
+        text = self.device.netd_dump()
+        variants = [
+            '', text.split('Interface <-> last network map:')[0],
+            text + '\nNetworkController\n', text + '\nNetworks:\n',
+            text + '\n*** SERVICE netd DUMP TIMEOUT\n',
+            text.replace('Required permission: NONE', 'Unknown property: NONE', 1),
+            text.replace('        Required permission: NONE\n', '', 1),
+            text.replace('        Allowed UID ranges: unrestricted\n', '', 1),
+            text.replace('Allowed UID ranges: unrestricted',
+                         'Allowed UID ranges: unrestricted\n        Allowed UID ranges: uids{ }', 1),
+            text.replace('51 DUMMY dummy0', '51 DUMMY dummy0\n        Required permission: NONE'),
+            text.replace('52 UNREACHABLE', '51 UNREACHABLE'),
+            text.replace('100 PHYSICAL eth0', '65536 PHYSICAL eth0'),
+            text.replace('100 PHYSICAL eth0', '100 physical eth0'),
+            text.replace('100 PHYSICAL eth0', '100 PHYSICAL eth0,eth0'),
+            text + '\0', 'x' * proof.NETD_LIMIT + text,
+        ]
+        for index, observed in enumerate(variants):
+            with self.subTest(index=index), self.assertRaises(RuntimeError):
+                proof.parse_netd_networks(observed)
+
+    def test_netd_read_failure_or_empty_success_never_becomes_an_empty_inventory(self):
+        original = self.device.adb
+        for code, output in ((1, ''), (124, ''), (0, ''), (0, 'x' * (proof.NETD_LIMIT + 1))):
+            def adb(command, **kwargs):
+                return (subprocess.CompletedProcess(['adb'], code, output, '') if command == proof.NETD
+                        else original(command, **kwargs))
+            self.control.adb = adb
+            with self.subTest(code=code, size=len(output)), self.assertRaises(RuntimeError):
+                self.control.snapshot()
+        self.assertNotIn(proof.IP + ' -4 rule show', self.device.calls)
+
+    def test_eth0_requires_one_unrestricted_physical_network_and_a_complete_fib(self):
+        for changes in ({'net_id': 98}, {'type': 'VIRTUAL'}, {'interfaces': ['eth0', 'wlan1']},
+                        {'details': ['Required permission: NONE']},
+                        {'details': ['Allowed UID ranges: uids{ 10000 }', 'Required permission: NONE']},
+                        {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK']},
+                        {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE',
+                                     'Per-app UID ranges: prio 1 uids{ 10000 }']}):
+            self.setUp()
+            self.device.networks[3].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                self.control.netd_observation()
+        for fib in ([], ['default dev wlan0'], [ETH0_FIB[0]] * 2,
+                    ['default dev eth0 dev wlan0'], ['default dev eth0 dev eth0']):
+            self.setUp()
+            self.device.eth0_fib = fib
+            with self.subTest(fib=fib), self.assertRaisesRegex(RuntimeError, 'invalid_eth0_fib'):
+                self.control.netd_observation()
+        for index in (0, -1, 2147483648, 'unknown'):
+            self.setUp()
+            self.device.eth0_ifindex = index
+            with self.subTest(index=index), self.assertRaisesRegex(RuntimeError, 'invalid_eth0_identity'):
+                self.control.netd_observation()
+
+    def test_snapshot_brackets_kernel_reads_with_matching_netd_observations(self):
+        original = self.device.adb
+        def adb(command, **kwargs):
+            if command == proof.IP + ' -4 rule show':
+                self.device.renumber_eth0()
+            return original(command, **kwargs)
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, 'netd_changed_during_snapshot'):
+            self.control.snapshot()
+        observed = [i for i, command in enumerate(self.device.calls) if command == proof.NETD]
+        self.assertEqual(len(observed), 2)
+        self.assertLess(observed[0], self.device.calls.index(proof.IP + ' -4 rule show'))
+        self.assertGreater(observed[1], self.device.calls.index(proof.IP + ' -4 rule show'))
+
+    def test_only_observed_eth0_rebuild_can_rename_the_exact_android_rule_pair(self):
+        self.device.renumber_on_start = True
+        self.run_control()
+        lifecycle = self.evidence['helper_lifecycle']
+        old = proof.ethernet_network(lifecycle['before_stop']['netd'])
+        active = proof.ethernet_network(self.evidence['before']['netd'])
+        new = proof.ethernet_network(self.evidence['after']['netd'])
+        self.assertEqual([old['net_id'], active['net_id'], new['net_id']], [100, 102, 104])
+        self.assertEqual(self.evidence['before']['netd'], self.evidence['fault']['netd'])
+        self.assertTrue(self.evidence['recovered_app']['ok'])
+        self.assertEqual(self.evidence['status'], 'verified')
+
+    def test_platform_metadata_cannot_change_during_the_fault(self):
+        original = self.device.adb
+        def adb(command, **kwargs):
+            result = original(command, **kwargs)
+            if ' rule del ' in command and not any('lookup 2022' in row for row in self.device.rules):
+                self.device.networks[0]['details'] = ['Allowed UID ranges: uids{ 10000 }']
+            return result
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, 'fault_not_confined_to_owned_rules'):
+            self.run_control()
+        self.assertNotIn('recovery_after', self.evidence)
+
+    def test_netd_metadata_other_than_eth0_id_cannot_be_normalized(self):
+        before = {'netd': self.control.netd_observation()}
+        before_rules = Counter(self.device.rules)
+        self.device.renumber_eth0()
+        after = {'netd': self.control.netd_observation()}
+        after_rules = Counter(self.device.rules)
+        self.assertTrue(proof.foreign_rules_preserved(before, after, before_rules, after_rules))
+        variants = []
+        for field, value in (('eth0_ifindex', 18), ('eth0_fib', ['default via 10.0.2.3 dev eth0'])):
+            changed = copy.deepcopy(after)
+            changed['netd'][field] = value
+            variants.append(changed)
+        for change in ('permission', 'uid_range', 'remove_network', 'retained_old_id'):
+            changed = copy.deepcopy(after)
+            networks = changed['netd']['networks']
+            if change == 'permission':
+                networks[3]['details'][-1] = 'Required permission: SYSTEM'
+            elif change == 'uid_range':
+                networks[0]['details'] = ['Allowed UID ranges: uids{ 10000 }']
+            elif change == 'remove_network':
+                networks.pop(0)
+            else:
+                networks.append({'net_id': 100, 'type': 'LOCAL', 'interfaces': [],
+                                 'details': ['Allowed UID ranges: unrestricted']})
+                networks.sort(key=lambda item: item['net_id'])
+            variants.append(changed)
+        for index, changed in enumerate(variants):
+            with self.subTest(index=index):
+                self.assertFalse(proof.foreign_rules_preserved(before, changed, before_rules, after_rules))
+        occupied = copy.deepcopy(before)
+        occupied['netd']['networks'].append({'net_id': 102, 'type': 'LOCAL', 'interfaces': [],
+                                             'details': ['Allowed UID ranges: unrestricted']})
+        self.assertFalse(proof.foreign_rules_preserved(occupied, after, before_rules, after_rules))
+
+    def test_exact_eth0_pair_is_required_even_without_a_netid_change(self):
+        before = {'netd': self.control.netd_observation()}
+        before_rules = Counter(self.device.rules)
+        for renumber in (False, True):
+            if renumber:
+                self.device.renumber_eth0()
+            after = {'netd': self.control.netd_observation()}
+            after_rules = Counter(self.device.rules)
+            pair = list(proof.ethernet_rules(after['netd']))
+            for replacement in (None, pair[0].replace('/0x1ffff', '/0xffff'),
+                                pair[0].replace('iif lo', 'iif lo uidrange 0-0'),
+                                pair[0].replace('16000:', '16001:')):
+                changed = after_rules - Counter([pair[0]])
+                if replacement:
+                    changed[replacement] += 1
+                with self.subTest(renumber=renumber, replacement=replacement):
+                    self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules, changed))
+            self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules,
+                                                           after_rules + Counter([pair[1]])))
 
     def test_normal_tick_proves_missing_then_real_observations_of_recovery(self):
         self.run_control()
@@ -459,6 +663,9 @@ class RecoveryTests(unittest.TestCase):
         self.device.foreign_on_recover = True
         with self.assertRaisesRegex(RuntimeError, 'recovery_rule_set_mismatch'):
             self.run_control()
+        self.assertTrue(self.evidence['ready_after_recovery'])
+        self.assertTrue(self.evidence['recovered_app']['ok'])
+        self.assertNotEqual(self.evidence.get('status'), 'verified')
 
     def test_unknown_or_malformed_observation_cannot_become_ready(self):
         for value in (None, {}, state() | {'warning': 0}, state() | {'recovery_attempts': True},

@@ -38,6 +38,32 @@ def udp_result(ok):
             'request_attempted': True}
 
 
+def eth0_rules(net_id):
+    return [f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
+            f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0']
+
+
+def netd_state():
+    return {'networks': [
+                {'net_id': 99, 'type': 'LOCAL', 'interfaces': [],
+                 'details': ['Allowed UID ranges: unrestricted']},
+                {'net_id': 100, 'type': 'PHYSICAL', 'interfaces': ['eth0'],
+                 'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']},
+                {'net_id': 101, 'type': 'PHYSICAL', 'interfaces': ['wlan0'],
+                 'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']}],
+            'eth0_ifindex': 2,
+            'eth0_fib': ['10.0.2.0/24 dev eth0 proto kernel scope link src 10.0.2.15',
+                         'default via 10.0.2.2 dev eth0']}
+
+
+def renumber_eth0(snapshot, net_id):
+    network = next(item for item in snapshot['netd']['networks'] if item['interfaces'] == ['eth0'])
+    selectors = dict(zip(eth0_rules(network['net_id']), eth0_rules(net_id)))
+    snapshot['rules'] = [selectors.get(row, row) for row in snapshot['rules']]
+    network['net_id'] = net_id
+    snapshot['netd']['networks'].sort(key=lambda item: item['net_id'])
+
+
 def completed_report():
     phases = (
         'environment', 'kernelsu-bootstrap', 'install-before-first-boot', 'cold-boot',
@@ -52,15 +78,16 @@ def completed_report():
               'selinux_enforcing': True, 'kernelsu_reactivation': 'verified_native_init',
               'kernelsu_native_boot': native}
     owned = '9000: from all iif lo lookup 2022'
-    unowned = '0: from all lookup local'
+    unowned = ['0: from all lookup local', *eth0_rules(100)]
     before = {'core_pid': 400, 'core_start_ticks': 10000, 'tun_name': 'magicnet0',
-              'tun_ifindex': 9, 'rules': [unowned, helper(76501405)['rule'], owned],
-              'fib': ['default dev magicnet0 scope link'], 'helper': helper(76501405)}
+              'tun_ifindex': 9, 'rules': [*unowned, helper(76501405)['rule'], owned],
+              'fib': ['default dev magicnet0 scope link'], 'helper': helper(76501405),
+              'netd': netd_state()}
     prior = copy.deepcopy(before) | {'core_pid': 300, 'core_start_ticks': 5000, 'tun_ifindex': 8,
-                                    'rules': [unowned, helper(91719807)['rule'], owned],
+                                    'rules': [*unowned, helper(91719807)['rule'], owned],
                                     'helper': helper(91719807)}
     after = copy.deepcopy(before) | {'core_pid': 500, 'core_start_ticks': 15000, 'tun_ifindex': 10,
-                                    'rules': [unowned, helper(259533620)['rule'], owned],
+                                    'rules': [*unowned, helper(259533620)['rule'], owned],
                                     'helper': helper(259533620), 'previous_helper_fib': []}
     previous = {'status': 'present', 'recovery_limit': 3, 'recovery_attempts': 0}
     recovered = {'status': 'present', 'warning': False, 'recovery_status': 'ok',
@@ -78,10 +105,10 @@ def completed_report():
             'baseline_app': udp_result(True), 'fault_app': udp_result(False),
             'recovered_app': udp_result(True),
             'owned_rules': [owned], 'before': before,
-            'fault': copy.deepcopy(before) | {'rules': [unowned, before['helper']['rule']]},
+            'fault': copy.deepcopy(before) | {'rules': [*unowned, before['helper']['rule']]},
             'after': after,
             'helper_lifecycle': {'before_stop': prior,
-                                 'stopped': {'core_state': 'stopped', 'rules': [unowned],
+                                 'stopped': {'core_state': 'stopped', 'rules': unowned.copy(),
                                              'helper_table': prior['helper']['table'], 'helper_fib': []},
                                  'after_start': copy.deepcopy(before)},
             'recovery_before': previous,
@@ -242,6 +269,139 @@ class AndroidReportGateTests(unittest.TestCase):
         GATE.validate_report(report, SHA)
         loss['after']['rules'].remove('0: from all lookup local')
         self.assert_rejected(report)
+
+    def test_observed_eth0_netid_change_preserves_other_rules_in_both_lifecycles(self):
+        report = completed_report()
+        loss = report['provenance']['route_recovery']['rpdb_loss']
+        renumber_eth0(loss['helper_lifecycle']['before_stop'], 103)
+        renumber_eth0(loss['after'], 102)
+        GATE.validate_report(report, SHA)
+
+    def test_all_running_snapshots_require_independent_netd_evidence(self):
+        for name in ('before', 'fault', 'after', 'before_stop', 'after_start'):
+            with self.subTest(name=name):
+                report = completed_report()
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                snapshot = loss[name] if name in loss else loss['helper_lifecycle'][name]
+                snapshot.pop('netd')
+                self.assert_rejected(report)
+
+    def test_netd_requires_bounded_unique_typed_inventory_and_bound_eth0_fib(self):
+        changes = (
+            (('networks',), None), (('networks',), []), (('networks',), [True]),
+            (('networks', 1, 'net_id'), True), (('networks', 1, 'net_id'), '100'),
+            (('networks', 1, 'net_id'), 0), (('networks', 1, 'net_id'), 65536),
+            (('networks', 1, 'net_id'), 99), (('networks', 1, 'type'), 'VIRTUAL'),
+            (('networks', 1, 'interfaces'), ['eth0', 'wlan0']),
+            (('networks', 1, 'interfaces'), ['eth0', 'eth0']),
+            (('networks', 1, 'interfaces'), ['eth0\n']),
+            (('networks', 2, 'interfaces'), ['eth0']),
+            (('networks', 1, 'details'), []),
+            (('networks', 1, 'details'), ['Required permission: NONE']),
+            (('networks', 1, 'details'), ['Allowed UID ranges: 10123-10123', 'Required permission: NONE']),
+            (('networks', 1, 'details'), ['Required permission: SYSTEM']),
+            (('networks', 1, 'details'), ['Required permission: NONE'] * 2),
+            (('networks', 0, 'details'), ['Unknown detail: value']),
+            (('networks', 0, 'details'), []),
+            (('networks', 0, 'details'), ['Allowed UID ranges: unrestricted', 'Allowed UID ranges: uids{ }']),
+            (('networks', 0, 'details'), ['Allowed UID ranges: unrestricted', 'Required permission: NONE']),
+            (('networks', 2, 'details'), ['Allowed UID ranges: unrestricted']),
+            (('networks', 2, 'details'), ['Allowed UID ranges: unrestricted',
+                                         'Required permission: NONE', 'Required permission: SYSTEM']),
+            (('eth0_ifindex',), True), (('eth0_ifindex',), '2'),
+            (('eth0_ifindex',), 0), (('eth0_ifindex',), 0x80000000),
+            (('eth0_fib',), None), (('eth0_fib',), []),
+            (('eth0_fib',), ['default dev wlan0']),
+            (('eth0_fib',), ['default dev eth0 dev wlan0']),
+            (('eth0_fib',), ['default dev eth0'] * 2),
+            (('eth0_fib',), ['x' * 2049 + ' dev eth0']),
+        )
+        for path, value in changes:
+            with self.subTest(path=path, value=value):
+                report = completed_report()
+                target = report['provenance']['route_recovery']['rpdb_loss']['after']['netd']
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                self.assert_rejected(report)
+
+    def test_netd_renumbering_cannot_excuse_partial_duplicate_or_unrelated_rules(self):
+        for stage in ('after', 'before_stop'):
+            for change in ('one-rule', 'duplicate', 'old-rule', 'mask', 'selector', 'foreign'):
+                with self.subTest(stage=stage, change=change):
+                    report = completed_report()
+                    loss = report['provenance']['route_recovery']['rpdb_loss']
+                    snapshot = loss[stage] if stage in loss else loss['helper_lifecycle'][stage]
+                    renumber_eth0(snapshot, 102)
+                    if change == 'one-rule':
+                        snapshot['rules'][snapshot['rules'].index(eth0_rules(102)[1])] = eth0_rules(100)[1]
+                    elif change == 'duplicate':
+                        snapshot['rules'].append(eth0_rules(102)[0])
+                    elif change == 'old-rule':
+                        snapshot['rules'].append(eth0_rules(100)[0])
+                    elif change in ('mask', 'selector'):
+                        old, new = ('/0x1ffff', '/0xffff') if change == 'mask' else ('iif lo', 'iif eth0')
+                        snapshot['rules'] = [row.replace(old, new) for row in snapshot['rules']]
+                    else:
+                        snapshot['rules'].append('12000: from all uidrange 1000-1000 lookup main')
+                    self.assert_rejected(report)
+
+    def test_eth0_renumbering_preserves_interface_fib_and_every_other_network(self):
+        for change in ('ifindex', 'fib', 'permission', 'other-interface', 'other-id', 'old-id', 'occupied-id'):
+            with self.subTest(change=change):
+                report = completed_report()
+                after = report['provenance']['route_recovery']['rpdb_loss']['after']
+                renumber_eth0(after, 101 if change == 'occupied-id' else 102)
+                observed = after['netd']
+                if change == 'ifindex':
+                    observed['eth0_ifindex'] = 3
+                elif change == 'fib':
+                    observed['eth0_fib'] = ['default via 10.0.2.3 dev eth0']
+                elif change == 'permission':
+                    observed['networks'][1]['details'] = ['Allowed UID ranges: unrestricted',
+                                                        'Required permission: SYSTEM']
+                elif change == 'other-interface':
+                    observed['networks'][1]['interfaces'] = ['wlan1']
+                elif change == 'other-id':
+                    observed['networks'][1]['net_id'] = 98
+                    observed['networks'].sort(key=lambda item: item['net_id'])
+                elif change == 'old-id':
+                    observed['networks'].append({'net_id': 100, 'type': 'DUMMY', 'interfaces': [],
+                                                'details': ['Allowed UID ranges: unrestricted']})
+                    observed['networks'].sort(key=lambda item: item['net_id'])
+                self.assert_rejected(report)
+
+    def test_netd_changes_during_fault_and_unproven_mark_changes_still_fail(self):
+        for change in ('fault', 'no-owner-change', 'same-id-metadata'):
+            with self.subTest(change=change):
+                report = completed_report()
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                snapshot = loss['fault'] if change == 'fault' else loss['after']
+                if change == 'same-id-metadata':
+                    snapshot['netd']['networks'][2]['details'] = ['Allowed UID ranges: unrestricted',
+                                                               'Required permission: SYSTEM']
+                else:
+                    renumber_eth0(snapshot, 102)
+                    if change == 'no-owner-change':
+                        snapshot['netd'] = netd_state()
+                self.assert_rejected(report)
+
+    def test_stable_netid_still_requires_both_exact_unique_policy_rules(self):
+        for change in ('missing', 'duplicate', 'wrong-mark', 'reserved-id'):
+            with self.subTest(change=change):
+                report = completed_report()
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                for snapshot in (loss['before'], loss['fault'], loss['after'],
+                                 loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+                    if change == 'missing':
+                        snapshot['rules'].remove(eth0_rules(100)[0])
+                    elif change == 'duplicate':
+                        snapshot['rules'].append(eth0_rules(100)[0])
+                    elif change == 'wrong-mark':
+                        snapshot['rules'] = [row.replace('0x10064/', '0x10066/') for row in snapshot['rules']]
+                    else:
+                        renumber_eth0(snapshot, 98)
+                self.assert_rejected(report)
 
     def test_helper_requires_observed_stop_before_any_new_core_start(self):
         for path, value in (
