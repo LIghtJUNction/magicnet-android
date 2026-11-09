@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.server
 from pathlib import Path
+import queue
 import shutil
 import ssl
 import subprocess
@@ -38,9 +39,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_response(403)
                 self.end_headers()
                 return
-            self.send_response(200)
+            status = 200
+            self.send_response(status)
             if self.path == '/short':
-                self.send_header('Content-Length', '1000')
+                declared = 1000
+                self.send_header('Content-Length', str(declared))
                 body = b'short'
             elif self.path == '/large':
                 self.send_header('Content-Length', str(16 * 1024 * 1024))
@@ -52,8 +55,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             count = 1024 if self.path == '/large' else (130 if self.path == '/unknown' else 1)
+            sent = 0
             for _ in range(count):
-                self.wfile.write(body)
+                sent += self.wfile.write(body)
+            if self.path == '/short':
+                self.wfile.flush()
+                self.server.short_responses.put(dict(path=self.path, status=status,
+                                                     declared=declared, sent=sent))
         except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
             pass
 
@@ -210,6 +218,7 @@ public class UdpRunner {
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(cert, key)
         cls.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        cls.server.short_responses = queue.Queue()
         cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -362,9 +371,24 @@ public class UdpRunner {
         self.assertEqual(result['reason'], 'tls')
 
     def test_premature_eof_fails_even_after_http_200(self):
+        def assert_positive():
+            response = self.probe('/200')
+            self.assertTrue(response['ok'], response)
+            self.assertTrue(response['complete'], response)
+            self.assertEqual((response['reason'], response['status'], response['size']),
+                             ('https_response', 200, 5))
+
+        self.assertTrue(self.server.short_responses.empty())
+        assert_positive()
         result = self.probe('/short')
-        self.assertFalse(result['ok'])
-        self.assertEqual(result['reason'], 'short_body')
+        sent = self.server.short_responses.get(timeout=2)
+        assert_positive()
+        self.assertEqual(sent, dict(path='/short', status=200, declared=1000, sent=5))
+        self.assertFalse(result['ok'], result)
+        self.assertTrue(result['complete'], result)
+        self.assertIn(result['reason'], ('short_body', 'transport'), result)
+        if result['reason'] == 'short_body':
+            self.assertEqual((result['status'], result['size']), (200, 5), result)
 
     def test_known_and_unknown_length_body_limits(self):
         for path in ('/large', '/unknown'):
