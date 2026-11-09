@@ -35,8 +35,12 @@ route configurations.
 
 ## Required route-loss recovery
 
-The `tun-route-recovery` lifecycle phase uses the installed production CLI/core
-and the existing application-UID local TCP sentinel. It deletes only live IPv4
+The `tun-route-recovery` phase keeps the application-UID TCP controls and uses
+a non-DNS UDP marker for RPDB loss: the fixed Android TCP REDIRECT path can still
+work without these rules. A temporary receiver lives inside the test app; the
+client sends only to the fixed test destination, whose UDP route overrides to
+loopback. Bind, cleanup or request-setup errors cannot count as a negative probe.
+The harness deletes only live IPv4
 `lookup 2022` selectors in the current ownership ledger, preserving jump targets,
 the core generation, `magicnet0` and TUN forwarding table. The test requires
 readiness to become false and a new application connection to fail, then waits

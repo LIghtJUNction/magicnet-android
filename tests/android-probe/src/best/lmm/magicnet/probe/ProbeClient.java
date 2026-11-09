@@ -3,14 +3,20 @@ package best.lmm.magicnet.probe;
 import java.io.InputStream;
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.NoRouteToHostException;
+import java.net.PortUnreachableException;
 import java.net.Proxy;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -34,10 +40,80 @@ public final class ProbeClient {
         public long bytes;
         public long elapsedMs;
         public String reason = "transport";
+        public String transport;
+        public boolean receiverBound;
+        public boolean receiverClosed;
+        public boolean requestAttempted;
+        public int accepted;
     }
 
+    interface DatagramFactory { DatagramSocket open() throws IOException; }
+    private final DatagramFactory datagrams;
     private volatile HttpURLConnection connection;
     private volatile Socket socket;
+
+    public ProbeClient() { this(() -> new DatagramSocket(null)); }
+    ProbeClient(DatagramFactory datagrams) { this.datagrams = datagrams; }
+
+    private static final class UdpExchange {
+        volatile DatagramSocket receiver;
+        volatile DatagramSocket client;
+        volatile boolean receiverBound;
+        volatile boolean requestAttempted;
+        volatile boolean requestSent;
+        volatile int accepted;
+        boolean closing;
+        boolean cleanupComplete;
+        volatile boolean cleanupFailed;
+
+        synchronized DatagramSocket track(DatagramSocket value, boolean receiving) {
+            if (closing) {
+                value.close();
+                throw new IllegalStateException("probe closed");
+            }
+            if (receiving) receiver = value;
+            else client = value;
+            return value;
+        }
+
+        void close() {
+            DatagramSocket receiving;
+            DatagramSocket sending;
+            synchronized (this) {
+                closing = true;
+                receiving = receiver;
+                sending = client;
+            }
+            try {
+                if (sending != null) sending.close();
+            } finally {
+                if (receiving != null) receiving.close();
+            }
+        }
+
+        void finish(ExecutorService executor) {
+            try {
+                Thread cleanup = new Thread(() -> {
+                    try { close(); }
+                    catch (RuntimeException error) { cleanupFailed = true; }
+                }, "magicnet-probe-cleanup");
+                cleanup.setDaemon(true);
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+                cleanup.start();
+                if (executor != null) executor.shutdownNow();
+                cleanup.join(1000);
+                boolean stopped = executor == null || executor.awaitTermination(
+                        Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                cleanupComplete = !cleanup.isAlive() && !cleanupFailed && stopped
+                        && (receiver == null || receiver.isClosed())
+                        && (client == null || client.isClosed());
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            } catch (RuntimeException error) {
+                cleanupFailed = true;
+            }
+        }
+    }
 
     private void close() {
         HttpURLConnection current = connection;
@@ -49,6 +125,10 @@ public final class ProbeClient {
     }
 
     private Result bounded(int timeoutMs, Callable<Result> task) {
+        return bounded(timeoutMs, task, null);
+    }
+
+    private Result bounded(int timeoutMs, Callable<Result> task, UdpExchange udp) {
         if (timeoutMs < 100 || timeoutMs > 60000) {
             Result invalid = new Result();
             invalid.complete = false;
@@ -56,14 +136,16 @@ public final class ProbeClient {
             return invalid;
         }
         long started = System.nanoTime();
-        ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "magicnet-network-probe");
-            thread.setDaemon(true);
-            return thread;
-        });
-        Future<Result> future = executor.submit(task);
+        ExecutorService executor = null;
+        Future<Result> future = null;
         Result result;
         try {
+            executor = Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "magicnet-network-probe");
+                thread.setDaemon(true);
+                return thread;
+            });
+            future = executor.submit(task);
             result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException error) {
             result = new Result();
@@ -74,26 +156,41 @@ public final class ProbeClient {
             if (cause instanceof UnknownHostException) result.reason = "dns";
             else if (cause instanceof SSLException) result.reason = "tls";
             else if (cause instanceof SocketTimeoutException) result.reason = "timeout";
-            else if (cause instanceof ConnectException) result.reason = "connect";
+            else if (cause instanceof ConnectException || udp != null
+                    && (cause instanceof PortUnreachableException || cause instanceof NoRouteToHostException)) {
+                result.reason = "connect";
+            }
             else if (cause instanceof IllegalArgumentException) {
                 result.reason = "invalid_input";
                 result.complete = false;
+            } else if (udp != null) {
+                result.complete = false;
+                result.reason = udp.requestAttempted ? "udp_worker_failed" : "udp_setup_failed";
             }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             result = new Result();
             result.complete = false;
             result.reason = "interrupted";
+        } catch (RuntimeException error) {
+            if (udp == null) throw error;
+            result = new Result();
+            result.complete = false;
+            result.reason = "udp_worker_failed";
         } finally {
-            future.cancel(true);
-            // Closing a URLConnection may wait on its blocked DNS/TLS worker.
-            // Never turn the outer deadline into another unbounded wait. Android
-            // finish() tears down this test process; the host also force-stops it
-            // if the instrumentation response is lost.
-            Thread cleanup = new Thread(this::close, "magicnet-probe-cleanup");
-            cleanup.setDaemon(true);
-            cleanup.start();
-            executor.shutdownNow();
+            if (future != null) future.cancel(true);
+            if (udp != null) {
+                udp.finish(executor);
+            } else {
+                // Closing a URLConnection may wait on its blocked DNS/TLS worker.
+                // Never turn the outer deadline into another unbounded wait. Android
+                // finish() tears down this test process; the host also force-stops it
+                // if the instrumentation response is lost.
+                Thread cleanup = new Thread(this::close, "magicnet-probe-cleanup");
+                cleanup.setDaemon(true);
+                cleanup.start();
+                if (executor != null) executor.shutdownNow();
+            }
         }
         result.elapsedMs = Math.max(1L, (System.nanoTime() - started) / 1000000L);
         return result;
@@ -224,5 +321,59 @@ public final class ProbeClient {
             result.reason = "sentinel";
             return result;
         });
+    }
+
+    /** One app-owned UDP request; only the loopback receiver knows the marker. */
+    public Result udpSentinel(int port, String marker, int timeoutMs) {
+        UdpExchange udp = new UdpExchange();
+        Result result = bounded(timeoutMs, () -> {
+            if (port < 1024 || port > 65535 || marker == null || !marker.matches("[a-f0-9]{32}")) {
+                throw new IllegalArgumentException("invalid sentinel options");
+            }
+            DatagramSocket receiver = udp.track(datagrams.open(), true);
+            receiver.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port));
+            udp.receiverBound = true;
+            receiver.setSoTimeout(timeoutMs);
+            DatagramSocket client = udp.track(datagrams.open(), false);
+            client.setSoTimeout(timeoutMs);
+            byte[] request = "magicnet-udp-sentinel-v1\n".getBytes(StandardCharsets.US_ASCII);
+            udp.requestAttempted = true;
+            client.send(new DatagramPacket(request, request.length, InetAddress.getByName(SENTINEL), port));
+            udp.requestSent = true;
+            DatagramPacket incoming = new DatagramPacket(new byte[request.length + 1], request.length + 1);
+            receiver.receive(incoming);
+            udp.accepted++;
+            Result answer = new Result();
+            if (!Arrays.equals(request, Arrays.copyOf(incoming.getData(), incoming.getLength()))) {
+                answer.complete = false;
+                answer.reason = "sentinel_mismatch";
+                return answer;
+            }
+            byte[] expected = (marker + "\n").getBytes(StandardCharsets.US_ASCII);
+            receiver.send(new DatagramPacket(expected, expected.length, incoming.getSocketAddress()));
+            DatagramPacket response = new DatagramPacket(new byte[expected.length + 1], expected.length + 1);
+            client.receive(response);
+            answer.bytes = response.getLength();
+            answer.ok = Arrays.equals(expected, Arrays.copyOf(response.getData(), response.getLength()));
+            answer.complete = answer.ok;
+            answer.reason = answer.ok ? "sentinel" : "sentinel_mismatch";
+            return answer;
+        }, udp);
+        // Complete evidence requires closed sockets and a stopped worker.
+        result.transport = "udp";
+        result.receiverBound = udp.receiverBound;
+        result.receiverClosed = udp.receiver != null && udp.receiver.isClosed();
+        result.requestAttempted = udp.requestAttempted;
+        result.accepted = udp.accepted;
+        if (!udp.cleanupComplete && !"invalid_input".equals(result.reason)) {
+            result.ok = false;
+            result.complete = false;
+            result.reason = "udp_cleanup_failed";
+        } else if (!result.ok && (!udp.receiverBound || !udp.requestAttempted
+                || udp.accepted != 0 || !("connect".equals(result.reason)
+                    || "timeout".equals(result.reason) && udp.requestSent))) {
+            result.complete = false;
+        }
+        return result;
     }
 }

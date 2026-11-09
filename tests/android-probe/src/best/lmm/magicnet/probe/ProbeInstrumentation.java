@@ -37,6 +37,9 @@ public final class ProbeInstrumentation extends Instrumentation {
                 } else if ("sentinel".equals(operation)) {
                     result = client.sentinel(Integer.parseInt(arguments.getString("port", "0")),
                             arguments.getString("marker", ""), timeout);
+                } else if ("udp-sentinel".equals(operation)) {
+                    result = client.udpSentinel(Integer.parseInt(arguments.getString("port", "0")),
+                            arguments.getString("marker", ""), timeout);
                 } else {
                     result.complete = false;
                     result.reason = "invalid_operation";
@@ -59,6 +62,13 @@ public final class ProbeInstrumentation extends Instrumentation {
             json.put("received_bytes", result.bytes);
             json.put("elapsed_ms", result.elapsedMs);
             json.put("reason", result.reason);
+            if ("udp-sentinel".equals(operation)) {
+                json.put("transport", "udp");
+                json.put("receiver_bound", result.receiverBound);
+                json.put("receiver_closed", result.receiverClosed);
+                json.put("request_attempted", result.requestAttempted);
+                json.put("accepted", result.accepted);
+            }
             output.putString("magicnet_result", json.toString());
             finish(Activity.RESULT_OK, output);
         } catch (org.json.JSONException error) {

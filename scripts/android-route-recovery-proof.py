@@ -32,6 +32,8 @@ POLL_INTERVAL = 5
 TUN_FIELDS = ('status', 'warning', 'checked_at', 'next_check_at', 'retry_in_seconds',
               'consecutive_failures', 'recovery_attempts', 'recovery_limit',
               'recovery_status', 'last_recovery_at')
+UDP_FIELDS = ('complete', 'ok', 'uid', 'reason', 'accepted', 'elapsed_ms', 'transport',
+              'receiver_bound', 'receiver_closed', 'request_attempted')
 
 
 def require(value, reason):
@@ -108,12 +110,18 @@ def guard_identity(text):
 
 
 def app_result(result, uid, expected):
-    return (result.get('complete') is True and result.get('ok') is expected
+    return (isinstance(result, dict) and result.get('complete') is True and result.get('ok') is expected
             and type(result.get('uid')) is int and result['uid'] == uid
             and result.get('reason') in (('sentinel',) if expected else ('connect', 'timeout'))
             and type(result.get('elapsed_ms')) is int and 0 < result['elapsed_ms'] <= 15000
             and type(result.get('accepted')) is int
             and result.get('accepted') == (1 if expected else 0))
+
+
+def udp_result(result, uid, expected):
+    return (app_result(result, uid, expected) and result.get('transport') == 'udp'
+            and all(result.get(key) is True for key in
+                    ('receiver_bound', 'receiver_closed', 'request_attempted')))
 
 
 def without_helper(snapshot):
@@ -282,6 +290,13 @@ class Control:
 
     def rpdb_loss(self, sentinel, uid):
         evidence = self.evidence
+
+        def observe_app(key, expected, reason):
+            result = sentinel()
+            require(isinstance(result, dict), 'app_probe_result_unavailable')
+            evidence[key] = {field: result.get(field) for field in UDP_FIELDS}
+            require(udp_result(result, uid, expected), reason)
+
         evidence['stage'] = 'baseline'
         baseline = self.wait(lambda state: state['status'] == 'present' and not state['warning']
                              and state['consecutive_failures'] == 0,
@@ -301,7 +316,7 @@ class Control:
         capture = [row for row in owned if re.search(r'\blookup 2022(?: |$)', row)]
         require(capture, 'owned_capture_rule_unavailable')
         evidence['recovery_before'] = baseline
-        require(app_result(sentinel(), uid, True), 'baseline_app_not_captured')
+        observe_app('baseline_app', True, 'baseline_app_not_captured')
         evidence['stage'] = 'remove_owned_rpdb'
         # Keep goto targets alive: an unowned goto can reference an owned nop.
         # Removing only table lookups breaks capture without changing that rule.
@@ -326,10 +341,7 @@ class Control:
             '[warn] Dataplane:' in row and 'ipv4_rpdb=missing' in row and 'ipv4_fib=present' in row
             for row in health.splitlines())
         require(evidence['health_after_fault_rpdb_missing'], 'health_did_not_report_rpdb_loss')
-        result = sentinel()
-        evidence['fault_app'] = {key: result.get(key) for key in
-                                 ('complete', 'ok', 'uid', 'reason', 'accepted', 'elapsed_ms')}
-        require(app_result(result, uid, False), 'fault_app_rejection_not_proven')
+        observe_app('fault_app', False, 'fault_app_rejection_not_proven')
         evidence['app_after_fault'] = False
         evidence['stage'] = 'watchdog_recovery'
         evidence['recovery_tick_count'] = 0
@@ -365,7 +377,7 @@ class Control:
                 and without_helper(after) - Counter(owned) == foreign, 'recovery_rule_set_mismatch')
         require(self.ready(True), 'recovery_not_ready')
         evidence['ready_after_recovery'] = True
-        require(app_result(sentinel(), uid, True), 'recovered_app_not_captured')
+        observe_app('recovered_app', True, 'recovered_app_not_captured')
         evidence.update(app_after_recovery=True, status='verified', stage='complete')
 
 
@@ -498,10 +510,10 @@ def verify(adb, instrument, component, evidence=None):
             evidence['reason'] = str(error) if isinstance(error, RuntimeError) else 'helper_observation_failed'
             raise RuntimeError('helper_control_failed') from None
 
-    def fault(sentinel, uid):
+    def fault(sentinel, uid, udp_sentinel):
         evidence['app_uid'] = uid
         try:
-            control.rpdb_loss(sentinel, uid)
+            control.rpdb_loss(udp_sentinel, uid)
             reconnect = evidence['uplink_reconnect'] = {'recovery_tick_count': 0}
             uplink_reconnect(Control(adb, reconnect), sentinel, uid, reconnect)
         except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:

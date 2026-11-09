@@ -83,7 +83,8 @@ class Device:
         captured = self.running and not Counter(OWNED) - Counter(self.rules)
         return dict(ok=captured, complete=True, uid=10123,
                     reason='sentinel' if captured else 'connect', accepted=1 if captured else 0,
-                    elapsed_ms=10)
+                    elapsed_ms=10, transport='udp', receiver_bound=True, receiver_closed=True,
+                    request_attempted=True)
 
     def adb(self, command, timeout=10):
         self.calls.append(command)
@@ -197,6 +198,11 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(result['before']['core_pid'], result['fault']['core_pid'])
         self.assertNotEqual(result['before']['core_pid'], result['after']['core_pid'])
         self.assertEqual(result['recovery_after']['recovery_attempts'], 1)
+        self.assertEqual(result['baseline_app']['accepted'], 1)
+        self.assertEqual(result['fault_app']['accepted'], 0)
+        self.assertEqual(result['recovered_app']['accepted'], 1)
+        self.assertTrue(all(set(result[key]) == set(proof.UDP_FIELDS) for key in
+                            ('baseline_app', 'fault_app', 'recovered_app')))
         self.assertGreaterEqual(self.clock, 60)
         self.assertFalse(any('service restart' in call or '.state/machines/' in call
                              for call in self.device.calls))
@@ -365,6 +371,41 @@ class RecoveryTests(unittest.TestCase):
                           elapsed_ms=5000) | changes
             with self.subTest(changes=changes):
                 self.assertFalse(proof.app_result(failed, 10123, False))
+
+    def test_udp_receiver_or_request_failure_never_proves_a_route_failure(self):
+        for key in ('receiver_bound', 'receiver_closed', 'request_attempted'):
+            for value in (False, None, 0, 1, 'true'):
+                self.setUp()
+                def sentinel():
+                    result = self.device.app()
+                    return result if result['ok'] else result | {key: value}
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(
+                        RuntimeError, 'fault_app_rejection_not_proven'):
+                    self.run_control(sentinel)
+                self.assertNotIn('recovery_after', self.evidence)
+
+    def test_tcp_cannot_substitute_for_udp_at_any_rpdb_observation(self):
+        for changed_probe, reason in ((1, 'baseline_app_not_captured'),
+                                      (2, 'fault_app_rejection_not_proven'),
+                                      (3, 'recovered_app_not_captured')):
+            self.setUp()
+            calls = []
+            def sentinel():
+                calls.append(True)
+                result = self.device.app()
+                return result | {'transport': 'tcp'} if len(calls) == changed_probe else result
+            with self.subTest(probe=changed_probe), self.assertRaisesRegex(RuntimeError, reason):
+                self.run_control(sentinel)
+            self.assertNotEqual(self.evidence.get('status'), 'verified')
+
+    def test_a5c_successful_marker_after_rule_loss_is_not_a_negative_control(self):
+        def sentinel():
+            return self.device.app() | {'ok': True, 'reason': 'sentinel', 'accepted': 1}
+        with self.assertRaisesRegex(RuntimeError, 'fault_app_rejection_not_proven'):
+            self.run_control(sentinel)
+        self.assertTrue(self.evidence['fault_app']['ok'])
+        self.assertFalse(self.evidence['ready_after_fault'])
+        self.assertNotIn('recovery_after', self.evidence)
 
     def test_missing_automatic_recovery_hits_real_deadline_without_manual_restart(self):
         self.device.recover = False

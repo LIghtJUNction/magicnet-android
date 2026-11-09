@@ -32,6 +32,10 @@ REASONS = {
     'connect', 'transport', 'unexpected_redirect', 'unsafe_redirect',
     'unexpected_http_status', 'unexpected_body', 'body_limit', 'short_body', 'sentinel_mismatch',
 }
+UDP_REASONS = {'sentinel', 'timeout', 'connect', 'invalid_app_identity', 'invalid_input',
+               'interrupted', 'sentinel_mismatch', 'udp_setup_failed',
+               'udp_worker_failed', 'udp_cleanup_failed'}
+UDP_FIELDS = ('transport', 'receiver_bound', 'receiver_closed', 'request_attempted', 'accepted')
 
 
 def adb_shell(command: str, timeout: int = 60, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -80,7 +84,8 @@ def decode_result(cp: subprocess.CompletedProcess[str], operation: str) -> dict[
         value = json.loads(responses[0], object_pairs_hook=no_duplicates)
         if not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1:
             raise ValueError('schema')
-        if value.get('operation') != operation or value.get('reason') not in REASONS:
+        reasons = UDP_REASONS if operation == 'udp-sentinel' else REASONS
+        if value.get('operation') != operation or value.get('reason') not in reasons:
             raise ValueError('operation')
         for name in ('uid', 'http', 'redirects', 'received_bytes', 'elapsed_ms'):
             if type(value.get(name)) is not int or value[name] < 0:
@@ -97,8 +102,33 @@ def decode_result(cp: subprocess.CompletedProcess[str], operation: str) -> dict[
             raise ValueError('HTTP metadata')
         if value['ok'] and operation != 'identity' and value['elapsed_ms'] == 0:
             raise ValueError('timing')
-        return {key: value[key] for key in ('ok', 'complete', 'reason', 'uid', 'http',
-                'redirects', 'received_bytes', 'elapsed_ms')} | {'rc': 0 if value['ok'] else 1}
+        fields = ('ok', 'complete', 'reason', 'uid', 'http', 'redirects', 'received_bytes', 'elapsed_ms')
+        if operation == 'udp-sentinel':
+            if value.get('transport') != 'udp' or any(type(value.get(key)) is not bool
+                    for key in ('receiver_bound', 'receiver_closed', 'request_attempted')):
+                raise ValueError('UDP metadata')
+            if type(value.get('accepted')) is not int or not 0 <= value['accepted'] <= 1:
+                raise ValueError('UDP receive count')
+            if value['http'] or value['redirects'] or value['received_bytes'] > 34 or value['elapsed_ms'] > 15000:
+                raise ValueError('UDP budget')
+            if value['request_attempted'] and not value['receiver_bound'] or value['accepted'] and not (
+                    value['receiver_bound'] and value['request_attempted']):
+                raise ValueError('UDP setup order')
+            if value['complete']:
+                if not all(value[key] for key in ('receiver_bound', 'receiver_closed', 'request_attempted')) \
+                        or value['elapsed_ms'] == 0:
+                    raise ValueError('UDP lifecycle')
+                if value['ok']:
+                    valid = value['reason'] == 'sentinel' and value['accepted'] == 1 and value['received_bytes'] == 33
+                else:
+                    valid = value['reason'] in ('timeout', 'connect') and value['accepted'] == 0 \
+                            and value['received_bytes'] == 0
+                if not valid:
+                    raise ValueError('UDP outcome')
+            elif value['reason'] == 'sentinel':
+                raise ValueError('incomplete UDP success')
+            fields += UDP_FIELDS
+        return {key: value[key] for key in fields} | {'rc': 0 if value['ok'] else 1}
     except (ValueError, TypeError, KeyError):
         return failure('invalid_response')
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Prove one app UID reaches the installed TUN using a reversible emulator fixture.
+"""Prove one app UID reaches the installed core using a reversible emulator fixture.
 
 No public service or proxy node is needed for the sentinel. A fresh random marker
 is served only on the host loopback and adb-reversed to device loopback. The app
 requests a benchmarking IP, which can reach this marker only through a matching
-TUN + destination + app-UID route override. A reject control must refuse the
+inbound + destination + app-UID route override. A reject control must refuse the
 connection, then restoration must make the positive case work again.
 
 Never run on a user's physical device. The caller discards the disposable AVD
@@ -205,7 +205,7 @@ def service_observation(adb) -> dict:
     return observation
 
 
-def fixture_config(original: dict, uid: int, port: int, *, blocked: bool) -> dict:
+def fixture_config(original: dict, uid: int, port: int, *, blocked: bool, udp: bool = False) -> dict:
     if type(uid) is not int or uid < 10000 or type(port) is not int or not 1024 <= port <= 65535:
         raise ValueError('invalid fixture identity')
     candidate = copy.deepcopy(original)
@@ -231,7 +231,7 @@ def fixture_config(original: dict, uid: int, port: int, *, blocked: bool) -> dic
     route = candidate.setdefault('route', {})
     if not isinstance(route.get('rules', []), list):
         raise ValueError('invalid existing route rules')
-    route['rules'] = [rule] + route.get('rules', [])
+    route['rules'] = [rule] + ([rule | {'network': 'udp'}] if udp else []) + route.get('rules', [])
     return candidate
 
 
@@ -349,11 +349,16 @@ def verify(adb, instrument, component, *, fault_control=None, lifecycle_observer
         with lock:
             return result | {'accepted': counts['accepted'] - before}
 
+    def udp_sentinel():
+        # Android IPv4 TCP can still use auto_redirect after RPDB loss. The
+        # separate UDP probe reaches its app-local receiver only through TUN.
+        return instrument(component, 'udp-sentinel', 5, port=port, marker=secrets.token_hex(16))
+
     reverse = False
     changed = False
     try:
-        positive = fixture_config(original, uid, port, blocked=False)
-        blocked = fixture_config(original, uid, port, blocked=True)
+        positive = fixture_config(original, uid, port, blocked=False, udp=fault_control is not None)
+        blocked = fixture_config(original, uid, port, blocked=True, udp=fault_control is not None)
         subprocess.run(['adb', 'reverse', '--no-rebind', f'tcp:{port}', f'tcp:{port}'],
                        check=True, capture_output=True, timeout=10)
         reverse = True
@@ -372,7 +377,7 @@ def verify(adb, instrument, component, *, fault_control=None, lifecycle_observer
                 raise RuntimeError('sentinel_control_failed')
             if key == 'positive' and fault_control is not None:
                 control = 'fault'
-                fault_control(sentinel, uid)
+                fault_control(sentinel, uid, udp_sentinel)
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
         report['reason'] = 'sentinel_not_proven'
     finally:

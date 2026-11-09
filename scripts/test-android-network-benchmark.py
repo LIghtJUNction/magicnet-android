@@ -36,6 +36,101 @@ class AndroidBenchmarkTests(unittest.TestCase):
         self.assertTrue(result['ok'])
         self.assertEqual(result['uid'], 10123)
 
+    def udp_wire(self, omit=(), **updates):
+        value = dict(operation='udp-sentinel', transport='udp', receiver_bound=True,
+                     receiver_closed=True, request_attempted=True, accepted=1,
+                     http=0, received_bytes=33, reason='sentinel')
+        value.update(updates)
+        for key in omit:
+            value.pop(key)
+        return self.wire(**value)
+
+    def test_udp_positive_preserves_actual_receiver_metadata(self):
+        result = bench.decode_result(self.udp_wire(), 'udp-sentinel')
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['complete'])
+        self.assertEqual({key: result[key] for key in bench.UDP_FIELDS},
+                         dict(transport='udp', receiver_bound=True, receiver_closed=True,
+                              request_attempted=True, accepted=1))
+
+    def test_udp_negative_requires_complete_network_attempt_and_no_received_packet(self):
+        for reason in ('timeout', 'connect'):
+            with self.subTest(reason=reason):
+                result = bench.decode_result(self.udp_wire(ok=False, accepted=0,
+                    received_bytes=0, reason=reason), 'udp-sentinel')
+                self.assertTrue(result['complete'], result)
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['accepted'], 0)
+                self.assertEqual(result['reason'], reason)
+
+    def test_udp_missing_malformed_or_contradictory_metadata_is_incomplete(self):
+        changes = [{'transport': 'tcp'}, {'accepted': True}, {'accepted': -1}, {'accepted': 2},
+                   {'accepted': 0}, {'received_bytes': 32}, {'received_bytes': 34},
+                   {'http': 200}, {'redirects': 1}, {'elapsed_ms': 0}, {'elapsed_ms': 15001},
+                   {'reason': 'https_response'}]
+        for field in ('receiver_bound', 'receiver_closed', 'request_attempted'):
+            changes.extend({field: value} for value in (False, 1, 'true', None))
+        for updates in changes:
+            with self.subTest(updates=updates):
+                result = bench.decode_result(self.udp_wire(**updates), 'udp-sentinel')
+                self.assertEqual(result['reason'], 'invalid_response')
+                self.assertFalse(result['complete'])
+        for key in bench.UDP_FIELDS:
+            with self.subTest(missing=key):
+                self.assertEqual(bench.decode_result(self.udp_wire(omit=(key,)),
+                                 'udp-sentinel')['reason'], 'invalid_response')
+
+    def test_udp_setup_worker_and_cleanup_failures_remain_incomplete(self):
+        for reason, fields in (
+                ('udp_setup_failed', dict(receiver_bound=False, receiver_closed=True,
+                                          request_attempted=False, accepted=0)),
+                ('udp_worker_failed', dict(accepted=0)),
+                ('udp_cleanup_failed', dict(receiver_closed=False)),
+                ('invalid_input', dict(receiver_bound=False, receiver_closed=False,
+                                       request_attempted=False, accepted=0, elapsed_ms=0))):
+            with self.subTest(reason=reason):
+                result = bench.decode_result(self.udp_wire(ok=False, complete=False,
+                    received_bytes=0, reason=reason, **fields), 'udp-sentinel')
+                self.assertEqual(result['reason'], reason)
+                self.assertFalse(result['complete'])
+                self.assertFalse(result['ok'])
+        for updates in (dict(receiver_bound=False, request_attempted=True, accepted=0),
+                        dict(request_attempted=False, accepted=1)):
+            result = bench.decode_result(self.udp_wire(ok=False, complete=False,
+                reason='udp_worker_failed', **updates), 'udp-sentinel')
+            self.assertEqual(result['reason'], 'invalid_response')
+
+    def test_udp_negative_cannot_hide_delivery_or_fixture_failure(self):
+        negative = dict(ok=False, complete=True, accepted=0, received_bytes=0, reason='timeout')
+        for update in ({'accepted': 1}, {'received_bytes': 1}, {'reason': 'sentinel_mismatch'},
+                       {'reason': 'udp_setup_failed'}, {'reason': 'udp_worker_failed'},
+                       {'reason': 'udp_cleanup_failed'}, {'receiver_closed': False},
+                       {'receiver_bound': False}, {'request_attempted': False}, {'elapsed_ms': 0}):
+            with self.subTest(update=update):
+                result = bench.decode_result(self.udp_wire(**(negative | update)), 'udp-sentinel')
+                self.assertFalse(result['complete'])
+                self.assertEqual(result['reason'], 'invalid_response')
+
+    def test_udp_incomplete_instrumentation_stops_only_probe_and_keeps_metadata(self):
+        response = self.udp_wire(ok=False, complete=False, reason='udp_cleanup_failed', receiver_closed=False)
+        with patch.object(bench, 'adb_shell', return_value=response) as adb:
+            result = bench.instrument(bench.COMPONENT, 'udp-sentinel', 5, port=23456, marker='a' * 32)
+        self.assertFalse(result['complete'])
+        self.assertFalse(result['receiver_closed'])
+        self.assertEqual(result['reason'], 'udp_cleanup_failed')
+        self.assertEqual(adb.call_args_list[-1].args[0], 'am force-stop ' + bench.PACKAGE)
+
+    def test_udp_metadata_and_fixture_reasons_do_not_change_legacy_decoder(self):
+        expected = dict(ok=True, complete=True, reason='https_response', uid=10123,
+                        http=200, redirects=0, received_bytes=5, elapsed_ms=10, rc=0)
+        self.assertEqual(bench.decode_result(self.wire(transport='udp', accepted=1), 'https'), expected)
+        self.assertEqual(bench.decode_result(self.wire(reason='udp_setup_failed'), 'https')['reason'],
+                         'invalid_response')
+        tcp = bench.decode_result(self.wire(operation='sentinel', reason='sentinel', http=0,
+                                            received_bytes=33), 'sentinel')
+        self.assertTrue(tcp['ok'])
+        self.assertFalse(set(bench.UDP_FIELDS) & tcp.keys())
+
     def test_root_malformed_or_ambiguous_result_never_passes(self):
         for updates in ({'uid': 0}, {'uid': True}, {'schema': True}, {'schema': 2},
                         {'ok': 'true'}, {'complete': False}, {'elapsed_ms': -1},

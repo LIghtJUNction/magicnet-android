@@ -139,11 +139,15 @@ def validate_route_recovery(evidence):
             and positive_int(loss.get('removed_rule_count'))
             and positive_int(loss.get('recovery_tick_count')),
             'RPDB loss or production recovery was not demonstrated')
-    app_fault = loss.get('fault_app')
-    require(matches(app_fault, {'complete': True, 'ok': False, 'uid': evidence['app_uid'], 'accepted': 0})
-            and app_fault.get('reason') in ('connect', 'timeout')
-            and positive_int(app_fault.get('elapsed_ms')) and app_fault['elapsed_ms'] <= 15000,
-            'RPDB fault lacks a completed application-UID negative control')
+    for name, expected in (('baseline_app', True), ('fault_app', False), ('recovered_app', True)):
+        result = loss.get(name)
+        require(matches(result, {'complete': True, 'ok': expected, 'uid': evidence['app_uid'],
+                                 'accepted': int(expected), 'transport': 'udp',
+                                 'receiver_bound': True, 'receiver_closed': True,
+                                 'request_attempted': True})
+                and result.get('reason') in (('sentinel',) if expected else ('connect', 'timeout'))
+                and positive_int(result.get('elapsed_ms')) and result['elapsed_ms'] <= 15000,
+                'RPDB ' + name + ' lacks a completed application-UID UDP control')
     before, fault, after = (loss.get(name) for name in ('before', 'fault', 'after'))
     before_rules, before_fib = route_snapshot(before)
     fault_rules, fault_fib = route_snapshot(fault)

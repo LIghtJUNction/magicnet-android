@@ -88,6 +88,16 @@ class TunProofTests(unittest.TestCase):
         self.assertNotIn('override_address', rule)
         self.assertTrue(rule['no_drop'])
 
+    def test_optional_udp_rule_has_the_same_narrow_capture_boundary(self):
+        for blocked in (False, True):
+            ordinary = proof.fixture_config(BASE, 10123, 23456, blocked=blocked)
+            candidate = proof.fixture_config(BASE, 10123, 23456, blocked=blocked, udp=True)
+            self.assertEqual(len(ordinary['route']['rules']), 1)
+            tcp, udp = candidate['route']['rules']
+            self.assertEqual(tcp, ordinary['route']['rules'][0])
+            self.assertEqual(udp, tcp | {'network': 'udp'})
+            self.assertEqual(candidate['inbounds'], BASE['inbounds'])
+
     def test_root_and_excluded_uids_are_not_forced_into_tun(self):
         for uid, changes in ((0, {}), (True, {}), (10123, {'exclude_uid': [0, 10123]}),
                              (10123, {'include_uid': [10124]}), (10123, {'exclude_uid': []})):
@@ -287,7 +297,8 @@ class TunProofTests(unittest.TestCase):
                     failed_reverse_cleanup=False, failed_restart=False,
                     save_error='', restart_error='', restore_error='', restart_output='',
                     observation_result=None, observation_error=None, events=None, busy_saves=None,
-                    fault_control=None, lifecycle_observer=None, failed_stop=False, failed_start=False):
+                    fault_control=None, lifecycle_observer=None, failed_stop=False, failed_start=False,
+                    udp_probe_result=None, udp_instrument_error=False):
         # This executes restoration/accounting with an in-memory device and a
         # real local marker server. It is NOT evidence of Android TUN capture.
         active = copy.deepcopy(BASE)
@@ -369,7 +380,18 @@ class TunProofTests(unittest.TestCase):
             if operation == 'identity':
                 return {'ok': True, 'uid': 10123}
             sentinel_operations.append(operation)
-            blocked = active['route']['rules'][0]['action'] == 'reject'
+            events.append(('probe', operation, values['marker']))
+            network = 'udp' if operation == 'udp-sentinel' else 'tcp'
+            matches = [rule for rule in active['route']['rules'] if rule['network'] == network]
+            self.assertEqual(len(matches), 1)
+            blocked = matches[0]['action'] == 'reject'
+            if network == 'udp':
+                if udp_instrument_error:
+                    raise RuntimeError('udp_instrumentation_failed')
+                return dict(ok=not blocked, uid=10123, complete=True, elapsed_ms=10,
+                            reason='connect' if blocked else 'sentinel', accepted=0 if blocked else 1,
+                            transport='udp', receiver_bound=True, receiver_closed=True,
+                            request_attempted=True) | (udp_probe_result or {})
             if not blocked:
                 with socket.create_connection(('127.0.0.1', values['port']), timeout=2) as client:
                     self.assertEqual(client.recv(64).decode(), values['marker'] + '\n')
@@ -402,10 +424,12 @@ class TunProofTests(unittest.TestCase):
         self.assertEqual(len(saves), 4)
         self.assertEqual(saves[-1], BASE)
         self.assertFalse(any(event[0] == 'service_observation' for event in events))
+        self.assertEqual([event[1] for event in events if event[0] == 'probe'], ['sentinel'] * 3)
+        self.assertTrue(all(len(config['route']['rules']) == 1 for config in saves[:-1]))
 
     def test_fault_control_uses_same_live_marker_and_original_config_is_restored(self):
         calls = []
-        def fault(sentinel, uid):
+        def fault(sentinel, uid, udp_sentinel):
             calls.append(uid)
             result = sentinel()
             self.assertTrue(result['ok'])
@@ -414,6 +438,32 @@ class TunProofTests(unittest.TestCase):
         self.assertEqual(report['status'], 'verified')
         self.assertEqual(calls, [10123])
         self.assertEqual(len(saves), 4)
+
+    def test_fault_udp_probe_uses_fresh_marker_without_tcp_count_substitution(self):
+        events, results = [], []
+        def fault(tcp_sentinel, uid, udp_sentinel):
+            self.assertEqual(uid, 10123)
+            self.assertEqual(tcp_sentinel()['accepted'], 1)
+            results.extend([udp_sentinel(), udp_sentinel()])
+        report, saves = self.transaction(fault_control=fault, events=events,
+                                         udp_probe_result={'accepted': 7})
+        self.assertEqual(report['status'], 'verified')
+        self.assertTrue(all(result['accepted'] == 7 for result in results))
+        markers = [event[2] for event in events if event[:2] == ('probe', 'udp-sentinel')]
+        self.assertEqual(len(set(markers)), 2)
+        self.assertTrue(all(len(marker) == 32 for marker in markers))
+        self.assertTrue(all(event[2] not in markers for event in events if event[:2] == ('probe', 'sentinel')))
+        self.assertEqual(len(saves), 4)
+        self.assertTrue(all([rule['network'] for rule in config['route']['rules']] == ['tcp', 'udp']
+                            for config in saves[:-1]))
+
+    def test_udp_instrumentation_failure_still_restores_the_original_config(self):
+        report, saves = self.transaction(fault_control=lambda _tcp, _uid, udp: udp(),
+                                         udp_instrument_error=True)
+        self.assertEqual(report['status'], 'not_verified')
+        self.assertTrue(report['restored'])
+        self.assertFalse(report['reject'])
+        self.assertEqual(saves[-1], BASE)
 
     def test_fault_failure_cannot_pass_and_still_restores_config(self):
         def fault(*_):
@@ -626,10 +676,11 @@ class TunProofTests(unittest.TestCase):
 def check_core(binary):
     with tempfile.TemporaryDirectory(prefix='magicnet-sentinel-core-') as td:
         path = Path(td) / 'config.json'
-        for blocked in (False, True):
-            path.write_text(json.dumps(proof.fixture_config(BASE, 10123, 23456, blocked=blocked)))
-            subprocess.run([binary, 'check', '-c', str(path)], check=True, timeout=15)
-    print('Exact compiled core accepts positive and reject sentinel fixtures')
+        for udp in (False, True):
+            for blocked in (False, True):
+                path.write_text(json.dumps(proof.fixture_config(BASE, 10123, 23456, blocked=blocked, udp=udp)))
+                subprocess.run([binary, 'check', '-c', str(path)], check=True, timeout=15)
+    print('Exact compiled core accepts TCP/UDP positive and reject sentinel fixtures')
 
 
 if __name__ == '__main__':

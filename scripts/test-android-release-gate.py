@@ -31,6 +31,13 @@ def helper(table):
                     'local 127.0.0.1 dev wlan0 scope host']}
 
 
+def udp_result(ok):
+    return {'complete': True, 'ok': ok, 'uid': 10123, 'accepted': int(ok),
+            'reason': 'sentinel' if ok else 'connect', 'elapsed_ms': 12,
+            'transport': 'udp', 'receiver_bound': True, 'receiver_closed': True,
+            'request_attempted': True}
+
+
 def completed_report():
     phases = (
         'environment', 'kernelsu-bootstrap', 'install-before-first-boot', 'cold-boot',
@@ -68,8 +75,8 @@ def completed_report():
             'ready_after_fault': False, 'app_after_fault': False,
             'health_after_fault_rpdb_missing': True, 'recovery_entry': 'connectivity.tick',
             'recovery_tick_count': 2, 'ready_after_recovery': True, 'app_after_recovery': True,
-            'fault_app': {'complete': True, 'ok': False, 'uid': 10123, 'accepted': 0,
-                          'reason': 'connect', 'elapsed_ms': 12},
+            'baseline_app': udp_result(True), 'fault_app': udp_result(False),
+            'recovered_app': udp_result(True),
             'owned_rules': [owned], 'before': before,
             'fault': copy.deepcopy(before) | {'rules': [unowned, before['helper']['rule']]},
             'after': after,
@@ -371,6 +378,44 @@ class AndroidReportGateTests(unittest.TestCase):
                 bad = copy.deepcopy(report)
                 bad['provenance']['route_recovery']['rpdb_loss']['fault_app'][key] = value
                 self.assert_rejected(bad)
+
+    def test_all_three_udp_observations_are_required_and_tcp_cannot_substitute(self):
+        for name in ('baseline_app', 'fault_app', 'recovered_app'):
+            with self.subTest(name=name, change='missing'):
+                report = completed_report()
+                report['provenance']['route_recovery']['rpdb_loss'].pop(name)
+                self.assert_rejected(report)
+            for change in ('tcp', 'legacy', 'missing_receiver_bound', 'missing_receiver_closed',
+                           'missing_request_attempted'):
+                with self.subTest(name=name, change=change):
+                    report = completed_report()
+                    result = report['provenance']['route_recovery']['rpdb_loss'][name]
+                    if change == 'tcp':
+                        result['transport'] = 'tcp'
+                    elif change == 'legacy':
+                        for key in ('transport', 'receiver_bound', 'receiver_closed', 'request_attempted'):
+                            result.pop(key)
+                    else:
+                        result.pop(change.removeprefix('missing_'))
+                    self.assert_rejected(report)
+
+    def test_udp_requires_real_requests_ready_receivers_cleanup_and_strict_results(self):
+        for name in ('baseline_app', 'fault_app', 'recovered_app'):
+            expected = name != 'fault_app'
+            for key, value in (
+                    ('receiver_bound', False), ('receiver_bound', 1),
+                    ('receiver_closed', False), ('receiver_closed', 'true'),
+                    ('request_attempted', False), ('request_attempted', 1),
+                    ('complete', False), ('complete', 1), ('ok', not expected), ('ok', int(expected)),
+                    ('uid', 0), ('uid', 10124), ('uid', True),
+                    ('accepted', int(not expected)), ('accepted', expected),
+                    ('elapsed_ms', 0), ('elapsed_ms', True), ('elapsed_ms', '12'),
+                    ('elapsed_ms', 15001), ('reason', 'receiver_bind'), ('reason', 'receiver_cleanup'),
+                    ('reason', 'timeout' if expected else 'sentinel')):
+                with self.subTest(name=name, key=key, value=value):
+                    report = completed_report()
+                    report['provenance']['route_recovery']['rpdb_loss'][name][key] = value
+                    self.assert_rejected(report)
 
     def test_wall_clock_adjustment_does_not_erase_proven_monotonic_recovery(self):
         report = completed_report()
