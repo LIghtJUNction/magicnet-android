@@ -348,6 +348,76 @@ fn connectivity_real_ticks_share_a_persisted_budget_across_processes_and_status_
 }
 
 #[test]
+fn connectivity_tun_checks_are_independent_of_successful_mixed_proxy_probes() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join(".config/sing-box/config.json"), r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":7892},{"type":"tun","tag":"tun-in","interface_name":"magicnet0","address":["172.19.0.1/30"],"auto_route":true}]}"#).unwrap();
+    fs::write(
+        fixture.root.join("bin/ip"),
+        r#"#!/bin/sh
+case "$*" in
+  *'table all default') printf '%s\n' 'default via 192.0.2.1 dev test0' ;;
+  '-4 -N rule show')
+    test ! -f "$MODDIR/rules-unknown" || exit 1
+    cat "$MODDIR/rules" ;;
+  '-4 route show table  2022') printf '%s\n' 'default dev magicnet0 scope link' ;;
+  *) exit 64 ;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::write(fixture.root.join("rules"), "0: from all lookup 255\n9001: from all iif magicnet0 goto 9010\n9002: not from all iif lo lookup 2022\n9002: from 0.0.0.0 iif lo lookup 2022\n9002: from 172.19.0.0/30 iif lo lookup 2022\n9010: from all nop\n").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    let status = fixture.status();
+    assert_eq!(status["status"], "online");
+    assert_eq!(status["tun_auto_route"]["status"], "present");
+    assert_eq!(fixture.calls(), 1);
+
+    fs::write(fixture.root.join("rules"), "0: from all lookup 255\n").unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    let pending = fixture.status();
+    assert_eq!(pending["status"], "online");
+    assert_eq!(
+        pending["tun_auto_route"]["status"], "pending",
+        "new core has startup grace"
+    );
+    assert_eq!(pending["tun_auto_route"]["recovery_attempts"], 0);
+    assert_eq!(
+        fixture.calls(),
+        1,
+        "a TUN check does not issue another Google request"
+    );
+
+    fs::write(fixture.root.join("rules-unknown"), "").unwrap();
+    fixture.edit_state(&[
+        ("tun_next_uptime", "0"),
+        ("tun_failures", "2"),
+        ("tun_status", "missing"),
+    ]);
+    fixture.run(&["connectivity", "tick"]);
+    let unknown = fixture.status();
+    assert_eq!(unknown["status"], "online");
+    assert_eq!(unknown["warning"], false);
+    assert_eq!(unknown["tun_auto_route"]["status"], "unknown");
+    assert_eq!(unknown["tun_auto_route"]["warning"], true);
+    assert_eq!(unknown["tun_auto_route"]["consecutive_failures"], 0);
+    assert_eq!(unknown["tun_auto_route"]["recovery_attempts"], 0);
+    assert!(!fixture.root.join("actions").exists());
+
+    fs::create_dir_all(fixture.root.join(".config/magicnet")).unwrap();
+    fs::write(
+        fixture.root.join(".config/magicnet/transparent-mode.conf"),
+        "MAGICNET_TRANSPARENT_MODE=ebpf\n",
+    )
+    .unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(fixture.status()["tun_auto_route"]["status"], "not_required");
+    assert_eq!(fixture.calls(), 1);
+    assert!(!fixture.root.join("actions").exists());
+}
+
+#[test]
 fn connectivity_real_failure_attempts_warning_backoff_repair_and_subscription_refresh() {
     let fixture = Fixture::new();
     fs::write(fixture.root.join("mode"), "down").unwrap();

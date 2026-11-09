@@ -1,10 +1,214 @@
 #!/usr/bin/env python3
-"""Require successful Android acceptance for the exact main release commit."""
+"""Require complete Android evidence, or a successful run for the release commit."""
+import argparse
+from collections import Counter
 import json
+import math
 import os
 import re
+import stat
 import subprocess
 import time
+
+
+MAX_REPORT_BYTES = 1024 * 1024
+REPORT_SCOPE = 'Android-15-KernelSU-v3.2.0-pinned-kernel-x86_64-standalone-TUN-fixture'
+# Independent of the producer: removing a harness phase must not relax the gate.
+REQUIRED_PHASES = {
+    'environment', 'kernelsu-bootstrap', 'install-before-first-boot',
+    'cold-boot', 'app-uid-tun-controls', 'tun-route-recovery',
+    'invalid-config-rollback', 'stop-cleanup', 'restart-idempotence',
+    'upgrade-preservation', 'disable-reboot', 'enable-reboot', 'uninstall-reboot',
+}
+REQUIRED_PAYLOADS = {'bin/magicnet-cli', 'bin/sing-box', 'bin/jq', 'bin/yq', 'bin/curl'}
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+def matches(value, expected):
+    return isinstance(value, dict) and all(
+        type(value.get(key)) is type(item) and value[key] == item
+        for key, item in expected.items())
+
+
+def digest(value):
+    return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
+
+
+def positive_int(value):
+    return type(value) is int and value > 0
+
+
+def unique_keys(pairs):
+    value = {}
+    for key, item in pairs:
+        require(key not in value, 'Duplicate Android evidence JSON key')
+        value[key] = item
+    return value
+
+
+def finite_number(text):
+    value = float(text)
+    require(math.isfinite(value), 'Non-finite Android evidence number')
+    return value
+
+
+def text_rows(value, label):
+    require(isinstance(value, list) and len(value) <= 1024
+            and all(isinstance(row, str) and re.fullmatch(r'[ -~]{1,1024}', row)
+                    and row == ' '.join(row.split()) for row in value),
+            'Invalid route recovery ' + label)
+    return Counter(value)
+
+
+def route_snapshot(value):
+    require(matches(value, {'tun_name': 'magicnet0'})
+            and all(positive_int(value.get(key)) for key in
+                    ('core_pid', 'core_start_ticks', 'tun_ifindex')),
+            'Route recovery lacks a live core and TUN identity')
+    rules = text_rows(value.get('rules'), 'rules')
+    fib = text_rows(value.get('fib'), 'FIB')
+    require(any(re.search(r'\bdev magicnet0\b', row) for row in fib),
+            'Route recovery lacks the live TUN FIB')
+    return rules, fib
+
+
+def validate_route_recovery(evidence):
+    require(matches(evidence, {'schema': 1, 'status': 'verified',
+                              'scope': 'disposable-android-app-uid-tun',
+                              'positive': True, 'reject': True,
+                              'positive_after': True, 'restored': True})
+            and type(evidence.get('app_uid')) is int and evidence['app_uid'] >= 10000,
+            'Application-UID TUN route recovery controls are incomplete')
+    loss = evidence.get('rpdb_loss')
+    require(matches(loss, {'status': 'verified', 'core_identity_unchanged': True,
+                          'tun_unchanged': True, 'fib_unchanged': True,
+                          'unowned_rules_unchanged': True, 'ready_after_fault': False,
+                          'app_after_fault': False, 'health_after_fault_rpdb_missing': True,
+                          'recovery_entry': 'connectivity.tick', 'ready_after_recovery': True,
+                          'app_after_recovery': True})
+            and positive_int(loss.get('removed_rule_count'))
+            and positive_int(loss.get('recovery_tick_count')),
+            'RPDB loss or production recovery was not demonstrated')
+    app_fault = loss.get('fault_app')
+    require(matches(app_fault, {'complete': True, 'ok': False, 'uid': evidence['app_uid'], 'accepted': 0})
+            and app_fault.get('reason') in ('connect', 'timeout')
+            and positive_int(app_fault.get('elapsed_ms')) and app_fault['elapsed_ms'] <= 15000,
+            'RPDB fault lacks a completed application-UID negative control')
+    before, fault, after = (loss.get(name) for name in ('before', 'fault', 'after'))
+    before_rules, before_fib = route_snapshot(before)
+    fault_rules, fault_fib = route_snapshot(fault)
+    after_rules, _ = route_snapshot(after)
+    owned = text_rows(loss.get('owned_rules'), 'owned rules')
+    removed = before_rules - fault_rules
+    require(bool(owned) and not owned - before_rules and not fault_rules - before_rules
+            and sum(removed.values()) == loss['removed_rule_count']
+            and not removed - owned and before_rules - owned == fault_rules - owned
+            and not owned - after_rules and before_rules - owned == after_rules - owned,
+            'RPDB snapshots do not prove removal and restoration of owned rules')
+    identity = ('core_pid', 'core_start_ticks')
+    require(all(before[key] == fault[key] for key in (*identity, 'tun_ifindex'))
+            and before_fib == fault_fib
+            and tuple(after[key] for key in identity) != tuple(before[key] for key in identity)
+            and after['core_start_ticks'] > before['core_start_ticks'],
+            'RPDB fault changed the core/TUN/FIB, or recovery did not restart the core')
+    previous, recovered = loss.get('recovery_before'), loss.get('recovery_after')
+    require(matches(previous, {'recovery_limit': 3})
+            and previous.get('status') in ('present', 'missing', 'pending')
+            and type(previous.get('recovery_attempts')) is int
+            and 0 <= previous['recovery_attempts'] < 3
+            and matches(recovered, {'status': 'present', 'warning': False,
+                                    'recovery_status': 'ok', 'recovery_limit': 3,
+                                    'consecutive_failures': 0})
+            and type(recovered.get('recovery_attempts')) is int
+            and previous['recovery_attempts'] < recovered['recovery_attempts'] <= 3
+            and positive_int(recovered.get('last_recovery_at'))
+            and positive_int(recovered.get('checked_at')),
+            'RPDB recovery lacks a fresh production recovery observation')
+    first_missing = loss.get('first_missing')
+    require(matches(first_missing, {'status': 'missing', 'consecutive_failures': 1,
+                                   'recovery_attempts': previous['recovery_attempts']})
+            and matches(loss.get('first_missing_identity'), {key: before[key] for key in identity}),
+            'RPDB recovery did not preserve the core after the first missing observation')
+    reconnect = evidence.get('uplink_reconnect')
+    require(matches(reconnect, {'status': 'verified', 'down_observed': True,
+                               'up_observed': True, 'ready_after_recovery': True,
+                               'app_after_recovery': True, 'control_transport_verified': True,
+                               'control_channel_survived': True, 'restore_guard_finished': True})
+            and reconnect.get('interface') in ('wlan0', 'eth0')
+            and all(type(reconnect.get(key)) is int and reconnect[key] >= 0
+                    for key in ('down_flags', 'up_flags'))
+            and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
+            'Local uplink reconnect was not verified')
+
+
+def validate_report(report, sha):
+    require(isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{40}', sha),
+            'Invalid implementation commit')
+    require(matches(report, {'schema': 1, 'status': 'passed', 'scope': REPORT_SCOPE}),
+            'Android lifecycle report did not pass the required scope')
+    cases = report.get('cases')
+    require(isinstance(cases, list) and len(cases) == len(REQUIRED_PHASES)
+            and all(isinstance(case, dict) and isinstance(case.get('name'), str)
+                    for case in cases)
+            and {case['name'] for case in cases} == REQUIRED_PHASES,
+            'Android lifecycle phases are missing, duplicated or unknown')
+    for case in cases:
+        seconds = case.get('seconds')
+        require(case.get('status') == 'passed' and type(seconds) in (int, float)
+                and 0 <= seconds <= 5400 and 'reason' not in case,
+                'Android lifecycle phase lacks a completed observation: ' + case['name'])
+    provenance = report.get('provenance')
+    require(matches(provenance, {'schema': 1, 'scope': 'disposable-x86_64-avd-only',
+                                'source_sha': sha}), 'Android evidence source identity mismatch')
+    require(all(digest(provenance.get(key)) for key in ('production_zip_sha256', 'fixture_zip_sha256')),
+            'Android package identity is missing')
+    payloads = provenance.get('payload_sha256')
+    require(isinstance(payloads, dict) and REQUIRED_PAYLOADS <= payloads.keys()
+            and all(digest(value) for value in payloads.values()),
+            'Android runtime payload identity is missing')
+    metadata = provenance.get('metadata_sha256')
+    require(isinstance(metadata, dict) and digest(metadata.get('licenses/curl/build-provenance.json')),
+            'Android production curl metadata is missing')
+    require(matches(provenance.get('device'), {'sdk': 35}), 'Android SDK evidence is missing')
+    kernelsu = provenance.get('kernelsu')
+    require(matches(kernelsu, {'mode': 'pinned-kernel-userspace-late-load'})
+            and isinstance(kernelsu.get('kernel_version'), str)
+            and re.fullmatch(r'Kernel Version: [1-9][0-9]*', kernelsu['kernel_version'])
+            and isinstance(kernelsu.get('kmi'), str) and 0 < len(kernelsu['kmi']) <= 128,
+            'Native KernelSU identity is missing')
+    reboots = provenance.get('reboot_checks')
+    require(isinstance(reboots, list) and 5 <= len(reboots) <= 16,
+            'Android lifecycle reboot evidence is incomplete')
+    for reboot in reboots:
+        require(matches(reboot, {'status': 'passed', 'new_boot_observed': True,
+                                'root_verified': True, 'selinux_enforcing': True,
+                                'kernelsu_reactivation': 'verified_native_init'}),
+                'Android reboot lacks native KernelSU evidence')
+        native = reboot.get('kernelsu_native_boot')
+        require(matches(native, {'mode': 'pinned-kernel-native-init', 'kernel_interface': True,
+                                 'domain_verified': True, 'selinux_enforcing': True,
+                                 'busybox_verified': True})
+                and matches(native.get('stages'), {stage: 'passed' for stage in
+                            ('post-fs-data', 'services', 'boot-completed')}),
+                'KernelSU native init did not complete')
+    validate_route_recovery(provenance.get('route_recovery'))
+    return report
+
+
+def require_report(path, sha):
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0)
+    with os.fdopen(os.open(path, flags), 'rb') as stream:
+        require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode),
+                'Android evidence must be a regular file')
+        data = stream.read(MAX_REPORT_BYTES + 1)
+    require(0 < len(data) <= MAX_REPORT_BYTES, 'Android evidence exceeds the report budget')
+    report = json.loads(data, object_pairs_hook=unique_keys,
+                        parse_float=finite_number, parse_constant=finite_number)
+    return validate_report(report, sha)
 
 
 def api(path):
@@ -63,7 +267,17 @@ def require_acceptance(repository, sha, *, timeout=5100, query=api,
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--report', help='Validate the completed local simulation report')
+    parser.add_argument('--source-sha', help='Exact implementation commit required by --report')
+    args = parser.parse_args()
+    if (args.report is None) != (args.source_sha is None):
+        parser.error('--report and --source-sha must be supplied together')
     try:
-        require_acceptance(os.environ['GITHUB_REPOSITORY'], os.environ['RELEASE_COMMIT_SHA'])
-    except (KeyError, ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+        if args.report is not None:
+            require_report(args.report, args.source_sha)
+            print(f'Android lifecycle and route recovery evidence verified for {args.source_sha}', flush=True)
+        else:
+            require_acceptance(os.environ['GITHUB_REPOSITORY'], os.environ['RELEASE_COMMIT_SHA'])
+    except (KeyError, ValueError, RuntimeError, OSError, RecursionError, subprocess.TimeoutExpired) as error:
         raise SystemExit(f'::error::{error}') from error

@@ -51,7 +51,7 @@ CURL_PROVENANCE = 'licenses/curl/build-provenance.json'
 OPTIONAL_PAYLOADS = ('bin/ecapture', 'bin/proxylink')
 PHASES = (
     'environment', 'kernelsu-bootstrap', 'install-before-first-boot',
-    'cold-boot', 'app-uid-tun-controls', 'invalid-config-rollback',
+    'cold-boot', 'app-uid-tun-controls', 'tun-route-recovery', 'invalid-config-rollback',
     'stop-cleanup', 'restart-idempotence', 'upgrade-preservation',
     'disable-reboot', 'enable-reboot', 'uninstall-reboot',
 )
@@ -1197,6 +1197,17 @@ def tun_controls(device: Device, out: Path, phase: str):
             ('positive', 'reject', 'positive_after', 'restored')), 'app-UID TUN controls failed')
 
 
+def route_recovery(device: Device, out: Path, evidence: dict):
+    proof = load_script('android-route-recovery-proof')
+    benchmark = load_script('android-network-benchmark')
+    try:
+        proof.verify(lambda command, timeout=30: device.kshell(command, timeout=timeout, check=False),
+                     benchmark.instrument, benchmark.COMPONENT, evidence)
+        require(evidence.get('status') == 'verified', 'app-UID TUN route recovery failed')
+    finally:
+        (out / 'route-recovery.json').write_text(json.dumps(evidence, indent=2) + '\n')
+
+
 def invalid_config_rollback(device: Device, evidence: dict | None = None) -> dict:
     # The caller publishes this object before the first command, so an early
     # failure retains its exact operation instead of only "ADB shell exit 1".
@@ -1556,6 +1567,9 @@ def main() -> int:
                 installed_controls(device, out, controls, curl_identity=curl_identity)
             with report.phase('app-uid-tun-controls'):
                 tun_controls(device, out, 'app-uid-tun-controls')
+            with report.phase('tun-route-recovery'):
+                recovery = report.provenance['route_recovery'] = {}
+                route_recovery(device, out, recovery)
             with report.phase('invalid-config-rollback'):
                 rollback = {}
                 report.provenance['invalid_config_rollback'] = rollback

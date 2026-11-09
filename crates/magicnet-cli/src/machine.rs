@@ -266,6 +266,7 @@ fn capabilities_value() -> Value {
                 "transparent_plane_readiness",
                 "dns_capture_preflight",
                 "low_frequency_connectivity",
+                "bounded_tun_auto_route_recovery",
                 "additive_routing_overlay"
             ],
             "private_commands": ["sub.inspect", "wifi.inspect", "override.inspect", "network-access.inspect", "app.inspect"],
@@ -863,6 +864,11 @@ mod tests {
         assert_eq!(value["command"], "machine.capabilities");
         assert_eq!(value["data"]["machine_schema"], 1);
         assert_eq!(value["data"]["read_only"], false);
+        assert!(value["data"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "bounded_tun_auto_route_recovery"));
         assert!(value["data"]["features"]
             .as_array()
             .unwrap()

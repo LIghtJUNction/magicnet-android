@@ -256,6 +256,7 @@ fn duplicate_ticks_share_one_lock_and_sleeping_ticks_do_not_probe() {
     let clock = Clock::now().unwrap();
     let mut state = State::new(&clock);
     state.record(&clock, &online(), None, None);
+    state.tun.record(&clock, "not_required");
     state.publish(&app).unwrap();
     let before = fs::read(app.moddir.join(STATE)).unwrap();
     tick(&app).unwrap();

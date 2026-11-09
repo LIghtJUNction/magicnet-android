@@ -493,7 +493,7 @@ class InstalledControlsTests(unittest.TestCase):
             'supervisor start all', '--json service status', '--json connectivity status',
             '--json support export')])
         self.assertEqual(len(self.calls), 5)
-        self.assertEqual(len(SIM.PHASES), 12)
+        self.assertEqual(len(SIM.PHASES), 13)
         content = self.evidence['support_export']['content']
         self.assertEqual(content['service_status']['connectivity']['status'], 'unknown')
         self.assertEqual(content['service_status']['connectivity']['reason'], 'not_checked')

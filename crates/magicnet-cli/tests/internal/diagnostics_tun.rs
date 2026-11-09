@@ -11,6 +11,35 @@ const SYSTEM_RULES: &str = "0: from all lookup 255\n10000: from all fwmark 0xc00
 const ROUTES4: &str = "0.0.0.0/1 dev magicnet0 scope link\n128.0.0.0/1 dev magicnet0 scope link\n";
 const ROUTES6: &str = "default dev magicnet0 metric 1024 pref medium\n";
 
+#[test]
+fn known_missing_health_does_not_authorize_recovery_when_another_snapshot_is_unknown() {
+    let mut config = inbound();
+    config["address"] = json!(["172.19.0.1/30", "fdfe:dcba:9876::1/126"]);
+    for unknown in ["rule", "route"] {
+        let observed = super::auto_route_observation_with(&config, true, |args| {
+            if args[0] == "-6" && args[1] == unknown {
+                return Err("deadline");
+            }
+            Ok(match (args[0], args[1]) {
+                ("-4", "rule") => SYSTEM_RULES.into(),
+                ("-4", "route") => ROUTES4.into(),
+                ("-6", "rule") => normal_rules(2022, 9000, Family::V6),
+                ("-6", "route") => ROUTES6.into(),
+                _ => panic!("unexpected snapshot"),
+            })
+        });
+        assert_eq!(
+            observed.ready,
+            Some(false),
+            "health keeps the known missing evidence"
+        );
+        assert!(
+            !observed.fully_observed,
+            "an incomplete snapshot cannot authorize restart"
+        );
+    }
+}
+
 fn inbound() -> Value {
     json!({
         "type": "tun", "tag": "tun-in", "interface_name": "magicnet0",

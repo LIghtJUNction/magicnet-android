@@ -2,6 +2,36 @@ use super::*;
 use std::os::unix::fs::{symlink, PermissionsExt};
 
 #[test]
+fn connectivity_support_snapshot_hides_core_generation_and_boot_identity() {
+    let app = crate::test_support::temp_app();
+    fs::create_dir_all(app.moddir.join(".state/machines")).unwrap();
+    let text = "schema=1\ndomain=connectivity\nboot=PRIVATE-BOOT-CANARY\ntun_status=missing\ntun_attempts=2\ntun_core_pid=2147483601\ntun_core_starttime=900000071234\n";
+    for domain in ["connectivity", "service"] {
+        fs::write(
+            app.moddir.join(format!(".state/machines/{domain}.state")),
+            text,
+        )
+        .unwrap();
+    }
+    for snapshot in [connectivity_snapshot(&app), canonical_states(&app)] {
+        assert!(snapshot.contains("tun_status=missing"));
+        assert!(snapshot.contains("tun_attempts=2"));
+        for identity in [
+            "PRIVATE-BOOT-CANARY",
+            "2147483601",
+            "900000071234",
+            "tun_core_pid",
+            "tun_core_starttime",
+        ] {
+            assert!(
+                !snapshot.contains(identity),
+                "support export leaked {identity}"
+            );
+        }
+    }
+}
+
+#[test]
 fn config_projection_preserves_route_references_without_private_values() {
     let config = json!({
         "inbounds": [{"type":"tun", "tag":"tun-in", "mtu":1400, "exclude_uid":[0, 10112]}],

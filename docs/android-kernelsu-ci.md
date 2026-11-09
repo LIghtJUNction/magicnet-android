@@ -1,7 +1,8 @@
 # Android KernelSU network checks
 
-The manual **Android KernelSU Acceptance** workflow installs the module into a
-disposable Android 15/API 35 `google_apis` x86_64 emulator. The AVD keeps the
+The **Android KernelSU Acceptance** workflow runs on pull requests, main pushes,
+merge queues and release calls, with an optional manual public benchmark. It
+installs the module into a disposable Android 15/API 35 `google_apis` x86_64 emulator. The AVD keeps the
 SDK userspace and ramdisk, but boots a pinned API35/6.6 x86_64 GKI built against
 Android CI build 12525588 with KernelSU v3.2.0 and the required x86_64 syscall
 hardening compatibility patches. The source manifest and build recipe are pinned;
@@ -31,6 +32,27 @@ HTTPS downgrade, premature EOF, known/unknown-length bodies, bounded throughput
 and stalls. Test successes are not reused from the old host cache scope. CI also
 builds and verifies the real test APK; the exact compiled fork checks both sentinel
 route configurations.
+
+## Required route-loss recovery
+
+The `tun-route-recovery` lifecycle phase uses the installed production CLI/core
+and the existing application-UID local TCP sentinel. It deletes only live IPv4
+RPDB selectors proven by the current ownership ledger, leaving the core process
+generation, `magicnet0` and TUN forwarding table intact. The test requires
+readiness to become false and a new application connection to fail, then waits
+for the normal `connectivity tick` recovery path to restore both rules and flow.
+It also exercises a controlled virtual uplink down/up transition. Production
+grace, confirmation and cooldown periods remain active; the fixture does not
+fabricate canonical state or require Google or a subscription provider.
+
+The report retains the fault observations, recovery action, app controls and
+configuration/resource restoration. A separate bounded JSON validator requires
+the exact source SHA and every mandatory lifecycle phase, rejects malformed,
+missing, skipped or inconsistent evidence, and runs even after lifecycle failure.
+Host parser tests validate this gate; the actual emulator run establishes the
+kernel and application evidence. This reproduces the recoverable missing-rule
+condition from #436; it does not identify which OEM component originally removed
+the rules or establish physical ARM64 modem behavior.
 
 ## Sustained device observations
 
@@ -109,7 +131,7 @@ when bundled. The production ARM64 archive remains unchanged; fixture preparatio
 and lifecycle checks reject missing or incompatible runtime payloads. `ksud` is staged under `/sdcard/Download/MagicNet`, then copied to its
 actual executable userspace destination; `/sdcard` is not used as executable storage.
 
-The opt-in public phase requires all 12 offline lifecycle cases to pass, including
+The opt-in public phase requires all 13 offline lifecycle cases to pass, including
 module uninstall. `android-public-runtime.py prepare` then performs the necessary
 single installation and boot of the current complete x86_64 fixture through the
 same real KernelSU installer and lifecycle. The public wrapper verifies that
@@ -126,14 +148,12 @@ again before any public HTTPS or throughput request. Invalid preparation or
 live evidence fails without a fallback and leaves an `INCOMPLETE` summary.
 The preparation report is temporary CI evidence, not device canonical state.
 
-Only the opt-in public runtime adds a test-only Android x86_64 curl before
-installation. Its curl, OpenSSL, zlib and dated Mozilla CA bundle inputs are
-fixed by SHA-256. TLS, gzip and libcurl are statically linked; only the Android
-linker and permitted Bionic system libraries remain dynamic. The fixed CA bundle
-is embedded in the executable, without a runtime CA path or system-store fallback.
-Build provenance records the actual NDK and final ELF identity; a successful
-cross-build does not establish Android HTTPS capability. The original production
-archive and all 12 offline lifecycle cases remain the acceptance source.
+Offline acceptance and the optional public runtime use Android x86_64 curl built
+from the production curl/OpenSSL/zlib/CA lock. TLS, gzip and libcurl are statically
+linked; the CA bundle is embedded without a system-store fallback. Provenance
+records the NDK and final ELF identity. Installed execution and local TLS positive/
+negative controls establish capability beyond cross-build success. The original
+production archive and all 13 offline lifecycle cases remain the acceptance source.
 
 All ADB calls, including `wait-for-device`, have deadlines. Exit diagnostics have
 an overall budget and preserve the original test exit code. Process memory that

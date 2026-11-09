@@ -2,6 +2,8 @@
 
 Low-frequency `connectivity.status` and the explicitly scoped `support.export` file writer follow [connectivity and diagnostic contracts](connectivity-diagnostics.md). `service.status.data.connectivity` carries the same cached observation. Read operations never probe the Internet; exports replace one local diagnostic file and do not change service or configuration state.
 
+The `bounded_tun_auto_route_recovery` capability adds `connectivity.tun_auto_route` for independent cached TUN route observations and bounded recovery attempts. Top-level Google/mixed-proxy fields keep their original meaning. Missing observation timestamps are `null`; route status, action status and budgets follow the linked contract. Reads never perform recovery, and public fields omit process identities and raw routes.
+
 MagicNet keeps two CLI surfaces on purpose:
 
 - Human CLI: concise text intended for Termux, recovery and manual debugging.

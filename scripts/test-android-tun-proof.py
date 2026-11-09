@@ -286,7 +286,8 @@ class TunProofTests(unittest.TestCase):
     def transaction(self, *, reject_timeout=False, failed_save=False, failed_restore=False,
                     failed_reverse_cleanup=False, failed_restart=False,
                     save_error='', restart_error='', restore_error='', restart_output='',
-                    observation_result=None, observation_error=None, events=None, busy_saves=None):
+                    observation_result=None, observation_error=None, events=None, busy_saves=None,
+                    fault_control=None):
         # This executes restoration/accounting with an in-memory device and a
         # real local marker server. It is NOT evidence of Android TUN capture.
         active = copy.deepcopy(BASE)
@@ -376,7 +377,7 @@ class TunProofTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, '')
 
         with patch.object(proof.subprocess, 'run', side_effect=host), patch.object(proof.time, 'sleep'):
-            report = proof.verify(adb, instrument, 'component')
+            report = proof.verify(adb, instrument, 'component', fault_control=fault_control)
         if not busy.get('restore'):
             self.assertEqual(active, BASE)
         self.assertFalse(payloads, 'private staging payloads must be removed')
@@ -394,6 +395,28 @@ class TunProofTests(unittest.TestCase):
         self.assertEqual(len(saves), 4)
         self.assertEqual(saves[-1], BASE)
         self.assertFalse(any(event[0] == 'service_observation' for event in events))
+
+    def test_fault_control_uses_same_live_marker_and_original_config_is_restored(self):
+        calls = []
+        def fault(sentinel, uid):
+            calls.append(uid)
+            result = sentinel()
+            self.assertTrue(result['ok'])
+            self.assertEqual(result['accepted'], 1)
+        report, saves = self.transaction(fault_control=fault)
+        self.assertEqual(report['status'], 'verified')
+        self.assertEqual(calls, [10123])
+        self.assertEqual(len(saves), 4)
+
+    def test_fault_failure_cannot_pass_and_still_restores_config(self):
+        def fault(*_):
+            raise RuntimeError('injected_control_failure')
+        report, saves = self.transaction(fault_control=fault)
+        self.assertEqual(report['status'], 'not_verified')
+        self.assertTrue(report['positive'])
+        self.assertTrue(report['restored'])
+        self.assertFalse(report['reject'])
+        self.assertEqual(saves[-1], BASE)
 
     def test_first_failure_observation_precedes_cleanup_and_is_not_replaced_by_restore(self):
         events = []

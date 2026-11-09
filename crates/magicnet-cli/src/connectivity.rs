@@ -16,6 +16,9 @@ use serde_json::{json, Value};
 
 use crate::{run_bounded_command, App};
 
+#[path = "connectivity_tun.rs"]
+mod tun;
+
 pub(crate) const TARGET: &str = "https://www.google.com/generate_204";
 const SECONDARY_TARGET: &str = "https://cp.cloudflare.com/generate_204";
 const DIRECT_TARGET: &str = "https://www.baidu.com/";
@@ -65,7 +68,7 @@ impl Drop for CancellationGuard {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct Clock {
     boot: String,
     uptime: u64,
@@ -142,6 +145,7 @@ struct State {
     refresh_at: u64,
     refresh_uptime: u64,
     recovery_stage: u8,
+    tun: tun::State,
 }
 
 impl State {
@@ -167,23 +171,42 @@ impl State {
             refresh_at: 0,
             refresh_uptime: 0,
             recovery_stage: 0,
+            tun: tun::State::read(&BTreeMap::new(), clock),
         }
     }
 
     fn read(app: &App, clock: &Clock) -> Self {
-        let text = crate::utils::read_module_text_bounded(app, Path::new(STATE), MAX_STATE_BYTES)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        let mut fresh = Self::new(clock);
+        let text =
+            match crate::utils::read_module_text_bounded(app, Path::new(STATE), MAX_STATE_BYTES) {
+                Ok(Some(text)) => text,
+                Ok(None) => return fresh,
+                Err(_) => {
+                    fresh.tun.block_recovery();
+                    return fresh;
+                }
+            };
         let values = text
             .lines()
             .filter_map(|line| line.split_once('='))
             .collect::<BTreeMap<_, _>>();
-        if values.get("schema") != Some(&"1")
+        if text.lines().count() != values.len()
+            || values.get("schema") != Some(&"1")
             || values.get("domain") != Some(&"connectivity")
-            || values.get("boot") != Some(&clock.boot.as_str())
         {
-            return Self::new(clock);
+            fresh.tun.block_recovery();
+            return fresh;
+        }
+        if values.get("boot") != Some(&clock.boot.as_str()) {
+            if !values.get("boot").is_some_and(|boot| {
+                boot.len() == 36
+                    && boot
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+            }) {
+                fresh.tun.block_recovery();
+            }
+            return fresh;
         }
         let num = |key| {
             values
@@ -276,6 +299,7 @@ impl State {
             refresh_at: num("refresh_at"),
             refresh_uptime: num("refresh_uptime"),
             recovery_stage: num("recovery_stage").min(3) as u8,
+            tun: tun::State::read(&values, clock),
         }
     }
 
@@ -284,7 +308,7 @@ impl State {
     }
 
     fn publish(&self, app: &App) -> Result<(), String> {
-        let text = format!(
+        let mut text = format!(
             "schema=1\ndomain=connectivity\nboot={}\nphase={}\nreason={}\nprimary_reason={}\nchecked_at={}\nchecked_uptime={}\nnext_uptime={}\nfailures={}\nprobes={}\nhttp_code={}\nlatency_ms={}\nsecondary={}\ndirect={}\nlast_action={}\naction_status={}\naction_at={}\naction_uptime={}\nrefresh_at={}\nrefresh_uptime={}\nrecovery_stage={}\n",
             self.boot, self.phase, self.reason, self.primary_reason, self.checked_at, self.checked_uptime, self.next_uptime,
             self.failures, self.probes, self.http.map_or_else(|| "unknown".into(), |n| n.to_string()),
@@ -292,6 +316,7 @@ impl State {
             self.last_action, self.action_status, self.action_at, self.action_uptime, self.refresh_at,
             self.refresh_uptime, self.recovery_stage,
         );
+        text.push_str(&self.tun.encode());
         crate::write_text_file(app, Path::new(STATE), &text)
     }
 
@@ -346,8 +371,7 @@ impl State {
             || self.direct != "online"
             || self.reason == "no_default_route"
             || matches!(self.primary_reason, "probe_unavailable" | "probe_invalid")
-            || (self.action_uptime > 0
-                && clock.uptime.saturating_sub(self.action_uptime) < ACTION_COOLDOWN)
+            || !cooldown_elapsed(clock, self.action_uptime.max(self.tun.action_uptime))
         {
             return None;
         }
@@ -383,6 +407,10 @@ impl State {
             .uptime
             .saturating_add(backoff(self.failures).max(ACTION_COOLDOWN));
     }
+}
+
+fn cooldown_elapsed(clock: &Clock, action_uptime: u64) -> bool {
+    action_uptime == 0 || clock.uptime.saturating_sub(action_uptime) >= ACTION_COOLDOWN
 }
 
 fn backoff(failures: u32) -> u64 {
@@ -423,6 +451,7 @@ fn status_with_clock(app: &App, core: &str, clock: Result<Clock, String>) -> Val
             "secondary_status":"not_run", "direct_status":"not_run",
             "last_action":"none", "action_status":"none", "last_action_at":null,
             "last_refresh_at":null,
+            "tun_auto_route":State::new(&Clock::default()).tun.json(None, core, disabled(app)),
         });
     };
     let state = State::read(app, &clock);
@@ -459,6 +488,7 @@ fn status_with_clock(app: &App, core: &str, clock: Result<Clock, String>) -> Val
         "last_action":state.last_action, "action_status":state.action_status,
         "last_action_at":(state.action_at > 0).then_some(state.action_at),
         "last_refresh_at":(state.refresh_at > 0).then_some(state.refresh_at),
+        "tun_auto_route":state.tun.json(Some(&clock), core, disabled(app)),
     })
 }
 
@@ -523,7 +553,9 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
     if cancelled() {
         return pause_cancelled(app, &mut state);
     }
-    if !state.due(&clock) {
+    let probe_due = state.due(&clock);
+    let tun_due = state.tun.due(&clock);
+    if !probe_due && !tun_due {
         return Ok(());
     }
     let reason = if disabled(app) {
@@ -540,8 +572,36 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
             state.phase = "paused";
             state.reason = reason;
             state.next_uptime = clock.uptime.saturating_add(INTERVAL);
+            state.tun.record(
+                &clock,
+                if reason == "core_unknown" {
+                    "unknown"
+                } else {
+                    "paused"
+                },
+            );
             state.publish(app)?;
         }
+        return Ok(());
+    }
+    if tun_due {
+        state.tun.next_uptime = clock.uptime.saturating_add(tun::INTERVAL);
+        state.publish(app)?;
+        let observed = tun::observe(app, &clock);
+        if cancelled() {
+            return pause_cancelled(app, &mut state);
+        }
+        state.tun.record_observation(&Clock::now()?, &observed);
+        state.publish(app)?;
+        if state.tun.recovery_due(&clock, state.action_uptime) {
+            let attempts = state.tun.attempts;
+            tun::recover(app, &mut state, &clock, &observed)?;
+            if state.tun.attempts > attempts {
+                return Ok(());
+            }
+        }
+    }
+    if !probe_due {
         return Ok(());
     }
     let was_warning = matches!(state.phase, "offline" | "degraded");
@@ -587,7 +647,10 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
     }
     let has_remote = crate::subscriptions::observe_source_configuration(app)
         .is_ok_and(|source| source.mode() == "remote_url" && !source.urls.is_empty());
-    if let Some(action) = state.action(&clock, has_remote) {
+    if let Some(action) = state
+        .action(&clock, has_remote)
+        .filter(|_| matches!(state.tun.status, "present" | "not_required"))
+    {
         recover(app, &mut state, &clock, action)?;
     }
     Ok(())
@@ -596,7 +659,9 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
 fn pause_cancelled(app: &App, state: &mut State) -> Result<(), String> {
     state.phase = "paused";
     state.reason = "stop_requested";
-    state.next_uptime = Clock::now()?.uptime.saturating_add(INTERVAL);
+    let clock = Clock::now()?;
+    state.next_uptime = clock.uptime.saturating_add(INTERVAL);
+    state.tun.record(&clock, "paused");
     state.publish(app)
 }
 
@@ -774,6 +839,14 @@ fn recover(
     if cancelled() || live(app) != Ok(true) {
         return Ok(());
     }
+    let routes = tun::observe(app, clock);
+    if !matches!(routes.status, "present" | "not_required") {
+        state.tun.record_observation(clock, &routes);
+        return state.publish(app);
+    }
+    if cancelled() || live(app) != Ok(true) {
+        return Ok(());
+    }
     state.reserve_action(clock, action);
     state.publish(app)?;
     let result = match action {
@@ -843,9 +916,10 @@ fn log_event(app: &App, state: &State) {
     if metadata.len() > LOG_LIMIT {
         let _ = file.set_len(0);
     }
-    let _ = writeln!(file, "epoch={} level={} target=google phase={} reason={} primary_reason={} failures={} next_uptime={} action={} action_status={}",
+    let _ = writeln!(file, "epoch={} level={} target=google phase={} reason={} primary_reason={} failures={} next_uptime={} action={} action_status={} tun_status={} tun_failures={} tun_attempts={} tun_action_status={}",
         state.checked_at, if state.phase == "online" { "info" } else { "warn" }, state.phase, state.reason, state.primary_reason,
-        state.failures, state.next_uptime, state.last_action, state.action_status);
+        state.failures, state.next_uptime, state.last_action, state.action_status,
+        state.tun.status, state.tun.failures, state.tun.attempts, state.tun.action_status);
 }
 
 fn notify(app: &App, warning: bool) {

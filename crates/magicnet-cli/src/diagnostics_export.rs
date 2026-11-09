@@ -877,6 +877,7 @@ fn canonical_states(app: &App) -> String {
                 && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 && !key.contains("boot")
                 && !key.contains("identity")
+                && !matches!(key, "tun_core_pid" | "tun_core_starttime")
             {
                 text.push_str(line);
                 text.push('\n');
@@ -891,9 +892,9 @@ fn connectivity_snapshot(app: &App) -> String {
     module_text(app, ".state/machines/connectivity.state", 16384)
         .lines()
         .filter(|line| {
-            !line
-                .split_once('=')
-                .is_some_and(|(key, _)| key.contains("boot"))
+            !line.split_once('=').is_some_and(|(key, _)| {
+                key.contains("boot") || matches!(key, "tun_core_pid" | "tun_core_starttime")
+            })
         })
         .take(96)
         .collect::<Vec<_>>()
@@ -1268,6 +1269,7 @@ fn machine_key(key: &str) -> bool {
             | "subscription"
             | "source"
             | "connectivity"
+            | "tun_auto_route"
             | "mode"
             | "configured_mode"
             | "effective_type"
@@ -1302,6 +1304,10 @@ fn machine_key(key: &str) -> bool {
             | "action_status"
             | "last_action_at"
             | "last_refresh_at"
+            | "recovery_attempts"
+            | "recovery_limit"
+            | "recovery_status"
+            | "last_recovery_at"
             | "profile"
             | "primary"
             | "secondary"
@@ -1353,7 +1359,8 @@ fn machine_public_value(key: &str, value: &str) -> bool {
                 | "old-restored"
         ),
         "status" | "phase" | "process_state" | "lifecycle" | "capability" | "local_cgroup"
-        | "shared_tc" | "secondary_status" | "direct_status" | "action_status" => {
+        | "shared_tc" | "secondary_status" | "direct_status" | "action_status"
+        | "recovery_status" => {
             matches!(
                 value,
                 "unknown"
@@ -1379,6 +1386,9 @@ fn machine_public_value(key: &str, value: &str) -> bool {
                     | "configured"
                     | "attached"
                     | "missing"
+                    | "present"
+                    | "cooldown"
+                    | "exhausted"
                     | "idle"
                     | "prepared"
                     | "stopping"

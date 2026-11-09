@@ -652,6 +652,39 @@ fn transparent_transaction_active(app: &App) -> Result<bool, String> {
     }
 }
 
+pub(crate) fn automatic_tun_recovery_allowed(app: &App) -> Result<bool, String> {
+    if read_transparent_mode(app)?.mode != "tun" {
+        return Ok(false);
+    }
+    if transparent_transaction_active(app)? {
+        return Err("transparent recovery is pending".into());
+    }
+    for path in [
+        ".state/sing-box/subscription-transaction",
+        ".state/sing-box/subscription-update.lock",
+    ] {
+        match fs::symlink_metadata(app.moddir.join(path)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return Err("subscription state is busy or unknown".into()),
+        }
+    }
+    let staging = app.moddir.join(".cache/magicnet-app-transaction");
+    match fs::symlink_metadata(&staging) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(metadata) if metadata.is_dir() => {
+            if fs::read_dir(staging)
+                .map_err(|_| "module transaction state is unknown")?
+                .next()
+                .is_some()
+            {
+                return Err("module file recovery is pending".into());
+            }
+        }
+        _ => return Err("module transaction state is unknown".into()),
+    }
+    Ok(true)
+}
+
 fn prepare_network_for_stop_command() -> &'static str {
     PREPARE_NETWORK_FOR_STOP_COMMAND
 }

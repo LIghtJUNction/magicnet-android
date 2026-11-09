@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Publication must not reuse an old, PR-only, failed or incomplete Android run."""
 import importlib.util
+import copy
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 import yaml
@@ -17,6 +23,293 @@ RUN = {'id': 10, 'head_sha': SHA, 'head_branch': 'main', 'event': 'push',
 JOBS = [{'name': name, 'status': 'completed', 'conclusion': 'success'}
         for name in ('Simulation harness contracts', 'Android 15 / KernelSU / x86_64',
                      'Android Simulation Gate')]
+
+
+def completed_report():
+    phases = (
+        'environment', 'kernelsu-bootstrap', 'install-before-first-boot', 'cold-boot',
+        'app-uid-tun-controls', 'tun-route-recovery', 'invalid-config-rollback',
+        'stop-cleanup', 'restart-idempotence', 'upgrade-preservation',
+        'disable-reboot', 'enable-reboot', 'uninstall-reboot',
+    )
+    native = {'mode': 'pinned-kernel-native-init', 'kernel_interface': True,
+              'domain_verified': True, 'selinux_enforcing': True, 'busybox_verified': True,
+              'stages': {name: 'passed' for name in ('post-fs-data', 'services', 'boot-completed')}}
+    reboot = {'status': 'passed', 'new_boot_observed': True, 'root_verified': True,
+              'selinux_enforcing': True, 'kernelsu_reactivation': 'verified_native_init',
+              'kernelsu_native_boot': native}
+    owned = '9000: from all iif lo lookup 2022'
+    unowned = '0: from all lookup local'
+    before = {'core_pid': 400, 'core_start_ticks': 10000, 'tun_name': 'magicnet0',
+              'tun_ifindex': 9, 'rules': [unowned, owned], 'fib': ['default dev magicnet0 scope link']}
+    previous = {'status': 'present', 'recovery_limit': 3, 'recovery_attempts': 0}
+    recovery = {
+        'schema': 1, 'status': 'verified', 'scope': 'disposable-android-app-uid-tun',
+        'positive': True, 'reject': True, 'positive_after': True, 'restored': True, 'app_uid': 10123,
+        'rpdb_loss': {
+            'status': 'verified', 'removed_rule_count': 1, 'core_identity_unchanged': True,
+            'tun_unchanged': True, 'fib_unchanged': True, 'unowned_rules_unchanged': True,
+            'ready_after_fault': False, 'app_after_fault': False,
+            'health_after_fault_rpdb_missing': True, 'recovery_entry': 'connectivity.tick',
+            'recovery_tick_count': 2, 'ready_after_recovery': True, 'app_after_recovery': True,
+            'fault_app': {'complete': True, 'ok': False, 'uid': 10123, 'accepted': 0,
+                          'reason': 'connect', 'elapsed_ms': 12},
+            'owned_rules': [owned], 'before': before,
+            'fault': copy.deepcopy(before) | {'rules': [unowned]},
+            'after': copy.deepcopy(before) | {'core_pid': 500, 'core_start_ticks': 15000, 'tun_ifindex': 10},
+            'recovery_before': previous,
+            'first_missing': previous | {'status': 'missing', 'consecutive_failures': 1},
+            'first_missing_identity': {'core_pid': 400, 'core_start_ticks': 10000},
+            'recovery_after': {'status': 'present', 'warning': False, 'recovery_status': 'ok',
+                               'recovery_limit': 3, 'consecutive_failures': 0,
+                               'recovery_attempts': 1, 'last_recovery_at': 100, 'checked_at': 101},
+        },
+        'uplink_reconnect': {'status': 'verified', 'interface': 'wlan0', 'down_observed': True,
+                             'up_observed': True, 'ready_after_recovery': True, 'app_after_recovery': True,
+                             'control_transport_verified': True, 'control_channel_survived': True,
+                             'restore_guard_finished': True,
+                             'down_flags': 4098, 'up_flags': 4163},
+    }
+    return {
+        'schema': 1, 'status': 'passed',
+        'scope': 'Android-15-KernelSU-v3.2.0-pinned-kernel-x86_64-standalone-TUN-fixture',
+        'cases': [{'name': name, 'status': 'passed', 'seconds': 1.25} for name in phases],
+        'provenance': {
+            'schema': 1, 'scope': 'disposable-x86_64-avd-only', 'source_sha': SHA,
+            'production_zip_sha256': 'b' * 64, 'fixture_zip_sha256': 'c' * 64,
+            'payload_sha256': {name: 'd' * 64 for name in
+                              ('bin/magicnet-cli', 'bin/sing-box', 'bin/jq', 'bin/yq', 'bin/curl')},
+            'metadata_sha256': {'licenses/curl/build-provenance.json': 'e' * 64},
+            'device': {'sdk': 35},
+            'kernelsu': {'mode': 'pinned-kernel-userspace-late-load', 'kmi': 'android14-6.1',
+                        'kernel_version': 'Kernel Version: 32317'},
+            'reboot_checks': [copy.deepcopy(reboot) for _ in range(5)], 'route_recovery': recovery,
+        },
+    }
+
+
+class AndroidReportGateTests(unittest.TestCase):
+    def assert_rejected(self, report):
+        with self.assertRaises((RuntimeError, ValueError)):
+            GATE.validate_report(report, SHA)
+
+    def test_complete_current_local_evidence_is_accepted(self):
+        report = completed_report()
+        self.assertIs(GATE.validate_report(report, SHA), report)
+
+    def test_missing_duplicate_unrun_or_legacy_phase_never_passes(self):
+        for change in ('missing', 'duplicate', 'legacy', 'failed', 'not_run', 'skipped', 'zero-proof'):
+            with self.subTest(change=change):
+                report = completed_report()
+                cases = report['cases']
+                if change == 'missing':
+                    cases.pop()
+                elif change == 'duplicate':
+                    cases[-1] = cases[0].copy()
+                elif change == 'legacy':
+                    report['cases'] = [case for case in cases if case['name'] != 'tun-route-recovery']
+                elif change == 'zero-proof':
+                    cases[0].pop('seconds')
+                else:
+                    cases[0]['status'] = change
+                self.assert_rejected(report)
+        for cases in (None, {}, [True], [{'name': []}]):
+            report = completed_report()
+            report['cases'] = cases
+            self.assert_rejected(report)
+        for seconds in (True, None, '1', -1, float('nan'), float('inf'), 5401):
+            report = completed_report()
+            report['cases'][0]['seconds'] = seconds
+            self.assert_rejected(report)
+
+    def test_report_identity_requires_strict_versions_current_source_and_payloads(self):
+        changes = (
+            (('schema',), True), (('scope',), 'host-fixture'), (('status',), 'skipped'),
+            (('provenance', 'schema'), True), (('provenance', 'source_sha'), 'b' * 40),
+            (('provenance', 'scope'), 'mock'), (('provenance', 'production_zip_sha256'), None),
+            (('provenance', 'fixture_zip_sha256'), 'local'),
+            (('provenance', 'payload_sha256'), {'bin/sing-box': 'd' * 64}),
+            (('provenance', 'payload_sha256', 'bin/sing-box'), ''),
+            (('provenance', 'metadata_sha256'), {}), (('provenance', 'device', 'sdk'), '35'),
+            (('provenance', 'kernelsu', 'mode'), 'stub'),
+            (('provenance', 'kernelsu', 'kernel_version'), 'unknown'),
+        )
+        for path, value in changes:
+            with self.subTest(path=path, value=value):
+                report = completed_report()
+                target = report
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                self.assert_rejected(report)
+        for sha in ('local', 'A' * 40, '', None, True):
+            with self.subTest(sha=sha), self.assertRaises(RuntimeError):
+                GATE.validate_report(completed_report(), sha)
+
+    def test_all_reboots_need_actual_native_init_and_enforcement(self):
+        for change in ('missing', 'short', 'root', 'domain', 'stage', 'replayed'):
+            with self.subTest(change=change):
+                report = completed_report()
+                boots = report['provenance']['reboot_checks']
+                if change == 'missing':
+                    report['provenance'].pop('reboot_checks')
+                elif change == 'short':
+                    boots.pop()
+                elif change == 'root':
+                    boots[0]['root_verified'] = 'true'
+                elif change == 'domain':
+                    boots[-1]['kernelsu_native_boot']['domain_verified'] = 1
+                elif change == 'stage':
+                    boots[-1]['kernelsu_native_boot']['stages']['services'] = 'pending'
+                else:
+                    boots[-1]['kernelsu_reactivation'] = 'replayed_late_load'
+                self.assert_rejected(report)
+
+    def test_every_route_control_requires_boolean_evidence(self):
+        template = completed_report()['provenance']['route_recovery']
+        for section, fields in ((None, template), ('rpdb_loss', template['rpdb_loss']),
+                                ('uplink_reconnect', template['uplink_reconnect'])):
+            for key, expected in fields.items():
+                if type(expected) is not bool:
+                    continue
+                for value in (not expected, str(expected).lower(), int(expected), None):
+                    with self.subTest(section=section, key=key, value=value):
+                        report = completed_report()
+                        evidence = report['provenance']['route_recovery']
+                        target = evidence if section is None else evidence[section]
+                        target[key] = value
+                        self.assert_rejected(report)
+
+    def test_claimed_success_cannot_replace_actual_fault_snapshots(self):
+        changes = (
+            (('removed_rule_count',), 0), (('removed_rule_count',), True),
+            (('removed_rule_count',), 2), (('owned_rules',), []),
+            (('fault', 'rules'), completed_report()['provenance']['route_recovery']['rpdb_loss']['before']['rules']),
+            (('fault', 'rules'), []), (('fault', 'rules'), ['0: from all lookup other']),
+            (('fault', 'core_pid'), 401), (('fault', 'core_start_ticks'), 9999),
+            (('fault', 'tun_ifindex'), 10), (('fault', 'fib'), ['default dev magicnet0 metric 10']),
+            (('after', 'rules'), ['0: from all lookup local']),
+            (('after', 'rules'), ['9000: from all iif lo lookup 2022']),
+            (('after', 'rules'), ['0: from all lookup main', '9000: from all iif lo lookup 2022']),
+            (('after', 'core_pid'), 400), (('after', 'core_start_ticks'), 10000),
+            (('after', 'tun_name'), 'tun0'), (('before', 'core_pid'), True),
+            (('before', 'fib'), []), (('before', 'rules'), '9000: from all lookup 2022'),
+            (('fault',), None), (('after',), {}),
+        )
+        for path, value in changes:
+            with self.subTest(path=path, value=value):
+                report = completed_report()
+                target = report['provenance']['route_recovery']['rpdb_loss']
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                # PID reuse alone is legitimate; changing both identity fields is not.
+                if path == ('after', 'core_pid'):
+                    target['core_start_ticks'] = 10000
+                self.assert_rejected(report)
+
+    def test_rule_snapshots_preserve_duplicate_foreign_rules(self):
+        report = completed_report()
+        loss = report['provenance']['route_recovery']['rpdb_loss']
+        for name in ('before', 'fault', 'after'):
+            loss[name]['rules'].append('0: from all lookup local')
+        GATE.validate_report(report, SHA)
+        loss['after']['rules'].remove('0: from all lookup local')
+        self.assert_rejected(report)
+
+    def test_manual_restart_stale_state_or_single_failure_is_not_recovery(self):
+        changes = (
+            (('recovery_entry',), 'service.restart'), (('recovery_tick_count',), 0),
+            (('recovery_tick_count',), True), (('recovery_before', 'recovery_attempts'), True),
+            (('recovery_after', 'recovery_attempts'), 0), (('recovery_after', 'recovery_attempts'), 4),
+            (('recovery_after', 'status'), 'unknown'), (('recovery_after', 'recovery_status'), 'pending'),
+            (('recovery_after', 'warning'), 0), (('recovery_after', 'recovery_limit'), 4),
+            (('recovery_after', 'checked_at'), 0), (('recovery_after', 'last_recovery_at'), None),
+            (('first_missing', 'consecutive_failures'), 0), (('first_missing', 'consecutive_failures'), True),
+            (('first_missing', 'recovery_attempts'), 1), (('first_missing_identity', 'core_pid'), 500),
+        )
+        for path, value in changes:
+            with self.subTest(path=path, value=value):
+                report = completed_report()
+                target = report['provenance']['route_recovery']['rpdb_loss']
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                self.assert_rejected(report)
+
+    def test_completed_app_timeout_is_evidence_but_unfinished_or_wrong_uid_is_not(self):
+        report = completed_report()
+        fault = report['provenance']['route_recovery']['rpdb_loss']['fault_app']
+        fault.update(reason='timeout', elapsed_ms=5000)
+        GATE.validate_report(report, SHA)
+        for key, value in (('complete', False), ('complete', 'true'), ('ok', True), ('ok', 0),
+                           ('uid', 0), ('uid', 10124), ('accepted', 1), ('accepted', False),
+                           ('reason', 'adb_timeout'), ('elapsed_ms', None), ('elapsed_ms', True),
+                           ('elapsed_ms', 0), ('elapsed_ms', 15001)):
+            with self.subTest(key=key, value=value):
+                bad = copy.deepcopy(report)
+                bad['provenance']['route_recovery']['rpdb_loss']['fault_app'][key] = value
+                self.assert_rejected(bad)
+
+    def test_wall_clock_adjustment_does_not_erase_proven_monotonic_recovery(self):
+        report = completed_report()
+        report['provenance']['route_recovery']['rpdb_loss']['recovery_after']['checked_at'] = 50
+        GATE.validate_report(report, SHA)
+
+    def test_missing_skipped_or_root_uid_fault_evidence_never_passes(self):
+        for key, value in (('schema', True), ('status', 'skipped'), ('scope', 'host'),
+                           ('app_uid', 0), ('app_uid', True), ('rpdb_loss', None),
+                           ('uplink_reconnect', {'status': 'skipped'})):
+            with self.subTest(key=key, value=value):
+                report = completed_report()
+                report['provenance']['route_recovery'][key] = value
+                self.assert_rejected(report)
+        report = completed_report()
+        report['provenance'].pop('route_recovery')
+        self.assert_rejected(report)
+
+    def test_uplink_requires_observed_kernel_link_flags(self):
+        for key, value in (('down_flags', None), ('down_flags', False), ('down_flags', 1),
+                           ('up_flags', None), ('up_flags', True), ('up_flags', 0),
+                           ('down_flags', -2), ('up_flags', -1), ('interface', 'lo')):
+            with self.subTest(key=key, value=value):
+                report = completed_report()
+                report['provenance']['route_recovery']['uplink_reconnect'][key] = value
+                self.assert_rejected(report)
+
+    def test_report_reader_is_bounded_and_rejects_ambiguous_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'simulation.json'
+            path.write_text(json.dumps(completed_report()))
+            self.assertEqual(GATE.require_report(path, SHA)['status'], 'passed')
+            for payload in ('', '{"schema":1,"schema":1}', '{"value":NaN}', '{"value":1e9999}',
+                            '[' * 10000, ' ' * (GATE.MAX_REPORT_BYTES + 1)):
+                with self.subTest(payload=payload[:80]):
+                    path.write_text(payload)
+                    with self.assertRaises((ValueError, RuntimeError, RecursionError)):
+                        GATE.require_report(path, SHA)
+            link = Path(directory) / 'linked.json'
+            link.symlink_to(path)
+            with self.assertRaises(OSError):
+                GATE.require_report(link, SHA)
+            fifo = Path(directory) / 'pipe.json'
+            os.mkfifo(fifo)
+            with self.assertRaises(RuntimeError):
+                GATE.require_report(fifo, SHA)
+
+    def test_cli_report_mode_requires_both_arguments_and_exits_nonzero_on_missing_evidence(self):
+        script = str(Path(__file__).with_name('require-android-acceptance.py'))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'simulation.json'
+            path.write_text(json.dumps(completed_report()))
+            valid = [sys.executable, script, '--report', str(path), '--source-sha', SHA]
+            accepted = subprocess.run(valid, capture_output=True, text=True, timeout=5)
+            self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+            self.assertIn(SHA, accepted.stdout)
+            path.unlink()
+            for args in (valid, valid[:-2], [sys.executable, script, '--source-sha', SHA]):
+                rejected = subprocess.run(args, capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
 
 
 class AndroidReleaseGateTests(unittest.TestCase):

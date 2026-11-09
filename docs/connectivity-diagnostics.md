@@ -12,6 +12,8 @@ Google 失败后才检查独立代理目标；后者也失败后才检查直连�
 
 监控复用 `magicnet-kernel` watchdog，每 60 秒运行一次短命令；未到检查时间立即退出，没有新增常驻 Rust 进程。服务停止、模块停用或进程归属未知时暂停。恢复在生命周期锁内重新核对服务状态，保留用户停止意图、TUN/eBPF 模式与节点选择。修复返回成功和恢复联网分别记录，后续 HTTPS 检查通过后才显示在线。
 
+TUN 自动路由另按 60 秒周期检查，不受 Google 退避影响。核心启动满 90 秒后，同一核心启动身份的连续两次完整观测确认必要规则或转发路由缺失，才在同一生命周期锁内复核并重启当前核心。未知观测、未完成事务、eBPF、auto_route=false 和停止状态均不触发。它与其他自动动作共享至少 300 秒冷却；TUN 重启依次退避 300/600/1200 秒，同次开机最多 3 次，worker 重跑、核心换代或规则恢复不重置预算；已有预算损坏时停止自动恢复。耗尽后继续观察；实际恢复需后续路由与应用流量证据。
+
 用户在自动恢复期间显式停止或重启服务时，先停止监控，并只取消已核对身份的本模块维护进程。更新器最多获得 15 秒执行现有回滚/清理，生命周期锁保留到子任务结束；仅该取消场景最多等待锁 20 秒。取消记为 `paused/stop_requested`，不再恢复监控或重放选择。未能取得锁或完成停止时仍明确报错，不声称服务已停。
 
 概览和诊断页显示 Google 状态、延迟、失败警告、下次检查时间及恢复动作。故障/恢复状态转换触发通知；也可通过 `cli health`、`cli --json connectivity status` 和 `.log/connectivity.log` 查看。单次通知失败不影响探测状态。
@@ -57,6 +59,8 @@ su -c '/data/adb/modules/MagicNet/cli --json support export'
 `connectivity.status` 只读；同一结果也在 `service.status.data.connectivity` 中。状态包含 `unknown/pending/online/degraded/offline/paused/stale`，测量缺失用 `null`；原始错误用有限 reason token 表达。返回目标、路径、检查时间、下次检查时间、退避、失败次数、HTTP/延迟、辅助探测和最近恢复动作。`primary_reason` 保留 Google 的直接错误，`reason` 表达综合判断。
 
 `.state/machines/connectivity.state` 是唯一公共规范状态，由监控 producer 原子发布。开机 token 仅用于判定单调截止时间是否仍有效，不进入 JSON 和诊断包。状态读取不联网、不发布文件、不执行恢复。
+
+`tun_auto_route` 单独返回 status、warning、检查/恢复时间、连续缺失数、恢复次数/上限和 recovery_status。status 为 not_required/pending/present/missing/unknown/paused/stale；recovery_status 为 none/pending/ok/failed/busy/cooldown/exhausted。原顶层 Google/mixed_proxy 结果保持原义，不能用代理端口在线替代 TUN 完整，也不能用重启动作成功替代流量恢复。
 
 `support.export` 是明确的文件写入例外：capabilities 的 commands/mutation_commands 均列出它，且声明 `state_effect="export-only"`、`fresh_network_probe=false`。无参数，成功返回 `{path, bytes}`；失败返回 `support.export_failed`。WebUI 先协商能力，收到完整成功 envelope 后才显示文件位置。未知参数保持结构化失败，不落回人类命令。
 

@@ -47,6 +47,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(any('test-android-device-simulation.py' in s.get('run', '') for s in harness))
         self.assertFalse(any('cache' in s.get('uses', '') for s in harness))
 
+    def test_route_fault_harness_is_checked_in_ci_and_host_entrypoint(self):
+        command = 'python3 scripts/test-android-route-recovery-proof.py'
+        self.assertTrue(any(command in step.get('run', '') for step in self.jobs['harness']['steps']))
+        self.assertIn('CI_TEST_FORCE=1 check ' + command, (ROOT / 'scripts/test-host.sh').read_text())
+
     def test_harness_initializes_real_startup_helper_before_core_checks(self):
         harness = self.jobs['harness']['steps']
         names = [step.get('name') for step in harness]

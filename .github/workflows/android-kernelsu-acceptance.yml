@@ -127,6 +127,7 @@ jobs:
           python3 scripts/test-android-avd-storage.py
           python3 scripts/test-android-adb.py
           python3 scripts/test-android-tun-proof.py
+          python3 scripts/test-android-route-recovery-proof.py
           python3 scripts/test-android-network-benchmark.py
           python3 scripts/test-android-network-soak.py
           python3 scripts/test-android-public-curl-proof.py
@@ -532,7 +533,7 @@ jobs:
           echo $! >artifacts/android-kernelsu/emulator.pid
 
       - name: Exercise Android KernelSU lifecycle
-        timeout-minutes: 25
+        timeout-minutes: 35
         env:
           MAGICNET_DISPOSABLE_AVD: "1"
           MAGICNET_KSUD_HOST: ${{ env.KSU_RUNTIME }}/ksud-x86_64-linux-android
@@ -543,6 +544,10 @@ jobs:
           MAGICNET_CURL_NDK_SHA256: ${{ steps.toolchain.outputs.ndk }}
           MAGICNET_NETWORK_PROBE_APK: ${{ runner.temp }}/magicnet-network-probe.apk
         run: python3 scripts/android-device-simulation.py
+
+      - name: Verify mandatory Android evidence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/require-android-acceptance.py --report artifacts/android-kernelsu/simulation.json --source-sha "$MAGICNET_SOURCE_SHA"
 
       # Lifecycle acceptance must finish all cases, including uninstall, first.
       # Reinstall the complete x86 fixture once through the same KernelSU lifecycle.

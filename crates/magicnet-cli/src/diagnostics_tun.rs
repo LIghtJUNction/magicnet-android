@@ -12,9 +12,20 @@ mod routes;
 
 const SNAPSHOT_LIMIT: usize = 256 * 1024;
 
+pub(crate) struct AutoRouteObservation {
+    pub(crate) ready: Option<bool>,
+    pub(crate) fully_observed: bool,
+    detail: String,
+}
+
 pub(crate) fn auto_route_check(inbound: &Value) -> (Option<bool>, String) {
+    let observed = auto_route_observation(inbound);
+    (observed.ready, observed.detail)
+}
+
+pub(crate) fn auto_route_observation(inbound: &Value) -> AutoRouteObservation {
     let deadline = Instant::now() + crate::SHORT_TIMEOUT;
-    auto_route_check_with(inbound, cfg!(target_os = "android"), |args| {
+    auto_route_observation_with(inbound, cfg!(target_os = "android"), |args| {
         let mut command = Command::new(if cfg!(target_os = "android") {
             "/system/bin/ip"
         } else {
@@ -54,27 +65,40 @@ fn read_snapshot(
     String::from_utf8(output.stdout).map_err(|_| "output-invalid")
 }
 
+#[cfg(test)]
 pub(crate) fn auto_route_check_with(
     inbound: &Value,
     android: bool,
-    mut snapshot: impl FnMut(&[&str]) -> Result<String, &'static str>,
+    snapshot: impl FnMut(&[&str]) -> Result<String, &'static str>,
 ) -> (Option<bool>, String) {
+    let observed = auto_route_observation_with(inbound, android, snapshot);
+    (observed.ready, observed.detail)
+}
+
+fn auto_route_observation_with(
+    inbound: &Value,
+    android: bool,
+    mut snapshot: impl FnMut(&[&str]) -> Result<String, &'static str>,
+) -> AutoRouteObservation {
     let expected = match RouteExpectation::from_inbound(inbound, android) {
         Ok(Some(expected)) => expected,
         Ok(None) => {
-            return (
-                Some(true),
-                "auto_route=disabled rpdb=not_required fib=not_required".into(),
-            )
+            return AutoRouteObservation {
+                ready: Some(true),
+                fully_observed: true,
+                detail: "auto_route=disabled rpdb=not_required fib=not_required".into(),
+            }
         }
         Err(reason) => {
-            return (
-                None,
-                format!("auto_route=unknown rpdb=unknown fib=unknown reason={reason}"),
-            )
+            return AutoRouteObservation {
+                ready: None,
+                fully_observed: false,
+                detail: format!("auto_route=unknown rpdb=unknown fib=unknown reason={reason}"),
+            }
         }
     };
     let mut ready = Some(true);
+    let mut fully_observed = true;
     let table = expected.table.to_string();
     // iproute2 resolves table names before numbers. Names are read with %s,
     // so a leading space cannot match a name, while strtoul still reads the ID.
@@ -108,6 +132,7 @@ pub(crate) fn auto_route_check_with(
             Err(reason) => (None, format!("unknown:{reason}")),
         };
         for observed in [rules.0, routes.0] {
+            fully_observed &= observed.is_some();
             ready = if ready == Some(false) || observed == Some(false) {
                 Some(false)
             } else {
@@ -122,7 +147,11 @@ pub(crate) fn auto_route_check_with(
             routes.1
         ));
     }
-    (ready, detail)
+    AutoRouteObservation {
+        ready,
+        fully_observed,
+        detail,
+    }
 }
 
 fn observe(

@@ -235,7 +235,7 @@ def fixture_config(original: dict, uid: int, port: int, *, blocked: bool) -> dic
     return candidate
 
 
-def verify(adb, instrument, component) -> dict:
+def verify(adb, instrument, component, *, fault_control=None) -> dict:
     report = {'status': 'not_verified', 'scope': 'emulator_test_uid_tcp',
               'positive': False, 'reject': False, 'positive_after': False, 'restored': False}
     # A user could run the benchmark locally; refuse mutation on physical phones.
@@ -332,6 +332,14 @@ def verify(adb, instrument, component) -> dict:
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+
+    def sentinel():
+        with lock:
+            before = counts['accepted']
+        result = instrument(component, 'sentinel', 5, port=port, marker=marker_bytes)
+        with lock:
+            return result | {'accepted': counts['accepted'] - before}
+
     reverse = False
     changed = False
     try:
@@ -344,19 +352,18 @@ def verify(adb, instrument, component) -> dict:
             control = key
             changed = True  # A failed save/restart may already have changed the active file.
             install_config(candidate)
-            with lock:
-                before = counts['accepted']
-            result = instrument(component, 'sentinel', 5, port=port, marker=marker_bytes)
-            with lock:
-                count = counts['accepted'] - before
+            result = sentinel()
             if key == 'reject':
                 report[key] = (result['complete'] and not result['ok'] and result['uid'] == uid
-                               and result['reason'] == 'connect' and count == 0)
+                               and result['reason'] == 'connect' and result['accepted'] == 0)
             else:
                 report[key] = (result['ok'] and result['uid'] == uid
-                               and result['reason'] == 'sentinel' and count == 1)
+                               and result['reason'] == 'sentinel' and result['accepted'] == 1)
             if not report[key]:
                 raise RuntimeError('sentinel_control_failed')
+            if key == 'positive' and fault_control is not None:
+                control = 'fault'
+                fault_control(sentinel, uid)
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
         report['reason'] = 'sentinel_not_proven'
     finally:

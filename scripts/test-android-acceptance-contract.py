@@ -109,6 +109,30 @@ for package in requested:
         self.assertIn("MAGICNET_X86_SINGBOX", env)
         self.assertNotIn("MAGICNET_X86_MCP", env)
 
+    def test_report_gate_is_mandatory_and_rejects_missing_or_summary_only_evidence(self):
+        gate = self.step("Verify mandatory Android evidence")
+        names = [step.get("name") for step in self.steps]
+        self.assertLess(names.index("Exercise Android KernelSU lifecycle"), names.index(gate['name']))
+        self.assertLess(names.index(gate['name']), names.index("Prepare public benchmark runtime"))
+        self.assertEqual(gate.get('if'), '${{ !cancelled() }}')
+        self.assertNotIn('continue-on-error', gate)
+        self.assertEqual(gate['run'], 'python3 scripts/require-android-acceptance.py '
+                         '--report artifacts/android-kernelsu/simulation.json --source-sha "$MAGICNET_SOURCE_SHA"')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            (root / 'scripts/require-android-acceptance.py').symlink_to(
+                ROOT / 'scripts/require-android-acceptance.py')
+            report = root / 'artifacts/android-kernelsu/simulation.json'
+            report.parent.mkdir(parents=True)
+            for evidence in (None, {'schema': 1, 'status': 'passed', 'cases': []}):
+                with self.subTest(evidence=evidence):
+                    if evidence is not None:
+                        report.write_text(json.dumps(evidence))
+                    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', gate['run']],
+                                            cwd=root, env=dict(os.environ, MAGICNET_SOURCE_SHA='a' * 40),
+                                            text=True, capture_output=True, timeout=5)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_sdk_bootstrap_precedes_all_android_consumers(self):
         names = [step.get("name") for step in self.steps]
