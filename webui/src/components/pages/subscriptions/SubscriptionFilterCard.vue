@@ -7,6 +7,7 @@ import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
 import { useActionLock } from "@/composables/useActionLock";
 import { useMagicNet } from "@/composables/useMagicNet";
+import { backgroundTaskBlocksLaunch } from "@/composables/backgroundTasks";
 import { bytesToBase64, execFailed } from "@/utils";
 
 const props = defineProps<{
@@ -15,6 +16,8 @@ const props = defineProps<{
 
 const { state, runCli, startBackgroundCli, refreshSubs } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
+const canWrite = computed(() => state.hasKsu && state.subscriptionReadStatus === "ready"
+  && !state.busy && state.queueDepth === 0 && !backgroundTaskBlocksLaunch(state.backgroundTask));
 
 const filterInput = ref("");
 const filterKeywords = ref<string[]>([]);
@@ -43,7 +46,8 @@ const filtersChanged = computed(() => (
   normalizedFilters.value.join("\n") !== state.subscriptions.filters.join("\n")
 ));
 
-watch(() => state.subscriptions.filters, (value) => {
+watch(() => [state.subscriptionReadStatus, state.subscriptions.filters] as const, ([status, value]) => {
+  if (status !== "ready") return;
   if (!filterDirty.value || value.join("\n") === normalizedFilters.value.join("\n")) {
     filterKeywords.value = [...value];
     filterDirty.value = false;
@@ -73,7 +77,7 @@ function addFilter(): void {
 }
 
 async function saveFilters(): Promise<void> {
-  if (!filtersChanged.value || filterError.value) return;
+  if (!canWrite.value || !filtersChanged.value || filterError.value) return;
   await withAction("save-subscription-filters", async () => {
     const value = normalizedFilters.value.join("\n");
     const encoded = value
@@ -152,7 +156,7 @@ async function saveFilters(): Promise<void> {
     </p>
     <Button
       class="mt-4 w-full"
-      :disabled="!filtersChanged || Boolean(filterError)"
+      :disabled="!canWrite || !filtersChanged || Boolean(filterError)"
       :loading="isRunning('save-subscription-filters')"
       @click="saveFilters"
     >

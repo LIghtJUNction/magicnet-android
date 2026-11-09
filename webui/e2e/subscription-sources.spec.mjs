@@ -49,6 +49,9 @@ async function mount(page, failClear = false) {
     } };
   }, { data: subscriptionData({ source_usage: [{ id: "a".repeat(64), index: 1, hostname: "provider.example", state: "cached", upload_bytes: 1, download_bytes: 2, total_bytes: 100, expire_epoch: null, updated_epoch: 1700000000 }] }), failClear });
   await page.goto("/#/subs", { waitUntil: "networkidle" });
+  await expect.poll(() => page.evaluate(async () =>
+    (await import("/src/composables/useMagicNet.ts")).useMagicNet().state.subscriptionReadStatus,
+  )).toBe("ready");
   await expect(page.getByRole("button", { name: "管理来源", exact: true })).toBeEnabled();
 }
 

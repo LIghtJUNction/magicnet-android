@@ -11,7 +11,8 @@ const props = defineProps<{
 
 const { state } = useMagicNet();
 
-const lifecycleStatus = computed(() => subscriptionLifecycleStatus(state, props.configured));
+const lifecycleStatus = computed(() => state.subscriptionReadStatus === "ready"
+  ? subscriptionLifecycleStatus(state, props.configured) : "unknown");
 
 function formatEpoch(epoch: number): string {
   if (!epoch) return t("尚无记录");

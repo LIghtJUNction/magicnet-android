@@ -6,12 +6,16 @@ import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import { useActionLock } from "@/composables/useActionLock";
 import { useMagicNet } from "@/composables/useMagicNet";
+import { backgroundTaskBlocksLaunch } from "@/composables/backgroundTasks";
 import { execFailed } from "@/utils";
 
 type ScheduleValue = "off" | "12" | "24" | "48" | "72";
 
 const { state, runCli, refreshSubs } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
+const subscriptionReady = computed(() => state.hasKsu && state.subscriptionReadStatus === "ready");
+const canWrite = computed(() => subscriptionReady.value
+  && !state.busy && state.queueDepth === 0 && !backgroundTaskBlocksLaunch(state.backgroundTask));
 
 const scheduleValue = ref<ScheduleValue>("off");
 const scheduleDirty = ref(false);
@@ -21,6 +25,7 @@ const canSaveSchedule = computed(() => scheduleChanged.value
   || (state.subscriptions.scheduleEnabled && ["none", "stale"].includes(state.subscriptions.scheduleOwner)));
 
 const scheduleMeaning = computed(() => {
+  if (state.subscriptionReadStatus !== "ready") return t("读取设备后显示自动更新设置。");
   if (["unknown", "pending"].includes(state.subscriptions.scheduleOwner)) return t("自动更新状态未确认，请重新读取订阅状态。");
   if (!state.subscriptions.scheduleEnabled) return t("按需手动更新订阅。");
   if (!state.subscriptions.scheduleOwnerValid) return t("自动更新暂未正常启动，请重新保存设置。");
@@ -28,7 +33,8 @@ const scheduleMeaning = computed(() => {
   return t("已开启，等待后台启动。");
 });
 
-watch(() => state.subscriptions.scheduleIntervalHours, (value) => {
+watch(() => [state.subscriptionReadStatus, state.subscriptions.scheduleIntervalHours] as const, ([status, value]) => {
+  if (status !== "ready") return;
   if (!scheduleDirty.value || value === scheduleValue.value) {
     scheduleValue.value = value as ScheduleValue;
     scheduleDirty.value = false;
@@ -36,7 +42,7 @@ watch(() => state.subscriptions.scheduleIntervalHours, (value) => {
 }, { immediate: true });
 
 async function saveSchedule(): Promise<void> {
-  if (!canSaveSchedule.value) return;
+  if (!canWrite.value || !canSaveSchedule.value) return;
   await withAction("save-schedule", async () => {
     const result = await runCli(`sub schedule set ${scheduleValue.value}`, t("保存自动更新"));
     if (execFailed(result)) return;
@@ -70,16 +76,16 @@ async function saveSchedule(): Promise<void> {
 
     <div class="mt-3 rounded-md bg-[var(--mn-ivory)] p-3 ring-1 ring-[color-mix(in_srgb,var(--mn-ink)_10%,transparent)]">
       <div class="flex items-center gap-2 text-xs">
-        <Check v-if="state.subscriptions.scheduleOwnerValid" :size="15" class="text-[var(--mn-success)]" />
+        <Check v-if="subscriptionReady && state.subscriptions.scheduleOwnerValid" :size="15" class="text-[var(--mn-success)]" />
         <AlertTriangle v-else :size="15" class="text-[var(--mn-warning)]" />
-        <span :class="state.subscriptions.scheduleOwnerValid ? 'text-[var(--mn-ink-soft)]' : 'text-[var(--mn-warning)]'">
-          {{ !state.subscriptions.scheduleEnabled ? t("手动更新") : state.subscriptions.scheduleRunning && state.subscriptions.scheduleOwnerValid ? t("自动更新已开启") : t("自动更新待确认") }}
+        <span :class="subscriptionReady && state.subscriptions.scheduleOwnerValid ? 'text-[var(--mn-ink-soft)]' : 'text-[var(--mn-warning)]'">
+          {{ !subscriptionReady ? t("自动更新待确认") : !state.subscriptions.scheduleEnabled ? t("手动更新") : state.subscriptions.scheduleRunning && state.subscriptions.scheduleOwnerValid ? t("自动更新已开启") : t("自动更新待确认") }}
         </span>
       </div>
       <p class="mt-2 text-xs leading-5 text-[var(--mn-ink-muted)]">{{ scheduleMeaning }}</p>
     </div>
 
-    <Button class="mt-4 w-full" :disabled="!canSaveSchedule" :loading="isRunning('save-schedule')" @click="saveSchedule">
+    <Button class="mt-4 w-full" :disabled="!canWrite || !canSaveSchedule" :loading="isRunning('save-schedule')" @click="saveSchedule">
       <Clock3 :size="16" />{{ t("保存更新设置") }} </Button>
   </Card>
 

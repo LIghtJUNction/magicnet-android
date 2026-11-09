@@ -544,6 +544,7 @@ function warmActiveTab(tab: TabKey): void {
   if (tab === "apps") void refreshApps(true);
   if (tab === "block") void refreshBlock(true);
   if (tab === "subs") void refreshSubs(true);
+  if (tab === "control") void refreshSubs(true, undefined, false);
   if (tab === "health") {
     void refreshMcp(true);
     void refreshHealth(true);
@@ -574,10 +575,14 @@ function revealInitialSectionTab(): void {
 }
 
 onMounted(() => {
-  void refreshStatus();
+  const initialTab = activeTab.value;
+  const initialReads = Promise.all([
+    refreshStatus(),
+    initialTab === "control" ? refreshSubs(true, undefined, false) : Promise.resolve(false),
+  ]);
   void nextTick(revealInitialSectionTab);
   // A deep link is already the active tab, so setTab would not warm it.
-  warmActiveTab(activeTab.value);
+  if (initialTab !== "control") warmActiveTab(initialTab);
   document.addEventListener("keydown", handleEscape);
   document.addEventListener("keydown", handlePaletteShortcut);
   document.addEventListener("pointerdown", dismissActionMenus);
@@ -586,8 +591,14 @@ onMounted(() => {
   window.addEventListener("beforeunload", warnBeforeDiscardingConfig);
   writeTabToLocation(activeTab.value, true);
   if (state.hasKsu && !readOnboardingPreference()) {
-    void nextTick(() => {
-      if (!showOnboarding.value) launchOnboarding();
+    void initialReads.then(([serviceObserved, subscriptionsObserved]) => {
+      if (!serviceObserved || !subscriptionsObserved || activeTab.value !== "control" ||
+        state.runtime.singBoxState !== "stopped" || state.subscriptionReadStatus !== "ready" ||
+        state.subscriptions.configuredCount > 0 || state.subscriptions.cacheCount > 0 ||
+        state.busy || state.queueDepth > 0 || showOnboarding.value || showPalette.value ||
+        showUtilityMenu.value || showMobilePages.value || state.issueReporter.open ||
+        readOnboardingPreference() || document.activeElement?.closest("input, textarea, [contenteditable='true']")) return;
+      launchOnboarding();
     });
   }
   const warm = () => {

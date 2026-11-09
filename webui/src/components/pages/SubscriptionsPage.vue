@@ -19,6 +19,7 @@ import Textarea from "@/components/ui/Textarea.vue";
 import { useActionLock } from "@/composables/useActionLock";
 import { useMagicNet } from "@/composables/useMagicNet";
 import {
+  backgroundTaskBlocksLaunch,
   isSubscriptionBackgroundArgs,
   subscriptionLifecycleRunning,
 } from "@/composables/backgroundTasks";
@@ -76,6 +77,14 @@ const pendingApply = shallowRef<PendingSubscriptionApply | null>(null);
 const summaryCopied = ref(false);
 const subscriptionFileInput = ref<HTMLInputElement | null>(null);
 const userAgentCardRef = ref<InstanceType<typeof SubscriptionUserAgentCard> | null>(null);
+const subscriptionReady = computed(() => state.subscriptionReadStatus === "ready");
+const canWrite = computed(() => state.hasKsu && subscriptionReady.value
+  && !state.busy && state.queueDepth === 0 && !backgroundTaskBlocksLaunch(state.backgroundTask));
+const readNotice = computed(() => !state.hasKsu
+  ? t("在模块管理器中打开后可以读取和保存订阅。现在可以先编辑链接。")
+  : state.subscriptionReadStatus === "error"
+    ? t("暂时无法确认设备上的订阅。你的草稿已保留，重新读取成功后即可保存。")
+    : t("确认设备上的来源与设置后即可保存。期间可以继续编辑。"));
 
 function acceptOnboardingDraft(value: string | null): void {
   if (value === null) return;
@@ -105,7 +114,7 @@ const canApply = computed(() => {
     : loadedPlan.lines.join("\n");
   return !configured.value || canonicalDraft.value !== loadedCanonical;
 });
-const applyLabel = computed(() => configured.value && !canonicalDraft.value
+const applyLabel = computed(() => !subscriptionReady.value ? t("保存并应用") : configured.value && !canonicalDraft.value
   ? t("移除所有来源") : configured.value ? t("保存并应用") : t("添加并启用"));
 const usageRows = computed(() => buildSubscriptionUsageOverview(state.subscriptions));
 const lifecycleRunning = computed(() => subscriptionLifecycleRunning(state.backgroundTask, state.subscriptions.updateRunning));
@@ -147,11 +156,12 @@ function showActionMessage(message: string): void {
 }
 
 async function updateSubscriptions(): Promise<void> {
-  if (!configured.value || lifecycleRunning.value) return;
+  if (!canWrite.value || sourceWriteRunning.value || !configured.value || lifecycleRunning.value) return;
   await withAction("update-all", () => startBackgroundCli("sub update-all", t("更新订阅"), "", "sub update-all"));
 }
 
-watch(() => [state.subscriptions.singBoxUrls, state.subscriptions.sourceMode, state.subscriptions.lastGenerationId] as const, ([urls, sourceMode, generation]) => {
+watch(() => [state.subscriptionReadStatus, state.subscriptions.singBoxUrls, state.subscriptions.sourceMode, state.subscriptions.lastGenerationId] as const, ([readStatus, urls, sourceMode, generation]) => {
+  if (readStatus !== "ready") return;
   const snapshot = urls.join("\n");
   const hadPending = pendingApply.value !== null;
   const next = reconcileSubscriptionEditor({
@@ -161,7 +171,7 @@ watch(() => [state.subscriptions.singBoxUrls, state.subscriptions.sourceMode, st
     deviceSourceMode: sourceMode,
     deviceGeneration: generation,
     dirty: dirty.value,
-    loadedOnce: loadedOnce.value,
+    loadedOnce: loadedOnce.value || dirty.value,
     editRevision: editRevision.value,
     pendingApply: pendingApply.value,
   });
@@ -177,12 +187,17 @@ watch(() => [state.subscriptions.singBoxUrls, state.subscriptions.sourceMode, st
   if (hadPending && next.pendingApply === null && !next.dirty) void closeEditor();
 }, { immediate: true, deep: true });
 
+watch(canWrite, (ready) => {
+  if (!ready) confirmClear.value = false;
+});
+
 watch(singBoxText, (value) => {
   summaryCopied.value = false;
   if (!syncingEditor.value) {
     confirmClear.value = false;
     editRevision.value += 1;
     dirty.value = value !== lastLoadedSnapshot.value;
+    if (dirty.value) editorOpen.value = true;
   }
 }, { flush: "sync" });
 
@@ -194,7 +209,7 @@ watch(() => state.backgroundTask.status, async (status) => {
 });
 
 async function clearSubscriptions(): Promise<void> {
-  if (!confirmClear.value || canonicalDraft.value || lifecycleRunning.value || state.busy || sourceWriteRunning.value) return;
+  if (!canWrite.value || !confirmClear.value || canonicalDraft.value || lifecycleRunning.value || state.busy || sourceWriteRunning.value) return;
   const attempt: PendingSubscriptionApply = { snapshot: "", revision: editRevision.value, sourceMode: "url", draftAtSubmission: singBoxText.value };
   await withAction("clear-subscriptions", async () => {
     const outcome = await runPrivateCli("sub clear", t("移除所有来源"), "sub clear");
@@ -227,7 +242,7 @@ async function stageSubscriptionPayload(snapshot: string) {
 }
 
 async function applySubscriptions(): Promise<void> {
-  if (!canApply.value || lifecycleRunning.value || state.busy || sourceWriteRunning.value) return;
+  if (!canWrite.value || !canApply.value || lifecycleRunning.value || state.busy || sourceWriteRunning.value) return;
   if (!canonicalDraft.value && configured.value) {
     confirmClear.value = true;
     return;
@@ -243,9 +258,15 @@ async function applySubscriptions(): Promise<void> {
       showActionMessage(t("请求标识保存失败，请在订阅设置中检查后重试。"));
       return;
     }
+    if (!canWrite.value) return;
     pendingApply.value = attempt;
     const staged = await stageSubscriptionPayload(snapshot);
     if (!staged) {
+      if (pendingApply.value === attempt) pendingApply.value = null;
+      return;
+    }
+    if (!canWrite.value) {
+      await removePrivatePayload("subscription", staged.basename, t("订阅私有载荷"));
       if (pendingApply.value === attempt) pendingApply.value = null;
       return;
     }
@@ -280,6 +301,7 @@ async function pasteSubscriptions(): Promise<void> {
 }
 
 function chooseLocalSubscriptions(): void {
+  if (!canWrite.value || sourceWriteRunning.value) return;
   subscriptionFileInput.value?.click();
 }
 
@@ -287,7 +309,7 @@ async function importLocalSubscriptions(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = "";
-  if (!file || lifecycleRunning.value || state.busy || sourceWriteRunning.value) return;
+  if (!canWrite.value || !file || lifecycleRunning.value || state.busy || sourceWriteRunning.value) return;
   const attempt: PendingSubscriptionApply = {
     snapshot: "", revision: editRevision.value, sourceMode: "local",
     draftAtSubmission: singBoxText.value, previousGeneration: state.subscriptions.lastGenerationId,
@@ -301,6 +323,7 @@ async function importLocalSubscriptions(event: Event): Promise<void> {
         file.name,
         new Uint8Array(await file.arrayBuffer()),
       );
+      if (!canWrite.value) return;
       const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const staged = await stagePrivatePayload(
         "subscription",
@@ -311,6 +334,10 @@ async function importLocalSubscriptions(event: Event): Promise<void> {
       );
       if (!staged) {
         showActionMessage(t("文件准备失败，请重试。当前配置没有改变。"));
+        return;
+      }
+      if (!canWrite.value) {
+        await removePrivatePayload("subscription", staged.basename, t("本地订阅源"));
         return;
       }
       pendingApply.value = attempt;
@@ -356,19 +383,24 @@ async function copySummary(): Promise<void> {
   <div class="subscriptions-page">
     <PageHeader :title="t('订阅')">
       <template #actions>
+        <Button variant="ghost" :disabled="!state.hasKsu" :loading="state.subscriptionReadStatus === 'loading' || isRunning('refresh-subs')" :aria-label="t('重新读取订阅状态')" @click="withAction('refresh-subs', () => refreshSubs())">
+          <RefreshCw :size="16" />{{ t("重新读取") }}
+        </Button>
         <Button v-if="configured" ref="manageSourcesButton" variant="outline" :aria-expanded="editorOpen" aria-controls="subscription-editor" @click="openEditor">
           <Plus :size="16" />{{ t("管理来源") }} </Button>
-        <Button v-if="configured" :loading="lifecycleRunning || isRunning('update-all')" :disabled="state.busy" @click="updateSubscriptions">
+        <Button v-if="configured" :loading="lifecycleRunning || isRunning('update-all')" :disabled="!canWrite || sourceWriteRunning" @click="updateSubscriptions">
           <RefreshCw :size="16" />{{ t("更新订阅") }} </Button>
       </template>
     </PageHeader>
 
-    <div v-if="configured" class="subscription-summary">
-      <span>{{ t("{value} 个来源", { value: sourceCount }) }}<span v-if="state.subscriptions.lastImportedCount > 0"> {{ t("· {value} 个节点", { value: state.subscriptions.lastImportedCount }) }}</span></span>
+    <section v-if="!state.hasKsu || !subscriptionReady" class="subscription-read-notice" :data-read-status="state.subscriptionReadStatus" :role="state.subscriptionReadStatus === 'error' ? 'alert' : 'status'">
+      <h3>{{ !state.hasKsu ? t("未连接设备") : state.subscriptionReadStatus === 'error' ? t("订阅状态读取失败") : state.subscriptionReadStatus === 'loading' ? t("正在读取订阅") : t("订阅状态尚未读取") }}</h3>
+      <p>{{ readNotice }}</p>
+    </section>
+
+    <div v-if="configured || dirty" class="subscription-summary">
+      <span v-if="configured">{{ t("{value} 个来源", { value: sourceCount }) }}<span v-if="state.subscriptions.lastImportedCount > 0"> {{ t("· {value} 个节点", { value: state.subscriptions.lastImportedCount }) }}</span><span v-if="!subscriptionReady"> · {{ t("上次读取") }}</span></span>
       <span v-if="dirty" class="unsaved-note">{{ t("有未保存的更改") }}</span>
-      <Button variant="ghost" size="icon" :loading="isRunning('refresh-subs')" :aria-label="t('重新读取订阅状态')" @click="withAction('refresh-subs', () => refreshSubs())">
-        <RefreshCw :size="15" />
-      </Button>
     </div>
 
     <p v-if="lifecycleMessage" class="subscription-feedback" role="status" :data-error="!lifecycleRunning">
@@ -382,7 +414,7 @@ async function copySummary(): Promise<void> {
     <section v-if="editorOpen || !configured" id="subscription-editor" ref="editorPanel" class="source-editor" :aria-label="t('编辑订阅来源')">
       <div class="editor-heading">
         <div>
-          <h3>{{ configured ? t("管理订阅来源") : t("添加第一个订阅") }}</h3>
+          <h3>{{ configured ? t("管理订阅来源") : subscriptionReady ? t("添加第一个订阅") : t("编辑订阅来源") }}</h3>
           <p>{{ t("粘贴订阅链接，每行一个，最多 5 个。也可导入本地文件。") }}</p>
         </div>
       </div>
@@ -406,11 +438,11 @@ async function copySummary(): Promise<void> {
         <input ref="subscriptionFileInput" class="hidden" type="file" accept=".yaml,.yml,.json,.txt,.list,.conf,application/json,application/yaml,text/yaml,text/plain" @change="importLocalSubscriptions">
         <div class="source-import-actions">
           <Button variant="outline" :loading="isRunning('paste-subscriptions')" @click="pasteSubscriptions"><ClipboardPaste :size="16" />{{ t("粘贴链接") }}</Button>
-          <Button variant="outline" :loading="isRunning('apply-local-subscription')" :disabled="lifecycleRunning || state.busy || sourceWriteRunning" @click="chooseLocalSubscriptions"><FileUp :size="16" />{{ t("导入文件") }}</Button>
+          <Button variant="outline" :loading="isRunning('apply-local-subscription')" :disabled="!canWrite || lifecycleRunning || state.busy || sourceWriteRunning" @click="chooseLocalSubscriptions"><FileUp :size="16" />{{ t("导入文件") }}</Button>
         </div>
         <div class="source-save-actions">
           <Button v-if="configured" variant="ghost" :disabled="lifecycleRunning" @click="cancelEditing">{{ t("取消") }}</Button>
-          <Button :disabled="!canApply || lifecycleRunning || state.busy || sourceWriteRunning || !state.hasKsu" :loading="isRunning('apply-subscriptions')" @click="applySubscriptions"><component :is="configured && !canonicalDraft ? Trash2 : Save" :size="16" />{{ applyLabel }}</Button>
+          <Button :disabled="!canWrite || !canApply || lifecycleRunning || state.busy || sourceWriteRunning" :loading="isRunning('apply-subscriptions')" @click="applySubscriptions"><component :is="subscriptionReady && configured && !canonicalDraft ? Trash2 : Save" :size="16" />{{ applyLabel }}</Button>
         </div>
       </div>
       <details v-if="subscriptionPreview.length" class="source-preview">
@@ -456,6 +488,10 @@ async function copySummary(): Promise<void> {
 
 <style scoped>
 .subscriptions-page { width: 100%; max-width: 832px; min-width: 0; margin: 0 auto; }
+.subscription-read-notice { margin: 20px 0; padding: 18px 20px; border-radius: var(--mn-radius-md); background: var(--mn-surface-sunken); color: var(--mn-ink-soft); }
+.subscription-read-notice h3 { margin: 0; font-size: .9375rem; font-weight: 600; }
+.subscription-read-notice p { margin: 8px 0 0; color: var(--mn-ink-muted); font-size: .875rem; line-height: 1.65; }
+.subscription-read-notice[data-read-status="error"] h3 { color: var(--mn-warning); }
 .subscription-summary { display: flex; align-items: center; gap: 12px; margin: 12px 0 20px; color: var(--mn-ink-muted); font-size: .875rem; }
 .subscription-summary > :last-child { margin-left: auto; }
 .unsaved-note { color: var(--mn-warning); }

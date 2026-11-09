@@ -3,13 +3,14 @@ import { t } from "@/i18n";
 import {
   Copy,
   DownloadCloud,
-  ExternalLink,
   Plus,
   Power,
   Radar,
   RotateCcw,
   RefreshCw,
   ArrowUpRight,
+  ArrowRight,
+  Route,
   Save,
   Share2,
   ShieldCheck,
@@ -54,6 +55,7 @@ import {
   controlRuntimeBusy,
   pendingServiceLabel,
 } from "./controlRuntimeInsight";
+import { controlNextStep } from "./controlNextStep";
 
 const {
   state,
@@ -61,14 +63,14 @@ const {
   startBackgroundCli,
   refreshAll,
   refreshStatus,
+  refreshSubs,
   refreshWifiPolicy,
-  openSingBoxUi,
   shellQuote,
 } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
 
 const emit = defineEmits<{
-  (e: "goto-tab", tab: "about" | "health" | "output" | "subs"): void;
+  (e: "goto-tab", tab: "about" | "health" | "output" | "subs" | "proxies"): void;
 }>();
 type HotspotPolicyPhase = "loading" | "ready" | "error";
 
@@ -120,6 +122,15 @@ const runtimeInsight = computed(() =>
 const runtimeBusy = computed(() =>
   controlRuntimeBusy(state.phase, state.queueDepth, state.backgroundTask.status),
 );
+const nextStep = computed(() => controlNextStep({
+  connected: state.hasKsu,
+  busy: runtimeBusy.value || state.phase === "error",
+  runtime: state.runtime,
+  subscriptionReadStatus: state.subscriptionReadStatus,
+  subscriptions: state.subscriptions,
+}));
+const powerLabel = computed(() => state.runtime.singBoxState === "unknown"
+  ? t("读取服务状态") : state.runtime.singBoxState === "sing-box" ? t("停止服务") : t("启动服务"));
 const missingNodeCache = computed(() =>
   /No cached sing-box nodes found|run cli sub update sing-box/i.test(
     state.output,
@@ -195,8 +206,21 @@ const sharedInterfacesLabel = computed(() =>
 const wifiPolicyModes = ["blacklist", "whitelist"] as const;
 
 async function toggleSingBox(event: MouseEvent): Promise<void> {
+  if (state.runtime.singBoxState === "unknown") {
+    await withAction("refresh-control-status", () => refreshStatus());
+    return;
+  }
   const running = state.runtime.singBoxState === "sing-box";
   requestDangerAction(singBoxToggleAction(running), event.currentTarget);
+}
+
+async function followNextStep(event: MouseEvent): Promise<void> {
+  switch (nextStep.value?.action) {
+    case "refresh": await withAction("refresh-control-subs", () => refreshSubs()); break;
+    case "subscriptions": emit("goto-tab", "subs"); break;
+    case "update": await rebuildNodeCache(); break;
+    case "start": await toggleSingBox(event); break;
+  }
 }
 
 async function runAction(
@@ -488,8 +512,8 @@ onMounted(() => {
           </dl>
         </div>
         <div class="mn-control-actions">
-          <Button class="mn-control-power" :data-running="state.runtime.singBoxState === 'sing-box'" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('toggle-sing-box') || Boolean(servicePendingLabel)" @click="toggleSingBox">
-            <Power :size="18" />{{ state.runtime.singBoxState === 'sing-box' ? t("停止服务") : t("启动服务") }}
+          <Button class="mn-control-power" :data-running="state.runtime.singBoxState === 'sing-box'" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('toggle-sing-box') || isRunning('refresh-control-status') || Boolean(servicePendingLabel)" @click="toggleSingBox">
+            <component :is="state.runtime.singBoxState === 'unknown' ? RefreshCw : Power" :size="18" />{{ powerLabel }}
           </Button>
           <div class="mn-control-shortcuts">
             <Button variant="ghost" :disabled="!state.hasKsu" :loading="isRunning('refresh-control-status')" @click="withAction('refresh-control-status', () => refreshStatus())">
@@ -523,9 +547,18 @@ onMounted(() => {
       </section>
     </section>
 
+    <section v-if="nextStep" class="mn-next-step" :data-step="nextStep.action" :aria-label="t('下一步')">
+      <div>
+        <span class="mn-next-step-label">{{ t("下一步") }}</span>
+        <h3>{{ nextStep.title }}</h3>
+        <p>{{ nextStep.detail }}</p>
+      </div>
+      <Button :loading="isRunning('refresh-control-subs') || isRunning('rebuild-node-cache')" @click="followNextStep">{{ nextStep.label }}<ArrowRight :size="16" /></Button>
+    </section>
+
     <nav class="mn-control-destinations" :aria-label="t('常用入口')">
       <button type="button" @click="emit('goto-tab', 'subs')"><DownloadCloud :size="19" /><span>{{ t("订阅与节点") }}<small>{{ t("管理来源与更新") }}</small></span><ArrowUpRight :size="16" /></button>
-      <button type="button" :disabled="!state.hasKsu || serviceStatus.state !== 'ready'" @click="withAction('open-zashboard', () => openSingBoxUi('zashboard'))"><ExternalLink :size="19" /><span>{{ t("节点面板") }}<small>{{ t("服务就绪后可打开") }}</small></span><ArrowUpRight :size="16" /></button>
+      <button type="button" @click="emit('goto-tab', 'proxies')"><Route :size="19" /><span>{{ t("切换节点") }}<small>{{ t("选择节点与代理组") }}</small></span><ArrowUpRight :size="16" /></button>
     </nav>
     <ModuleUpdateCard />
     <div class="mn-control-section-title"><h3>{{ t("网络设置") }}</h3><span>{{ t("按需调整，无需反复重启") }}</span></div>
@@ -831,6 +864,12 @@ onMounted(() => {
 .mn-control-notice h3 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .mn-control-notice p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
 .mn-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.mn-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 24px; padding: 24px; border-radius: var(--mn-radius-lg); background: var(--mn-accent-soft); }
+.mn-next-step > div { flex: 1 1 260px; min-width: 0; }
+.mn-next-step-label { color: var(--mn-primary-strong); font-size: 12px; font-weight: 600; }
+.mn-next-step h3 { margin: 8px 0 0; color: var(--mn-ink); font-size: 20px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+.mn-next-step p { margin: 8px 0 0; color: var(--mn-ink-soft); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.mn-next-step > button { max-width: 100%; }
 .mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 24px 0 40px; }
 .mn-control-destinations > button { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 80px; padding: 16px; border: 0; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); color: var(--mn-ink); text-align: left; cursor: pointer; transition: background-color 160ms ease-out; }
 .mn-control-destinations > button:hover:not(:disabled) { background: var(--mn-surface-sunken); }

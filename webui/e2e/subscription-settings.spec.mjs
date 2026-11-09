@@ -37,6 +37,9 @@ async function mount(page, schedule = {}) {
     schedule: { interval_hours: "off", enabled: false, owner: "none", running: false, owner_valid: true, ...schedule },
   }));
   await page.goto("/#/subs", { waitUntil: "networkidle" });
+  await expect.poll(() => page.evaluate(async () =>
+    (await import("/src/composables/useMagicNet.ts")).useMagicNet().state.subscriptionReadStatus,
+  )).toBe("ready");
   await page.getByText("订阅设置", { exact: true }).click();
   await expect(page.getByLabel("更新频率", { exact: true })).toBeVisible();
 }
@@ -150,13 +153,15 @@ test("a failed status read does not enable a restart using the old interval", as
   await page.evaluate(() => { window.__settings.failReads = true; });
   await refresh(page);
   await expect(save).toBeDisabled();
-  await expect(page.getByText("自动更新状态未确认，请重新读取订阅状态。", { exact: true })).toBeVisible();
+  await expect(page.locator(".subscription-read-notice")).toHaveAttribute("data-read-status", "error");
+  await expect(page.getByText("读取设备后显示自动更新设置。", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.__settings.writes)).toEqual([]);
   await page.evaluate(() => {
     window.__settings.failReads = false;
     window.__settings.data.schedule.interval_hours = "48";
   });
   await refresh(page);
+  await expect(page.locator(".subscription-read-notice")).toHaveCount(0);
   await expect(page.getByLabel("更新频率", { exact: true })).toHaveValue("48");
   await expect(save).toBeDisabled();
 });

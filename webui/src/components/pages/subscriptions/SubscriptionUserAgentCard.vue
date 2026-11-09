@@ -7,6 +7,7 @@ import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
 import { useActionLock } from "@/composables/useActionLock";
 import { useMagicNet } from "@/composables/useMagicNet";
+import { backgroundTaskBlocksLaunch } from "@/composables/backgroundTasks";
 import { bytesToBase64, execFailed } from "@/utils";
 import { subscriptionUserAgentPresets } from "../subscriptionUserAgent";
 
@@ -16,6 +17,8 @@ const props = defineProps<{
 
 const { state, runCli, startBackgroundCli, refreshSubs } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
+const canWrite = computed(() => state.hasKsu && state.subscriptionReadStatus === "ready"
+  && !state.busy && state.queueDepth === 0 && !backgroundTaskBlocksLaunch(state.backgroundTask));
 
 const userAgentText = ref("");
 const userAgentDirty = ref(false);
@@ -29,7 +32,8 @@ const userAgentError = computed(() => {
 });
 const userAgentChanged = computed(() => normalizedUserAgent.value !== state.subscriptions.userAgent);
 
-watch(() => state.subscriptions.userAgent, (value) => {
+watch(() => [state.subscriptionReadStatus, state.subscriptions.userAgent] as const, ([status, value]) => {
+  if (status !== "ready") return;
   if (!userAgentDirty.value || value === normalizedUserAgent.value) {
     userAgentText.value = value;
     userAgentDirty.value = false;
@@ -42,6 +46,7 @@ function selectUserAgent(value: string): void {
 }
 
 async function persistUserAgent(): Promise<boolean> {
+  if (!canWrite.value) return false;
   if (userAgentError.value) {
     state.output = userAgentError.value;
     return false;
@@ -61,7 +66,7 @@ async function persistUserAgent(): Promise<boolean> {
 }
 
 async function saveUserAgent(): Promise<void> {
-  if (!userAgentChanged.value || userAgentError.value) return;
+  if (!canWrite.value || !userAgentChanged.value || userAgentError.value) return;
   await withAction("save-user-agent", async () => {
     const value = normalizedUserAgent.value;
     if (!(await persistUserAgent())) return;
@@ -131,7 +136,7 @@ defineExpose({
 
     <Button
       class="mt-4 w-full"
-      :disabled="!userAgentChanged || Boolean(userAgentError)"
+      :disabled="!canWrite || !userAgentChanged || Boolean(userAgentError)"
       :loading="isRunning('save-user-agent')"
       @click="saveUserAgent"
     >

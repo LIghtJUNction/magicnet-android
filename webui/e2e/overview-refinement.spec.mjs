@@ -59,6 +59,7 @@ for (const theme of ["light", "dark"]) {
           },
         ],
       });
+      state.subscriptionReadStatus = "ready";
     });
     await expect(page.locator(".mn-control-memory")).toContainText("128.0");
     await expect(page.locator(".mn-control-memory")).toContainText("MiB");
@@ -93,6 +94,7 @@ for (const theme of ["light", "dark"]) {
     // Navigation performs a fresh read. With an unavailable mock response the prior
     // success must be cleared, not silently retained by the display fixture.
     await expect(page.locator(".update-outcome")).toHaveText("状态未知");
+    await expect(page.locator(".subscription-read-notice")).toHaveAttribute("data-read-status", "error");
     await page.evaluate(async () => {
       const { state } = (await import("/src/composables/useMagicNet.ts")).useMagicNet();
       const { parseMachineSubscription } = await import("/src/composables/machineStatus.ts");
@@ -103,6 +105,7 @@ for (const theme of ["light", "dark"]) {
           upload_bytes: 1073741824, download_bytes: 2147483648, total_bytes: 107374182400,
           expire_epoch: null, updated_epoch: 1700000000 }],
       }));
+      state.subscriptionReadStatus = "ready";
     });
     await expect(page.locator(".update-outcome")).toHaveText("更新成功");
     await page.evaluate(async () => {

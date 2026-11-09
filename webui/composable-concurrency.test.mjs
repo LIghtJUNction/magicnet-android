@@ -339,7 +339,9 @@ test("a superseded baseline failure leaves the newer foreground feedback untouch
   const launching = context.startBackgroundCli("sub update-all");
   supersede();
   resolveRead("[error] errno=1 read failed");
-  await launching;
+  const result = await launching;
+  assert.equal(execFailed(result), true, "superseded work was not submitted and must release its private payload");
+  assert.equal(state.backgroundTask.status, "idle");
   assert.equal(state.output, "new foreground output");
   assert.equal(state.notice, "new notice");
   assert.equal(state.phase, "done");

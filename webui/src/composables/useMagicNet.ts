@@ -452,7 +452,7 @@ async function startBackgroundCli(
       ? await refreshSubs(true, foregroundToken, false)
       : false;
     if (!ownsForegroundUi()) {
-      return `[warning] ${label} superseded by a newer foreground operation`;
+      return `[error] unavailable: ${label} superseded before background launch`;
     }
     if (subscriptionTask && !subscriptionBaselineKnown) {
       const text = t("[error] unavailable: 读取订阅基线失败，任务未启动。请确认设备连接后重试。");

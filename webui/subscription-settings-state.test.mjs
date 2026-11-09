@@ -5,6 +5,7 @@ import ts from "typescript";
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useActionLock } from "./src/composables/useActionLock.ts";
 import { subscriptionDefaults } from "./src/composables/parsers.ts";
+import { backgroundTaskBlocksLaunch } from "./src/composables/backgroundTasks.ts";
 import { bytesToBase64, execFailed } from "./src/utils.ts";
 
 const settings = [
@@ -13,14 +14,16 @@ const settings = [
   { component: "SubscriptionScheduleCard", field: "scheduleIntervalHours", draft: "scheduleValue", dirty: "scheduleDirty", save: "saveSchedule", before: "12", submitted: "24", later: "48", external: "72" },
 ];
 
-function fixture(setting, { refreshOk = true } = {}) {
+function fixture(setting, { refreshOk = true, readStatus = "ready", connected = true } = {}) {
   const source = readFileSync(new URL(`./src/components/pages/subscriptions/${setting.component}.vue`, import.meta.url), "utf8");
   const script = source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
     .replace(/^import[\s\S]*?;\s*$/gm, "");
   const code = ts.transpileModule(script, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   }).outputText;
-  const state = reactive({ subscriptions: { ...subscriptionDefaults, [setting.field]: setting.before } });
+  const state = reactive({ hasKsu: connected, subscriptionReadStatus: readStatus, busy: false, queueDepth: 0,
+    backgroundTask: { status: "idle", args: "" },
+    subscriptions: { ...subscriptionDefaults, [setting.field]: setting.before } });
   const calls = [];
   let complete;
   const response = new Promise((resolve) => { complete = resolve; });
@@ -28,24 +31,85 @@ function fixture(setting, { refreshOk = true } = {}) {
   const dependencies = {
     computed, ref, watch: (...args) => { const stop = watch(...args); stops.push(stop); return stop; },
     defineProps: () => ({ configured: false }), defineExpose() {},
-    t: (text) => text, useActionLock, bytesToBase64, execFailed,
+    t: (text) => text, useActionLock, bytesToBase64, execFailed, backgroundTaskBlocksLaunch,
     useMagicNet: () => ({
       state,
-      runCli: (command) => { calls.push(command); return response; },
+      runCli: (command) => {
+        calls.push(command);
+        state.busy = true;
+        state.queueDepth = 1;
+        return response.finally(() => { state.busy = false; state.queueDepth = 0; });
+      },
       refreshSubs: async () => {
         if (refreshOk) state.subscriptions[setting.field] = setting.submitted;
+        state.subscriptionReadStatus = refreshOk ? "ready" : "error";
         await nextTick();
         return refreshOk;
       },
       startBackgroundCli: async () => { calls.push("sub update-all"); },
     }),
   };
-  const expose = `\nreturn { draft: ${setting.draft}, dirty: ${setting.dirty}, save: ${setting.save} };`;
+  const expose = `\nreturn { draft: ${setting.draft}, dirty: ${setting.dirty}, save: ${setting.save}, canWrite };`;
   const controller = new Function(...Object.keys(dependencies), code + expose)(...Object.values(dependencies));
   return { ...controller, state, calls, complete, stop: () => stops.forEach((stop) => stop()) };
 }
 
 for (const setting of settings) {
+  test(`${setting.component}: active operations keep ownership until they finish`, async () => {
+    for (const blocker of [
+      { busy: true }, { queueDepth: 1 },
+      { backgroundTask: { status: "running", args: "service start" } },
+      { backgroundTask: { status: "timeout", args: "service start" } },
+    ]) {
+      const f = fixture(setting);
+      try {
+        Object.assign(f.state, blocker);
+        f.draft.value = setting.submitted;
+        f.dirty.value = true;
+        assert.equal(f.canWrite.value, false);
+        await f.save();
+        assert.deepEqual(f.calls, [], "a setting must not steal another operation's foreground token");
+        Object.assign(f.state, { busy: false, queueDepth: 0, backgroundTask: { status: "done", args: "service start" } });
+        const saving = f.save();
+        assert.equal(f.calls.length, 1);
+        f.complete("[info] saved");
+        await saving;
+        assert.equal(f.dirty.value, false, "the normal save and readback still finish after the operation settles");
+      } finally { f.stop(); }
+    }
+  });
+
+  for (const readStatus of ["idle", "loading", "error"]) {
+    test(`${setting.component}: ${readStatus} blocks writes and preserves edits through recovery`, async () => {
+      const f = fixture(setting, { readStatus });
+      try {
+        f.draft.value = setting.submitted;
+        f.dirty.value = true;
+        await f.save();
+        assert.deepEqual(f.calls, [], "unconfirmed settings cannot be overwritten");
+        f.state.subscriptions[setting.field] = setting.external;
+        f.state.subscriptionReadStatus = "ready";
+        await nextTick();
+        assert.deepEqual(f.draft.value, setting.submitted, "first successful read preserves the local edit");
+        const saving = f.save();
+        assert.equal(f.calls.length, 1);
+        f.complete("[info] saved");
+        await saving;
+        assert.equal(f.dirty.value, false);
+      } finally { f.stop(); }
+    });
+  }
+
+  test(`${setting.component}: disconnecting disables writes even with a previous snapshot`, async () => {
+    const f = fixture(setting, { connected: false });
+    try {
+      f.draft.value = setting.submitted;
+      f.dirty.value = true;
+      await f.save();
+      assert.deepEqual(f.calls, []);
+    } finally { f.stop(); }
+  });
+
   test(`${setting.component}: a completed save preserves a newer draft across refreshes`, async () => {
     const f = fixture(setting);
     try {
@@ -88,6 +152,9 @@ for (const setting of settings) {
       await saving;
       assert.equal(f.dirty.value, true);
       assert.deepEqual(f.draft.value, setting.submitted);
+      assert.equal(f.state.subscriptionReadStatus, "error");
+      await f.save();
+      assert.equal(f.calls.length, 1, "a failed post-save read blocks another write until recovery");
     } finally { f.stop(); }
   });
 }
