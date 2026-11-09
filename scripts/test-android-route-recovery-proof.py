@@ -51,6 +51,8 @@ class Device:
         self.flags = 0x1003
         self.flag_reads = 0
         self.fail_down_observation = False
+        self.uplinks = ['wlan0']
+        self.selected_uplink = 'wlan0'
         self.peers = 'ADBD\n/dev/null\nsocket:[77]\nTCP\n' + HEADER + '\n' + HEADER + '\n'
 
     def app(self):
@@ -104,7 +106,11 @@ class Device:
                     self.pid, self.start, self.ifindex = 422, 900, 13
                     self.state = state(attempts=1)
         elif command == proof.IP + ' -4 route show table all':
-            output = 'default via 10.0.2.2 dev wlan0 table wlan0 proto static\n' + FIB
+            output = ''.join(f'default via 10.0.2.2 dev {name} table {name} proto static\n'
+                             for name in self.uplinks) + FIB
+        elif command == proof.IP + ' -4 route get 192.0.2.1':
+            output = (f'192.0.2.1 via 10.0.2.2 dev {self.selected_uplink} '
+                      f'table {self.selected_uplink} src 10.0.2.15 uid 0\n') if self.selected_uplink else ''
         elif command.startswith('p=$(' + proof.BB + ' pidof adbd)'):
             output = self.peers
         elif command == proof.IP + ' -4 route get 10.0.2.2':
@@ -243,6 +249,23 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'uplink_carries_adb_control'):
             proof.uplink_reconnect(self.control, self.device.app, 10123, {})
         self.assertFalse(any('link set' in call for call in self.device.calls))
+
+    def test_android_multiple_defaults_use_kernel_selected_egress(self):
+        self.device.uplinks = ['eth0', 'wlan0']
+        evidence = {}
+        proof.uplink_reconnect(self.control, self.device.app, 10123, evidence)
+        self.assertEqual(evidence['status'], 'verified')
+        self.assertEqual(evidence['interface'], 'wlan0')
+        self.assertEqual(evidence['default_interfaces'], ['eth0', 'wlan0'])
+        self.assertFalse(any('link set dev eth0' in call for call in self.device.calls))
+
+    def test_unknown_or_non_default_egress_is_rejected_before_mutation(self):
+        for selected in ('', 'magicnet0', 'lo', 'eth0'):
+            self.device.calls.clear()
+            self.device.selected_uplink = selected
+            with self.subTest(selected=selected), self.assertRaisesRegex(RuntimeError, 'ambiguous_or_missing_uplink'):
+                proof.uplink_reconnect(self.control, self.device.app, 10123, {})
+            self.assertFalse(any('link set' in call for call in self.device.calls))
 
     def test_failed_down_observation_still_restores_uplink(self):
         self.device.fail_down_observation = True

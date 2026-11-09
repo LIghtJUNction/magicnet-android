@@ -324,8 +324,13 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     routes = lines(control.command(IP + ' -4 route show table all'))
     interfaces = {match[1] for row in routes if row.startswith('default ') and 'linkdown' not in row
                   for match in [re.search(r'\bdev (wlan0|eth0)(?: |$)', row)] if match}
-    require(len(interfaces) == 1, 'ambiguous_or_missing_uplink')
-    interface = evidence['interface'] = interfaces.pop()
+    # Android keeps a default in each network table. Resolve the active egress
+    # through the kernel without sending a packet or assuming Wi-Fi beats eth0.
+    route = control.command(IP + ' -4 route get 192.0.2.1')
+    selected = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', route))
+    require(len(selected) == 1 and selected <= interfaces, 'ambiguous_or_missing_uplink')
+    interface = evidence['interface'] = selected.pop()
+    evidence['default_interfaces'] = sorted(interfaces)
     # Refuse to lower an interface carrying a TCP adbd peer. Emulator pipe/Unix
     # transports and peers on a different interface keep the control channel up.
     peers = control_peers(control.command(
