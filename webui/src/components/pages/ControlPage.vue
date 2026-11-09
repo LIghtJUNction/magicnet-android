@@ -495,6 +495,15 @@ onMounted(() => {
 
 <template>
   <div class="mn-control">
+    <section v-if="nextStep" class="mn-next-step" :data-step="nextStep.action" :aria-label="t('下一步')">
+      <div>
+        <span class="mn-next-step-label">{{ t("下一步") }}</span>
+        <h3>{{ nextStep.title }}</h3>
+        <p>{{ nextStep.detail }}</p>
+      </div>
+      <Button :loading="isRunning('refresh-control-subs') || isRunning('rebuild-node-cache')" @click="followNextStep">{{ nextStep.label }}<ArrowRight :size="16" /></Button>
+    </section>
+
     <section class="mn-control-hero" :data-service-state="serviceStatus.state" :aria-label="t('服务概览')">
       <div class="mn-control-overview">
         <div class="mn-control-status" role="status" aria-live="polite">
@@ -545,15 +554,6 @@ onMounted(() => {
           <Button variant="ghost" @click="emit('goto-tab', 'health')">{{ t("打开诊断") }}</Button>
         </div>
       </section>
-    </section>
-
-    <section v-if="nextStep" class="mn-next-step" :data-step="nextStep.action" :aria-label="t('下一步')">
-      <div>
-        <span class="mn-next-step-label">{{ t("下一步") }}</span>
-        <h3>{{ nextStep.title }}</h3>
-        <p>{{ nextStep.detail }}</p>
-      </div>
-      <Button :loading="isRunning('refresh-control-subs') || isRunning('rebuild-node-cache')" @click="followNextStep">{{ nextStep.label }}<ArrowRight :size="16" /></Button>
     </section>
 
     <nav class="mn-control-destinations" :aria-label="t('常用入口')">
@@ -864,7 +864,7 @@ onMounted(() => {
 .mn-control-notice h3 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .mn-control-notice p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
 .mn-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.mn-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 24px; padding: 24px; border-radius: var(--mn-radius-lg); background: var(--mn-accent-soft); }
+.mn-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin: 0 0 24px; padding: 24px; border-radius: var(--mn-radius-lg); background: var(--mn-accent-soft); }
 .mn-next-step > div { flex: 1 1 260px; min-width: 0; }
 .mn-next-step-label { color: var(--mn-primary-strong); font-size: 12px; font-weight: 600; }
 .mn-next-step h3 { margin: 8px 0 0; color: var(--mn-ink); font-size: 20px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }

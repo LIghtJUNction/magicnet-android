@@ -20,6 +20,7 @@ test.beforeEach(async ({ page }) => {
 test("overview follows confirmed setup progress and opens the built-in node selector", async ({ page }, info) => {
   const next = page.locator(".mn-next-step");
   await expect(next).toHaveAttribute("data-step", "subscriptions");
+  await expect(next).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: info.outputPath("first-use-next-step.png"), fullPage: true, timeout: 20_000 });
   await page.evaluate(async () => {

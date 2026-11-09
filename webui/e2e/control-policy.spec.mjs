@@ -152,19 +152,27 @@ test("failed hotspot work restores the observed setting and permits a retry", as
 test("pending service launch replaces the old heading until status confirms completion", async ({ page }, info) => {
   await mountPolicy(page, "ControlPage");
   await expect(page.getByRole("switch", { name: "允许热点使用代理" })).toBeEnabled();
-  await page.getByRole("button", { name: "启动服务", exact: true }).click();
+  const power = page.locator(".mn-control-power");
+  await expect(power).toHaveText("读取服务状态");
+  await power.click();
+  await expect(page.locator(".mn-control-status h2")).toHaveText("已停止");
+  await expect(power).toHaveText("启动服务");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__policyFixture.serviceReads)).toBe(1);
+  expect(await page.evaluate(() => window.__policyFixture.writes)).toEqual([]);
+  await power.click();
   await page.getByRole("button", { name: "继续执行", exact: true }).click();
   await expect(page.locator(".mn-control-status h2")).toHaveText("正在启动服务");
   await expect(page.locator(".mn-control-description")).toContainText("任务完成后自动更新状态");
   await expect(page.locator(".mn-control-power")).toBeDisabled();
   await expect(page.getByRole("button", { name: "刷新状态", exact: true })).toBeEnabled();
-  expect(await page.evaluate(() => window.__policyFixture.serviceReads)).toBe(0);
+  expect(await page.evaluate(() => window.__policyFixture.serviceReads)).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: info.outputPath("service-pending.png"), fullPage: true, timeout: 20_000 });
   await page.evaluate(() => { window.__policyFixture.backgroundResult = 0; });
   await expect(page.locator(".mn-control-status h2")).toHaveText("运行中");
   await expect(page.locator(".mn-control-power")).toBeEnabled();
-  expect(await page.evaluate(() => window.__policyFixture.serviceReads)).toBe(1);
+  expect(await page.evaluate(() => window.__policyFixture.serviceReads)).toBe(2);
 });
 
 test("Wi-Fi add failures retain the input and a successful retry clears it", async ({ page }) => {

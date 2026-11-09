@@ -20,6 +20,7 @@ const message = ref("");
 const failed = ref(false);
 let active = true;
 let generation = 0;
+let readRequested = false;
 const locked = computed(() => props.disabled || loading.value || pending.value || state.busy || !state.hasKsu);
 const canLogout = computed(() => control.value && (control.value.enabled || control.value.resumable
   || control.value.logout_pending || control.value.local_identity !== false));
@@ -39,15 +40,27 @@ async function fetchControl(): Promise<TailscaleControlState> {
 }
 
 async function read(): Promise<void> {
-  if (!active || pending.value || !state.hasKsu) return;
+  if (!active) return;
+  readRequested = true;
+  await flushRead();
+}
+
+async function flushRead(): Promise<void> {
+  if (!readRequested || !active || locked.value) return;
+  readRequested = false;
   const current = ++generation;
   loading.value = true;
   try {
     const result = await fetchControl();
-    if (active && current === generation) { control.value = result; emit("observed", result); }
+    if (active && current === generation && !readRequested) { control.value = result; emit("observed", result); }
   } catch {
-    if (active && current === generation) { control.value = null; emit("observed", null); }
-  } finally { if (current === generation) loading.value = false; }
+    if (active && current === generation && !readRequested) { control.value = null; emit("observed", null); }
+  } finally {
+    if (current === generation) {
+      loading.value = false;
+      void flushRead();
+    }
+  }
 }
 
 async function change(action: TailscaleAction): Promise<void> {
@@ -89,15 +102,18 @@ async function change(action: TailscaleAction): Promise<void> {
 function deactivate(): void {
   active = false;
   generation++;
+  readRequested = false;
   loading.value = false;
   confirmLogout.value = false;
 }
 onMounted(() => { void read(); });
-onActivated(() => { active = true; void read(); });
+onActivated(() => { if (!active) { active = true; void read(); } });
 onDeactivated(deactivate);
 onUnmounted(deactivate);
 watch(() => props.refreshKey, () => { void read(); });
-watch(() => props.disabled, (disabled) => { if (!disabled) void read(); });
+// Busy changes only release an explicit pending read. A private read also
+// changes busy itself, so using every unlock as a refresh trigger loops forever.
+watch(locked, (disabled) => { if (!disabled) void flushRead(); });
 </script>
 
 <template>

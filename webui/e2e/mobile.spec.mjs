@@ -234,14 +234,16 @@ test("mode changes use a focus-trapped confirmation, never optimistic state", as
 test("device unavailable, stopped, unknown, and failed states remain distinct", async ({
   page,
 }) => {
+  const power = page.locator(".mn-control-power");
   await expect(page.getByRole("heading", { name: "未连接设备" })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "启动服务", exact: true }),
-  ).toBeDisabled();
+  await expect(power).toHaveText("读取服务状态");
+  await expect(power).toBeDisabled();
   await seedView(page, { singBoxState: "stopped" });
   await expect(
     page.getByRole("heading", { name: "已停止", exact: true }),
   ).toBeVisible();
+  await expect(power).toHaveText("启动服务");
+  await expect(power).toBeEnabled();
   await seedView(page, {
     singBoxState: "unknown",
     transparentMode: "unknown",
@@ -250,6 +252,18 @@ test("device unavailable, stopped, unknown, and failed states remain distinct", 
   await expect(
     page.getByRole("heading", { name: "状态待确认", exact: true }),
   ).toBeVisible();
+  await expect(power).toHaveText("读取服务状态");
+  await expect(power).toBeEnabled();
+  await power.click();
+  await expect.poll(() => page.evaluate(() =>
+    window.__readOnlyNativeFixture.requests.some(command => command.includes("--json service status")),
+  )).toBe(true);
+  await settle(page);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(power).toHaveText("读取服务状态");
+  expect(await page.evaluate(() => window.__readOnlyNativeFixture.requests.filter(
+    command => /\bservice (?:start|stop|restart|toggle)\b/.test(command),
+  ))).toEqual([]);
   await seedView(page, {
     transparentRecentError: "Fixture: capability check failed",
   });
