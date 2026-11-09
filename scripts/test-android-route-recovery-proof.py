@@ -38,6 +38,11 @@ NETWORKS = [
     {'net_id': 101, 'type': 'PHYSICAL', 'interfaces': ['wlan0'],
      'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']},
 ]
+UID_DETAILS = [
+    'Allowed UID ranges: uids{ 10000 10000 10000-10003 10002-10005 10123 }',
+    'Per-app UID ranges: prio 0 uids{ 10000 10000-10003 10002-10005 10123 }; prio 10 uids{ 10123 }',
+    'Required permission: NONE',
+]
 HEADER = 'sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode'
 TCP = '0: 0F02000A:15B3 0202000A:C012 01 00000000:00000000 00:00000000 00000000 0 0 77'
 
@@ -244,6 +249,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(proof.parse_netd_networks(text), expected)
         self.assertEqual(self.control.netd_observation(),
                          {'networks': expected, 'eth0_ifindex': 17, 'eth0_fib': sorted(ETH0_FIB)})
+        self.assertNotIn('netd_failure', self.evidence)
 
     def test_missing_ambiguous_truncated_or_unknown_netd_records_are_rejected(self):
         text = self.device.netd_dump()
@@ -277,14 +283,48 @@ class RecoveryTests(unittest.TestCase):
             with self.subTest(code=code, size=len(output)), self.assertRaises(RuntimeError):
                 self.control.snapshot()
         self.assertNotIn(proof.IP + ' -4 rule show', self.device.calls)
+        self.assertNotIn('netd_failure', self.evidence)
 
-    def test_eth0_requires_one_unrestricted_physical_network_and_a_complete_fib(self):
+    def test_unsupported_netd_metadata_is_preserved_without_adopting_the_network(self):
+        for details in (
+                ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK'],
+                ['Allowed UID ranges: unrestricted', 'Required permission: SYSTEM'],
+                ['Allowed UID ranges: uids{ <BAD: 10000-10001> }', 'Required permission: NONE'],
+                ['Allowed UID ranges: unrestricted', 'Per-app UID ranges: prio 1000 uids{ 10000 }',
+                 'Required permission: NONE']):
+            self.setUp()
+            self.device.networks[3]['details'] = details
+            with self.subTest(details=details), self.assertRaisesRegex(
+                    RuntimeError, '^netd_eth0_ownership_unavailable$'):
+                self.calibrate()
+            self.assertEqual(self.evidence['netd_failure'], {
+                'stage': 'helper_before_stop',
+                'observation': {'networks': self.device.networks, 'eth0_ifindex': 17,
+                                'eth0_fib': sorted(ETH0_FIB)}})
+            self.assertEqual(self.evidence['helper_lifecycle'], {})
+            self.assertNotIn(proof.CLI + ' service stop sing-box', self.device.calls)
+
+    def test_ambiguous_eth0_interfaces_are_preserved_and_still_rejected(self):
+        for network, interfaces in ((3, ['eth0', 'wlan1']), (4, ['eth0', 'wlan0'])):
+            self.setUp()
+            self.device.networks[network]['interfaces'] = interfaces
+            self.evidence['stage'] = 'watchdog_recovery'
+            with self.subTest(network=network), self.assertRaisesRegex(
+                    RuntimeError, '^netd_eth0_ownership_unavailable$'):
+                self.control.snapshot()
+            self.assertEqual(self.evidence['netd_failure'], {
+                'stage': 'watchdog_recovery',
+                'observation': {'networks': self.device.networks, 'eth0_ifindex': 17,
+                                'eth0_fib': sorted(ETH0_FIB)}})
+            self.assertNotIn(proof.IP + ' -4 rule show', self.device.calls)
+
+    def test_eth0_requires_one_supported_physical_network_and_a_complete_fib(self):
         for changes in ({'net_id': 98}, {'type': 'VIRTUAL'}, {'interfaces': ['eth0', 'wlan1']},
                         {'details': ['Required permission: NONE']},
-                        {'details': ['Allowed UID ranges: uids{ 10000 }', 'Required permission: NONE']},
+                        {'details': ['Allowed UID ranges: unknown', 'Required permission: NONE']},
                         {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK']},
                         {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE',
-                                     'Per-app UID ranges: prio 1 uids{ 10000 }']}):
+                                     'Per-app UID ranges: prio -1 uids{ 10000 }']}):
             self.setUp()
             self.device.networks[3].update(changes)
             with self.subTest(changes=changes), self.assertRaises(RuntimeError):
@@ -300,6 +340,59 @@ class RecoveryTests(unittest.TestCase):
             self.device.eth0_ifindex = index
             with self.subTest(index=index), self.assertRaisesRegex(RuntimeError, 'invalid_eth0_identity'):
                 self.control.netd_observation()
+
+    def test_uid_metadata_accepts_empty_and_bounded_canonical_ranges(self):
+        for allowed in ('uids{ }', 'uids{ 0 10000 10002-10005 2147483647 }'):
+            self.device.networks[3]['details'] = [
+                'Allowed UID ranges: ' + allowed, 'Per-app UID ranges: prio 0 uids{ }; prio 999 uids{ 0 }',
+                'Required permission: NONE']
+            with self.subTest(allowed=allowed):
+                self.assertEqual(self.control.netd_observation()['networks'], self.device.networks)
+        self.assertNotIn('netd_failure', self.evidence)
+
+    def test_uid_metadata_rejects_noncanonical_values_and_priorities(self):
+        for value in ('', '<BAD>', 'uids{}', 'uids{ 01 }', 'uids{ -1 }', 'uids{ 2147483648 }',
+                      'uids{ 2-1 }', 'uids{ 1-1 }', 'uids{ 2 1 }', 'uids{ 1-3 1-2 }'):
+            with self.subTest(value=value):
+                self.assertFalse(proof.ethernet_metadata([
+                    'Allowed UID ranges: ' + value, 'Required permission: NONE']))
+        for value in ('', 'prio -1 uids{ }', 'prio 01 uids{ }', 'prio 1000 uids{ }',
+                      'prio 0 unrestricted', 'prio 0 uids{ 1-1 }',
+                      'prio 0 uids{ }; prio 0 uids{ }', 'prio 10 uids{ }; prio 0 uids{ }'):
+            with self.subTest(value=value):
+                self.assertFalse(proof.ethernet_metadata([
+                    'Allowed UID ranges: unrestricted', 'Per-app UID ranges: ' + value,
+                    'Required permission: NONE']))
+
+    def test_stable_uid_restrictions_and_overlaps_survive_calibration_and_recovery(self):
+        for renumber in (False, True):
+            self.setUp()
+            self.device.networks[3]['details'] = list(UID_DETAILS)
+            self.device.renumber_on_start = renumber
+            with self.subTest(renumber=renumber):
+                self.run_control()
+                lifecycle = self.evidence['helper_lifecycle']
+                for snapshot in (lifecycle['before_stop'], lifecycle['after_start'],
+                                 self.evidence['before'], self.evidence['fault'], self.evidence['after']):
+                    self.assertEqual(proof.ethernet_network(snapshot['netd'])['details'], UID_DETAILS)
+                self.assertEqual(self.evidence['status'], 'verified')
+                self.assertNotIn('netd_failure', self.evidence)
+
+    def test_legal_uid_metadata_changes_cannot_be_normalized_as_a_netid_rebuild(self):
+        self.device.networks[3]['details'] = list(UID_DETAILS)
+        before = {'netd': self.control.netd_observation()}
+        before_rules = Counter(self.device.rules)
+        self.device.renumber_eth0()
+        after = {'netd': self.control.netd_observation()}
+        after_rules = Counter(self.device.rules)
+        for index, replacement in (
+                (0, UID_DETAILS[0].replace('10000 10000 ', '10000 ')),
+                (0, UID_DETAILS[0].replace('10002-10005', '10004-10005')),
+                (1, UID_DETAILS[1].replace('prio 10', 'prio 11'))):
+            changed = copy.deepcopy(after)
+            proof.ethernet_network(changed['netd'])['details'][index] = replacement
+            with self.subTest(replacement=replacement):
+                self.assertFalse(proof.foreign_rules_preserved(before, changed, before_rules, after_rules))
 
     def test_snapshot_brackets_kernel_reads_with_matching_netd_observations(self):
         original = self.device.adb
@@ -397,6 +490,7 @@ class RecoveryTests(unittest.TestCase):
         self.run_control()
         result = self.evidence
         self.assertEqual(result['status'], 'verified')
+        self.assertNotIn('netd_failure', result)
         self.assertEqual(result['removed_rule_count'], 2)
         self.assertEqual(result['first_missing']['consecutive_failures'], 1)
         self.assertEqual(result['before']['core_pid'], result['fault']['core_pid'])

@@ -64,6 +64,14 @@ def renumber_eth0(snapshot, net_id):
     snapshot['netd']['networks'].sort(key=lambda item: item['net_id'])
 
 
+def eth0_uid_metadata(snapshot, allowed, per_app=None):
+    details = ['Allowed UID ranges: ' + allowed, 'Required permission: NONE']
+    if per_app is not None:
+        details.append('Per-app UID ranges: ' + per_app)
+    network = next(item for item in snapshot['netd']['networks'] if item['interfaces'] == ['eth0'])
+    network['details'] = sorted(details)
+
+
 def completed_report():
     phases = (
         'environment', 'kernelsu-bootstrap', 'install-before-first-boot', 'cold-boot',
@@ -276,6 +284,61 @@ class AndroidReportGateTests(unittest.TestCase):
         renumber_eth0(loss['helper_lifecycle']['before_stop'], 103)
         renumber_eth0(loss['after'], 102)
         GATE.validate_report(report, SHA)
+
+    def test_stable_canonical_uid_metadata_preserves_full_report_evidence(self):
+        for allowed, per_app in (
+                ('uids{ }', None), ('uids{ 0 10000 10002-10005 2147483647 }', None),
+                ('uids{ 10000 10000 10000-10005 10002 }',
+                 'prio 0 uids{ 10000 10000 10000-10005 10002 }; prio 999 uids{ }')):
+            for renumber in (False, True):
+                with self.subTest(allowed=allowed, per_app=per_app, renumber=renumber):
+                    report = completed_report()
+                    loss = report['provenance']['route_recovery']['rpdb_loss']
+                    for snapshot in (loss['before'], loss['fault'], loss['after'],
+                                     loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+                        eth0_uid_metadata(snapshot, allowed, per_app)
+                    if renumber:
+                        renumber_eth0(loss['helper_lifecycle']['before_stop'], 103)
+                        renumber_eth0(loss['after'], 102)
+                    GATE.validate_report(report, SHA)
+
+    def test_uid_metadata_rejects_malformed_noncanonical_or_out_of_bounds_values(self):
+        invalid = {
+            'allowed': ('', 'unknown', 'uids{}', 'uids{ <BAD: 0-1> }', 'uids{ -1 }',
+                        'uids{ 01 }', 'uids{ 1-1 }', 'uids{ 2-1 }', 'uids{ 2147483648 }',
+                        'uids{ 2 1 }', 'uids{ 1-3 1-2 }'),
+            'per_app': ('', 'prio 0 unrestricted', 'prio -1 uids{ }', 'prio 01 uids{ }',
+                        'prio 1000 uids{ }', 'prio 0 uids{ <BAD: 0-1> }',
+                        'prio 0 uids{ }; prio 0 uids{ }', 'prio 10 uids{ }; prio 0 uids{ }',
+                        'prio 0 uids{ };prio 10 uids{ }'),
+        }
+        for field, values in invalid.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    report = completed_report()
+                    after = report['provenance']['route_recovery']['rpdb_loss']['after']
+                    eth0_uid_metadata(after, value if field == 'allowed' else 'unrestricted',
+                                      value if field == 'per_app' else None)
+                    self.assert_rejected(report)
+
+    def test_renumbering_never_excuses_eth0_uid_priority_or_permission_changes(self):
+        for stage in ('after', 'before_stop'):
+            for change in ('allowed', 'uid', 'priority', 'permission'):
+                with self.subTest(stage=stage, change=change):
+                    report = completed_report()
+                    loss = report['provenance']['route_recovery']['rpdb_loss']
+                    for snapshot in (loss['before'], loss['fault'], loss['after'],
+                                     loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+                        eth0_uid_metadata(snapshot, 'uids{ 10000 }', 'prio 0 uids{ 10000 }')
+                    snapshot = loss[stage] if stage in loss else loss['helper_lifecycle'][stage]
+                    renumber_eth0(snapshot, 102)
+                    eth0_uid_metadata(snapshot, 'uids{ 10001 }' if change == 'allowed' else 'uids{ 10000 }',
+                                      'prio 10 uids{ 10000 }' if change == 'priority' else
+                                      'prio 0 uids{ 10001 }' if change == 'uid' else 'prio 0 uids{ 10000 }')
+                    if change == 'permission':
+                        network = next(item for item in snapshot['netd']['networks'] if item['interfaces'] == ['eth0'])
+                        network['details'][-1] = 'Required permission: SYSTEM'
+                    self.assert_rejected(report)
 
     def test_all_running_snapshots_require_independent_netd_evidence(self):
         for name in ('before', 'fault', 'after', 'before_stop', 'after_start'):

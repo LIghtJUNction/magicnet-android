@@ -174,12 +174,46 @@ def parse_netd_networks(text):
     return sorted(networks, key=lambda item: item['net_id'])
 
 
+def uid_ranges(value):
+    match = re.fullmatch(r'uids\{((?: [0-9]+(?:-[0-9]+)?)*) \}', value)
+    if not match:
+        return False
+    previous = (-1, -1)
+    for token in match[1].split():
+        item = re.fullmatch(r'(0|[1-9][0-9]{0,9})(?:-(0|[1-9][0-9]{0,9}))?', token)
+        if not item:
+            return False
+        low, high = int(item[1]), int(item[2] or item[1])
+        if high > 2147483647 or (item[2] and high <= low) or (low, high) < previous:
+            return False
+        previous = low, high
+    return True
+
+
+def ethernet_metadata(details):
+    fields = dict(row.partition(': ')[::2] for row in details)
+    if (len(fields) != len(details)
+            or set(fields) - {'Allowed UID ranges', 'Required permission', 'Per-app UID ranges'}
+            or fields.get('Required permission') != 'NONE'):
+        return False
+    allowed = fields.get('Allowed UID ranges', '')
+    if allowed != 'unrestricted' and not uid_ranges(allowed):
+        return False
+    previous = -1
+    for entry in fields.get('Per-app UID ranges', '').split('; ') if 'Per-app UID ranges' in fields else []:
+        match = re.fullmatch(r'prio (0|[1-9][0-9]{0,2}) (uids\{.*\})', entry)
+        if not match or int(match[1]) <= previous or not uid_ranges(match[2]):
+            return False
+        previous = int(match[1])
+    return True
+
+
 def ethernet_network(observation):
     networks = [item for item in observation['networks'] if 'eth0' in item['interfaces']]
     require(len(networks) == 1 and networks[0]['type'] == 'PHYSICAL'
             and 100 <= networks[0]['net_id'] <= 65535
             and networks[0]['interfaces'] == ['eth0']
-            and networks[0]['details'] == ['Allowed UID ranges: unrestricted', 'Required permission: NONE'],
+            and ethernet_metadata(networks[0]['details']),
             'netd_eth0_ownership_unavailable')
     return networks[0]
 
@@ -298,7 +332,11 @@ class Control:
                 and all(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?: |$)', row) == ['eth0'] for row in fib),
                 'invalid_eth0_fib')
         result = {'networks': networks, 'eth0_ifindex': int(index), 'eth0_fib': fib}
-        ethernet_network(result)
+        try:
+            ethernet_network(result)
+        except RuntimeError:
+            self.evidence['netd_failure'] = {'stage': self.evidence.get('stage'), 'observation': result}
+            raise
         return result
 
     def snapshot(self):

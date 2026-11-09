@@ -64,6 +64,38 @@ def text_rows(value, label):
     return Counter(value)
 
 
+def canonical_uid_ranges(value):
+    if not isinstance(value, str) or len(value) > 2048:
+        return False
+    if value == 'uids{ }':
+        return True
+    match = re.fullmatch(r'uids\{ (.+) \}', value)
+    if not match:
+        return False
+    ranges = []
+    for token in match[1].split(' '):
+        item = re.fullmatch(r'(0|[1-9][0-9]{0,9})(?:-(0|[1-9][0-9]{0,9}))?', token)
+        if not item:
+            return False
+        start, end = int(item[1]), int(item[2] or item[1])
+        if not start <= end <= 0x7fffffff or (item[2] is not None and start == end):
+            return False
+        ranges.append((start, end))
+    return ranges == sorted(ranges)
+
+
+def canonical_per_app_ranges(value):
+    if not isinstance(value, str) or len(value) > 2048:
+        return False
+    previous = -1
+    for section in value.split('; '):
+        match = re.fullmatch(r'prio (0|[1-9][0-9]{0,2}) (uids\{.*\})', section)
+        if not match or int(match[1]) <= previous or not canonical_uid_ranges(match[2]):
+            return False
+        previous = int(match[1])
+    return True
+
+
 def netd_observation(snapshot):
     observed = snapshot.get('netd')
     require(isinstance(observed, dict)
@@ -101,8 +133,13 @@ def netd_observation(snapshot):
             ethernet.append(network)
     require(ids == sorted(set(ids)) and len(ethernet) == 1 and ethernet[0]['net_id'] >= 100
             and ethernet[0]['type'] == 'PHYSICAL' and ethernet[0]['interfaces'] == ['eth0']
-            and ethernet[0]['details'] == ['Allowed UID ranges: unrestricted', 'Required permission: NONE'],
-            'Netd does not prove one unrestricted physical eth0 network')
+            and 'Required permission: NONE' in ethernet[0]['details'],
+            'Netd does not prove one physical eth0 network with NONE permission')
+    details = dict(item.split(': ', 1) for item in ethernet[0]['details'])
+    allowed, per_app = details['Allowed UID ranges'], details.get('Per-app UID ranges')
+    require((allowed == 'unrestricted' or canonical_uid_ranges(allowed))
+            and (per_app is None or canonical_per_app_ranges(per_app)),
+            'Netd eth0 UID metadata is not canonical')
     fib = observed['eth0_fib']
     require(type(observed['eth0_ifindex']) is int and 1 <= observed['eth0_ifindex'] <= 0x7fffffff
             and isinstance(fib, list) and 1 <= len(fib) <= 256
@@ -128,7 +165,10 @@ def foreign_rules_preserved(before, after, before_rules, after_rules):
     if old_id == new_id:
         require(old == new, 'Unchanged netd identity has changed network metadata')
         return before_rules == after_rules
+    old_network = next(item for item in old['networks'] if item['net_id'] == old_id)
+    new_network = next(item for item in new['networks'] if item['net_id'] == new_id)
     require(old['eth0_ifindex'] == new['eth0_ifindex'] and old['eth0_fib'] == new['eth0_fib']
+            and (old_network | {'net_id': new_id}) == new_network
             and old_id not in [item['net_id'] for item in new['networks']]
             and new_id not in [item['net_id'] for item in old['networks']]
             and [item for item in old['networks'] if item['net_id'] != old_id]
