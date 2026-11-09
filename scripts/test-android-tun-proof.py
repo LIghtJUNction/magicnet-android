@@ -287,7 +287,7 @@ class TunProofTests(unittest.TestCase):
                     failed_reverse_cleanup=False, failed_restart=False,
                     save_error='', restart_error='', restore_error='', restart_output='',
                     observation_result=None, observation_error=None, events=None, busy_saves=None,
-                    fault_control=None):
+                    fault_control=None, lifecycle_observer=None, failed_stop=False, failed_start=False):
         # This executes restoration/accounting with an in-memory device and a
         # real local marker server. It is NOT evidence of Android TUN capture.
         active = copy.deepcopy(BASE)
@@ -345,6 +345,12 @@ class TunProofTests(unittest.TestCase):
                     rc = 1
                     error = restart_error
                     output = restart_output
+            elif args[1:] in (['service', 'stop', 'sing-box'], ['service', 'start', 'sing-box']):
+                operation = args[2]
+                events.append(('core_' + operation, active == BASE))
+                if failed_stop and operation == 'stop' or failed_start and operation == 'start':
+                    rc = 1
+                    error = 'managed sing-box process set changed during stop'
             elif args[1:] == ['--json', 'service', 'status']:
                 events.append(('service_observation', active == BASE, bool(payloads)))
                 self.assertEqual(kwargs, {'timeout': proof.SERVICE_OBSERVATION_TIMEOUT})
@@ -377,7 +383,8 @@ class TunProofTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, '')
 
         with patch.object(proof.subprocess, 'run', side_effect=host), patch.object(proof.time, 'sleep'):
-            report = proof.verify(adb, instrument, 'component', fault_control=fault_control)
+            report = proof.verify(adb, instrument, 'component', fault_control=fault_control,
+                                  lifecycle_observer=lifecycle_observer)
         if not busy.get('restore'):
             self.assertEqual(active, BASE)
         self.assertFalse(payloads, 'private staging payloads must be removed')
@@ -417,6 +424,44 @@ class TunProofTests(unittest.TestCase):
         self.assertTrue(report['restored'])
         self.assertFalse(report['reject'])
         self.assertEqual(saves[-1], BASE)
+
+    def test_lifecycle_observer_splits_only_first_restart_without_an_extra_start(self):
+        events = []
+        report, saves = self.transaction(events=events,
+            lifecycle_observer=lambda stage: events.append(('observe', stage)))
+        self.assertEqual(report['status'], 'verified')
+        relevant = [event for event in events if event[0] in ('observe', 'core_stop', 'core_start', 'core_restart')]
+        self.assertEqual(relevant, [('observe', 'before_stop'), ('core_stop', False),
+                                   ('observe', 'stopped'), ('core_start', False),
+                                   ('observe', 'after_start'), ('core_restart', False),
+                                   ('core_restart', False), ('core_restart', True)])
+        self.assertEqual(len(saves), 4)
+
+    def test_lifecycle_observation_failure_restores_original_config(self):
+        for failed_stage in ('before_stop', 'stopped', 'after_start'):
+            events = []
+            def observe(stage):
+                events.append(('observe', stage))
+                if stage == failed_stage:
+                    raise RuntimeError('observation_failed')
+            with self.subTest(stage=failed_stage):
+                report, saves = self.transaction(events=events, lifecycle_observer=observe)
+                self.assertEqual(report['status'], 'not_verified')
+                self.assertTrue(report['restored'])
+                self.assertFalse(report['positive'])
+                self.assertEqual(saves[-1], BASE)
+                self.assertEqual([event for event in events if event == ('core_restart', True)],
+                                 [('core_restart', True)])
+
+    def test_failed_observable_stop_or_start_is_recorded_and_restored(self):
+        for operation in ('stop', 'start'):
+            with self.subTest(operation=operation):
+                report, _ = self.transaction(lifecycle_observer=lambda _: None,
+                                             **{'failed_' + operation: True})
+                self.assertEqual(report['failure_operation'], 'core_' + operation)
+                self.assertEqual(report['failure_kind'], 'core_generation_changed')
+                self.assertEqual(report['status'], 'not_verified')
+                self.assertTrue(report['restored'])
 
     def test_first_failure_observation_precedes_cleanup_and_is_not_replaced_by_restore(self):
         events = []

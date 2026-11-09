@@ -52,7 +52,7 @@ def sanitized_failure(output: str, *, operation: str) -> dict:
         ('config validation failed', 'config_validation'),
         ('config apply is still busy', 'config_apply_busy'),
     )
-    if operation == 'core_restart':
+    if operation in ('core_restart', 'core_stop', 'core_start'):
         messages += (
             ('Timed out waiting for config lock:', 'config_lock_timeout'),
             ('create config apply lock directory:', 'config_apply_lock_error'),
@@ -103,7 +103,7 @@ def sanitized_failure(output: str, *, operation: str) -> dict:
             break
     # Validation errors can embed arbitrary config strings. Such strings
     # cannot establish a service failure category or a startup stage.
-    if operation != 'core_restart' or diagnostic['kind'] == 'config_validation':
+    if operation not in ('core_restart', 'core_start') or diagnostic['kind'] == 'config_validation':
         return diagnostic
     for match in re.finditer(
             r'Startup step failed: stage=([a-z-]{1,32}) exit=([0-9]{1,3})(?=\s|$)', output):
@@ -235,7 +235,7 @@ def fixture_config(original: dict, uid: int, port: int, *, blocked: bool) -> dic
     return candidate
 
 
-def verify(adb, instrument, component, *, fault_control=None) -> dict:
+def verify(adb, instrument, component, *, fault_control=None, lifecycle_observer=None) -> dict:
     report = {'status': 'not_verified', 'scope': 'emulator_test_uid_tcp',
               'positive': False, 'reject': False, 'positive_after': False, 'restored': False}
     # A user could run the benchmark locally; refuse mutation on physical phones.
@@ -310,8 +310,17 @@ def verify(adb, instrument, component, *, fault_control=None) -> dict:
                         operation='payload_append')
             command(CLI + ' config-editor save-file sing-box ' + path,
                     operation='config_save')
-            command(CLI + ' service restart sing-box', timeout=90,
-                    operation='core_restart')
+            if control == 'positive' and lifecycle_observer is not None:
+                # The same activation, with an observable stopped boundary;
+                # no extra core generation and no hook during fault recovery.
+                lifecycle_observer('before_stop')
+                command(CLI + ' service stop sing-box', timeout=90, operation='core_stop')
+                lifecycle_observer('stopped')
+                command(CLI + ' service start sing-box', timeout=90, operation='core_start')
+                lifecycle_observer('after_start')
+            else:
+                command(CLI + ' service restart sing-box', timeout=90,
+                        operation='core_restart')
         finally:
             if created:
                 command(CLI + ' webui payload remove tmp ' + name,

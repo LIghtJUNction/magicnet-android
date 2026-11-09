@@ -37,13 +37,16 @@ route configurations.
 
 The `tun-route-recovery` lifecycle phase uses the installed production CLI/core
 and the existing application-UID local TCP sentinel. It deletes only live IPv4
-RPDB selectors proven by the current ownership ledger, leaving the core process
-generation, `magicnet0` and TUN forwarding table intact. The test requires
+`lookup 2022` selectors in the current ownership ledger, preserving jump targets,
+the core generation, `magicnet0` and TUN forwarding table. The test requires
 readiness to become false and a new application connection to fail, then waits
 for the normal `connectivity tick` recovery path to restore both rules and flow.
 It also exercises a controlled virtual uplink down/up transition. Production
 grace, confirmation and cooldown periods remain active; the fixture does not
 fabricate canonical state or require Google or a subscription provider.
+The first fixture activation observes the normal stop/start boundary to prove
+ownership of the core's random redirect table. Recovery may replace that proven
+helper; its complete rule/FIB evidence and every other unowned rule are checked.
 
 The report retains the fault observations, recovery action, app controls and
 configuration/resource restoration. A separate bounded JSON validator requires

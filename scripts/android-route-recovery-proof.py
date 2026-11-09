@@ -116,6 +116,10 @@ def app_result(result, uid, expected):
             and result.get('accepted') == (1 if expected else 0))
 
 
+def without_helper(snapshot):
+    return Counter(snapshot['rules']) - Counter([snapshot['helper']['rule']])
+
+
 class Control:
     def __init__(self, adb, evidence):
         self.adb, self.evidence = adb, evidence
@@ -165,7 +169,33 @@ class Control:
             'printf "%s\\n" "$p"; cat /proc/$p/stat'))
 
     def rule_snapshot(self):
-        return rules(self.command(IP + ' -4 rule show'))
+        rows = rules(self.command(IP + ' -4 rule show'))
+        require(rows.count('0: from all lookup local') == 1, 'local_rule_anchor_missing_or_duplicated')
+        return rows
+
+    def helper_fib(self, table):
+        # A successful full dump observes empty/deleted tables too. Never turn
+        # a failed targeted table lookup into an empty ownership observation.
+        marker = re.compile(r' table ' + str(table) + r'(?= |$)')
+        rows = lines(self.command(IP + ' -4 route show table all'))
+        require(rows, 'route_table_dump_empty')
+        return sorted(marker.sub('', row) for row in rows if marker.search(row))
+
+    def helper(self, rows):
+        candidates = [row for row in rows if row.partition(':')[0] == '1']
+        require(len(candidates) == 1, 'helper_rule_ambiguous')
+        match = re.fullmatch(r'1: from all lookup ([0-9]+)', candidates[0])
+        require(match and 256 <= int(match[1]) <= 2147483647 and int(match[1]) != 2022,
+                'invalid_helper_rule')
+        table = int(match[1])
+        fib = self.helper_fib(table)
+        devices = []
+        for row in fib:
+            match = re.fullmatch(r'local 127\.0\.0\.1(?:/32)? dev ([a-zA-Z0-9_.-]{1,15}) scope host', row)
+            require(match and match[1] not in ('lo', TUN), 'invalid_helper_fib')
+            devices.append(match[1])
+        require(devices and len(set(devices)) == len(devices), 'empty_or_duplicate_helper_fib')
+        return {'rule': candidates[0], 'table': table, 'fib': fib}
 
     def snapshot(self):
         identity = self.identity()
@@ -175,8 +205,33 @@ class Control:
                              'fib': lines(self.command(IP + " -4 route show table ' 2022'"))}
         require(result['fib'] and all('dev ' + TUN in row for row in result['fib']),
                 'foreign_or_empty_tun_fib')
+        result['helper'] = self.helper(result['rules'])
         require(self.identity() == identity, 'core_changed_during_snapshot')
         return result
+
+    def observe_lifecycle(self, stage):
+        lifecycle = self.evidence.setdefault('helper_lifecycle', {})
+        self.evidence['stage'] = 'helper_' + stage
+        if stage == 'before_stop':
+            lifecycle[stage] = self.snapshot()
+        elif stage == 'stopped':
+            state = self.machine('service.status').get('core', {}).get('sing_box', {}).get('process_state')
+            require(state == 'stopped', 'helper_stop_not_observed')
+            self.command('test ! -e /sys/class/net/' + TUN)
+            table = lifecycle['before_stop']['helper']['table']
+            stopped = lifecycle[stage] = {'core_state': state, 'rules': self.rule_snapshot(),
+                                          'helper_table': table, 'helper_fib': self.helper_fib(table)}
+            require(not stopped['helper_fib']
+                    and not any(row.partition(':')[0] == '1' for row in stopped['rules']),
+                    'helper_not_removed_by_close')
+        elif stage == 'after_start':
+            require('stopped' in lifecycle, 'helper_stop_snapshot_missing')
+            before = lifecycle['before_stop']
+            after = lifecycle[stage] = self.snapshot()
+            require(after['core_start_ticks'] > before['core_start_ticks']
+                    and without_helper(before) == without_helper(after), 'helper_activation_changed_foreign_rules')
+        else:
+            raise RuntimeError('invalid_helper_lifecycle_stage')
 
     def tick(self, force=False):
         if force or time.monotonic() - self.last_tick >= TICK_INTERVAL:
@@ -234,6 +289,10 @@ class Control:
         require(baseline['recovery_attempts'] < baseline['recovery_limit'] and self.ready(True),
                 'healthy_baseline_required')
         before = evidence['before'] = self.snapshot()
+        activated = evidence.get('helper_lifecycle', {}).get('after_start')
+        require(isinstance(activated, dict) and all(activated.get(key) == before[key] for key in
+                ('core_pid', 'core_start_ticks', 'tun_name', 'tun_ifindex', 'helper')),
+                'helper_ownership_not_bound_to_core')
         boot = self.command('cat /proc/sys/kernel/random/boot_id').strip()
         require(re.fullmatch(r'[0-9a-f-]{36}', boot), 'invalid_boot_identity')
         owned = evidence['owned_rules'] = owned_rules(self.command(
@@ -253,11 +312,11 @@ class Control:
         evidence['removed_rule_count'] = sum(removed.values())
         for key, fields in (('core_identity_unchanged', ('core_pid', 'core_start_ticks')),
                             ('tun_unchanged', ('tun_name', 'tun_ifindex')),
-                            ('fib_unchanged', ('fib',))):
+                            ('fib_unchanged', ('fib', 'helper'))):
             evidence[key] = all(before[field] == fault[field] for field in fields)
             require(evidence[key], key + '_failed')
-        foreign = Counter(before['rules']) - Counter(owned)
-        evidence['unowned_rules_unchanged'] = Counter(fault['rules']) - Counter(owned) == foreign
+        foreign = without_helper(before) - Counter(owned)
+        evidence['unowned_rules_unchanged'] = without_helper(fault) - Counter(owned) == foreign
         require(evidence['unowned_rules_unchanged'] and evidence['removed_rule_count'] > 0,
                 'fault_not_confined_to_owned_rules')
         require(self.ready(False), 'fault_machine_readiness_not_rejected')
@@ -293,10 +352,17 @@ class Control:
         evidence['recovery_after'] = self.wait(recovered, RECOVERY_TIMEOUT, 'automatic_recovery_deadline')
         require('first_missing' in evidence, 'missing_confirmation_not_observed')
         after = evidence['after'] = self.snapshot()
+        previous = after['previous_helper_fib'] = self.helper_fib(before['helper']['table'])
+        if after['helper']['table'] == before['helper']['table']:
+            require(after['helper'] == before['helper'] and Counter(previous) == Counter(after['helper']['fib']),
+                    'reused_helper_table_changed')
+        else:
+            require(not previous and before['helper']['rule'] not in after['rules'],
+                    'previous_helper_not_removed')
         require((after['core_pid'], after['core_start_ticks'])
                 != (before['core_pid'], before['core_start_ticks']), 'managed_restart_not_observed')
         require(not Counter(owned) - Counter(after['rules'])
-                and Counter(after['rules']) - Counter(owned) == foreign, 'recovery_rule_set_mismatch')
+                and without_helper(after) - Counter(owned) == foreign, 'recovery_rule_set_mismatch')
         require(self.ready(True), 'recovery_not_ready')
         evidence['ready_after_recovery'] = True
         require(app_result(sentinel(), uid, True), 'recovered_app_not_captured')
@@ -421,12 +487,19 @@ def verify(adb, instrument, component, evidence=None):
     spec = importlib.util.spec_from_file_location('route_tun_proof', Path(__file__).with_name('android-tun-proof.py'))
     proof = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(proof)
+    rpdb = evidence['rpdb_loss'] = {'status': 'not_verified', 'recovery_entry': 'connectivity.tick',
+                                   'recovery_tick_count': 0}
+    control = Control(adb, rpdb)
+
+    def observe(stage):
+        try:
+            control.observe_lifecycle(stage)
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:
+            evidence['reason'] = str(error) if isinstance(error, RuntimeError) else 'helper_observation_failed'
+            raise RuntimeError('helper_control_failed') from None
 
     def fault(sentinel, uid):
         evidence['app_uid'] = uid
-        rpdb = evidence['rpdb_loss'] = {'status': 'not_verified', 'recovery_entry': 'connectivity.tick',
-                                       'recovery_tick_count': 0}
-        control = Control(adb, rpdb)
         try:
             control.rpdb_loss(sentinel, uid)
             reconnect = evidence['uplink_reconnect'] = {'recovery_tick_count': 0}
@@ -436,7 +509,7 @@ def verify(adb, instrument, component, evidence=None):
             evidence['reason'] = str(error) if isinstance(error, RuntimeError) else 'fault_observation_failed'
             raise RuntimeError('route_control_failed') from None
 
-    result = proof.verify(adb, instrument, component, fault_control=fault)
+    result = proof.verify(adb, instrument, component, fault_control=fault, lifecycle_observer=observe)
     evidence['tun_controls'] = result
     evidence.update({key: result.get(key) is True for key in ('positive', 'reject', 'positive_after', 'restored')})
     if result['status'] == 'verified' and all(evidence.get(key, {}).get('status') == 'verified'

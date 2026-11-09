@@ -25,6 +25,12 @@ JOBS = [{'name': name, 'status': 'completed', 'conclusion': 'success'}
                      'Android Simulation Gate')]
 
 
+def helper(table):
+    return {'rule': f'1: from all lookup {table}', 'table': table,
+            'fib': ['local 127.0.0.1 dev eth0 scope host',
+                    'local 127.0.0.1 dev wlan0 scope host']}
+
+
 def completed_report():
     phases = (
         'environment', 'kernelsu-bootstrap', 'install-before-first-boot', 'cold-boot',
@@ -41,7 +47,14 @@ def completed_report():
     owned = '9000: from all iif lo lookup 2022'
     unowned = '0: from all lookup local'
     before = {'core_pid': 400, 'core_start_ticks': 10000, 'tun_name': 'magicnet0',
-              'tun_ifindex': 9, 'rules': [unowned, owned], 'fib': ['default dev magicnet0 scope link']}
+              'tun_ifindex': 9, 'rules': [unowned, helper(76501405)['rule'], owned],
+              'fib': ['default dev magicnet0 scope link'], 'helper': helper(76501405)}
+    prior = copy.deepcopy(before) | {'core_pid': 300, 'core_start_ticks': 5000, 'tun_ifindex': 8,
+                                    'rules': [unowned, helper(91719807)['rule'], owned],
+                                    'helper': helper(91719807)}
+    after = copy.deepcopy(before) | {'core_pid': 500, 'core_start_ticks': 15000, 'tun_ifindex': 10,
+                                    'rules': [unowned, helper(259533620)['rule'], owned],
+                                    'helper': helper(259533620), 'previous_helper_fib': []}
     previous = {'status': 'present', 'recovery_limit': 3, 'recovery_attempts': 0}
     recovered = {'status': 'present', 'warning': False, 'recovery_status': 'ok',
                  'recovery_limit': 3, 'consecutive_failures': 0,
@@ -58,8 +71,12 @@ def completed_report():
             'fault_app': {'complete': True, 'ok': False, 'uid': 10123, 'accepted': 0,
                           'reason': 'connect', 'elapsed_ms': 12},
             'owned_rules': [owned], 'before': before,
-            'fault': copy.deepcopy(before) | {'rules': [unowned]},
-            'after': copy.deepcopy(before) | {'core_pid': 500, 'core_start_ticks': 15000, 'tun_ifindex': 10},
+            'fault': copy.deepcopy(before) | {'rules': [unowned, before['helper']['rule']]},
+            'after': after,
+            'helper_lifecycle': {'before_stop': prior,
+                                 'stopped': {'core_state': 'stopped', 'rules': [unowned],
+                                             'helper_table': prior['helper']['table'], 'helper_fib': []},
+                                 'after_start': copy.deepcopy(before)},
             'recovery_before': previous,
             'first_missing': previous | {'status': 'missing', 'consecutive_failures': 1},
             'first_missing_identity': {'core_pid': 400, 'core_start_ticks': 10000},
@@ -217,6 +234,108 @@ class AndroidReportGateTests(unittest.TestCase):
             loss[name]['rules'].append('0: from all lookup local')
         GATE.validate_report(report, SHA)
         loss['after']['rules'].remove('0: from all lookup local')
+        self.assert_rejected(report)
+
+    def test_helper_requires_observed_stop_before_any_new_core_start(self):
+        for path, value in (
+                (('helper_lifecycle',), None), (('helper_lifecycle', 'before_stop'), None),
+                (('helper_lifecycle', 'stopped'), {}), (('helper_lifecycle', 'after_start'), None),
+                (('helper_lifecycle', 'stopped', 'core_state'), 'unknown'),
+                (('helper_lifecycle', 'stopped', 'core_state'), 'running'),
+                (('helper_lifecycle', 'stopped', 'helper_table'), True),
+                (('helper_lifecycle', 'stopped', 'helper_table'), 76501405),
+                (('helper_lifecycle', 'stopped', 'helper_fib'), None),
+                (('helper_lifecycle', 'stopped', 'helper_fib'), helper(91719807)['fib']),
+                (('helper_lifecycle', 'stopped', 'rules'), None),
+                (('helper_lifecycle', 'stopped', 'rules'), []),
+                (('helper_lifecycle', 'stopped', 'rules'), ['1: from all lookup 91719807']),
+                (('helper_lifecycle', 'after_start', 'core_pid'), 401),
+                (('helper_lifecycle', 'before_stop', 'core_start_ticks'), 10000)):
+            with self.subTest(path=path, value=value):
+                report = completed_report()
+                target = report['provenance']['route_recovery']['rpdb_loss']
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                self.assert_rejected(report)
+        report = completed_report()
+        lifecycle = report['provenance']['route_recovery']['rpdb_loss']['helper_lifecycle']
+        for name in ('before_stop', 'after_start'):
+            lifecycle[name]['rules'].remove('0: from all lookup local')
+        self.assert_rejected(report)
+
+    def test_helper_must_have_one_exact_rule_and_only_interface_loopback_routes(self):
+        for key, value in (
+                ('table', True), ('table', '76501405'), ('table', 255),
+                ('table', 2022), ('table', 2147483648),
+                ('rule', '1: from all fwmark 0x1 lookup 76501405'),
+                ('fib', None), ('fib', []), ('fib', ['default dev eth0']),
+                ('fib', ['local 127.0.0.2 dev eth0 scope host']),
+                ('fib', ['local 127.0.0.0/8 dev eth0 scope host']),
+                ('fib', ['local 127.0.0.1 dev lo scope host']),
+                ('fib', ['local 127.0.0.1 dev magicnet0 scope host']),
+                ('fib', ['local 127.0.0.1 dev eth0 scope link']),
+                ('fib', helper(76501405)['fib'] * 2),
+                ('fib', ['local 127.0.0.1 dev eth0 scope host',
+                         'local 127.0.0.1/32 dev eth0 scope host'])):
+            with self.subTest(key=key, value=value):
+                report = completed_report()
+                report['provenance']['route_recovery']['rpdb_loss']['before']['helper'][key] = value
+                self.assert_rejected(report)
+        for extra in ('1: from all lookup 76501405', '1: from all lookup 76501406',
+                      '1: from all fwmark 0x1 lookup 76501406'):
+            with self.subTest(extra=extra):
+                report = completed_report()
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                for snapshot in (loss['before'], loss['fault'], loss['after'],
+                                 loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+                    snapshot['rules'].append(extra)
+                self.assert_rejected(report)
+
+    def test_helper_cannot_change_during_fault_or_leave_retired_resources(self):
+        for change in ('fault-fib', 'old-rule', 'old-fib', 'unread-old-fib', 'missing-old-fib'):
+            with self.subTest(change=change):
+                report = completed_report()
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                if change == 'fault-fib':
+                    loss['fault']['helper']['fib'].pop()
+                elif change == 'old-rule':
+                    loss['after']['rules'].append(loss['before']['helper']['rule'])
+                elif change == 'old-fib':
+                    loss['after']['previous_helper_fib'] = loss['before']['helper']['fib']
+                elif change == 'unread-old-fib':
+                    loss['after']['previous_helper_fib'] = None
+                else:
+                    loss['after'].pop('previous_helper_fib')
+                self.assert_rejected(report)
+
+    def test_calibrated_helper_never_excuses_other_rule_changes(self):
+        for snapshot in ('after', 'calibration'):
+            for change in ('removed', 'added'):
+                with self.subTest(snapshot=snapshot, change=change):
+                    report = completed_report()
+                    loss = report['provenance']['route_recovery']['rpdb_loss']
+                    target = loss['after'] if snapshot == 'after' else loss['helper_lifecycle']['after_start']
+                    if change == 'removed':
+                        target['rules'].remove('0: from all lookup local')
+                    else:
+                        target['rules'].append('18000: from all lookup 99999')
+                    self.assert_rejected(report)
+
+    def test_random_helper_table_may_be_reused_without_excusing_any_change(self):
+        report = completed_report()
+        loss = report['provenance']['route_recovery']['rpdb_loss']
+        loss['after']['rules'] = loss['before']['rules'].copy()
+        loss['after']['helper'] = copy.deepcopy(loss['before']['helper'])
+        loss['after']['previous_helper_fib'] = loss['after']['helper']['fib'].copy()
+        GATE.validate_report(report, SHA)
+        prior = loss['helper_lifecycle']['before_stop']
+        prior['rules'] = loss['before']['rules'].copy()
+        prior['helper'] = copy.deepcopy(loss['before']['helper'])
+        loss['helper_lifecycle']['stopped']['helper_table'] = prior['helper']['table']
+        GATE.validate_report(report, SHA)
+        loss['after']['helper']['fib'].pop()
+        loss['after']['previous_helper_fib'].pop()
         self.assert_rejected(report)
 
     def test_manual_restart_stale_state_or_single_failure_is_not_recovery(self):

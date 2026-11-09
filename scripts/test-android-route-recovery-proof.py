@@ -23,6 +23,7 @@ FOREIGN = ['0: from all lookup local', '32766: from all lookup main',
 LEDGER = ('schema=2\nphase=active\nboot=' + BOOT + '\ntable=2022\ninterface=magicnet0\n'
           + ''.join('rule4=' + row + '\n' for row in OWNED))
 FIB = 'default dev magicnet0 scope link\n'
+HELPER_FIB = ['local 127.0.0.1 dev eth0 scope host', 'local 127.0.0.1 dev wlan0 scope host']
 HEADER = 'sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode'
 TCP = '0: 0F02000A:15B3 0202000A:C012 01 00000000:00000000 00:00000000 00000000 0 0 77'
 
@@ -38,8 +39,13 @@ def state(status='present', failures=0, attempts=0):
 class Device:
     """In-memory command model verifies harness decisions and mutation boundaries."""
     def __init__(self):
-        self.rules = FOREIGN + OWNED
-        self.pid, self.start, self.ifindex = 421, 800, 12
+        self.helper_table = 1000001
+        self.helpers = {self.helper_table: list(HELPER_FIB)}
+        self.rules = FOREIGN + OWNED + [self.helper_rule()]
+        self.pid, self.start, self.ifindex = 420, 700, 11
+        self.running = True
+        self.reuse_helper = False
+        self.retain_old_helper_fib = False
         self.state = state()
         self.ledger = LEDGER
         self.calls = []
@@ -55,8 +61,26 @@ class Device:
         self.selected_uplink = 'wlan0'
         self.peers = 'ADBD\n/dev/null\nsocket:[77]\nTCP\n' + HEADER + '\n' + HEADER + '\n'
 
+    def helper_rule(self):
+        return '1: from all lookup ' + str(self.helper_table)
+
+    def stop(self):
+        self.rules = list((Counter(self.rules) - Counter(OWNED) - Counter([self.helper_rule()])).elements())
+        if not self.retain_old_helper_fib:
+            self.helpers.pop(self.helper_table, None)
+        self.running = False
+
+    def start_core(self):
+        self.pid += 1
+        self.start += 100
+        self.ifindex += 1
+        self.helper_table += 0 if self.reuse_helper else 1
+        self.helpers[self.helper_table] = list(HELPER_FIB)
+        self.rules += OWNED + [self.helper_rule()]
+        self.running = True
+
     def app(self):
-        captured = not Counter(OWNED) - Counter(self.rules)
+        captured = self.running and not Counter(OWNED) - Counter(self.rules)
         return dict(ok=captured, complete=True, uid=10123,
                     reason='sentinel' if captured else 'connect', accepted=1 if captured else 0,
                     elapsed_ms=10)
@@ -85,10 +109,17 @@ class Device:
             self.rules.remove(row)
             if self.restart_on_delete:
                 self.pid += 1
+        elif command == proof.CLI + ' service stop sing-box':
+            self.stop()
+        elif command == proof.CLI + ' service start sing-box':
+            self.start_core()
+        elif command == 'test ! -e /sys/class/net/magicnet0':
+            rc = 1 if self.running else 0
         elif command == proof.CLI + ' --json service status':
             ready = self.app()['ok']
             output = json.dumps(dict(schema=1, ok=True, command='service.status', data={
-                'core': {'sing_box': {'process_state': 'running'}}, 'api': {'ready': True},
+                'core': {'sing_box': {'process_state': 'running' if self.running else 'stopped'}},
+                'api': {'ready': self.running},
                 'readiness': {'dataplane': ready, 'overall': ready}}))
         elif command == proof.CLI + ' --json connectivity status':
             output = json.dumps(dict(schema=1, ok=True, command='connectivity.status',
@@ -100,14 +131,16 @@ class Device:
             if not self.app()['ok']:
                 self.state = state('missing', self.state['consecutive_failures'] + 1)
                 if self.recover and self.state['consecutive_failures'] >= 2:
-                    self.rules = FOREIGN + OWNED
+                    self.stop()
+                    self.start_core()
                     if self.foreign_on_recover:
                         self.rules.remove(FOREIGN[-1])
-                    self.pid, self.start, self.ifindex = 422, 900, 13
                     self.state = state(attempts=1)
         elif command == proof.IP + ' -4 route show table all':
             output = ''.join(f'default via 10.0.2.2 dev {name} table {name} proto static\n'
                              for name in self.uplinks) + FIB
+            output += ''.join(row.replace(' scope host', f' table {table} scope host') + '\n'
+                              for table, rows in self.helpers.items() for row in rows)
         elif command == proof.IP + ' -4 route get 192.0.2.1':
             output = (f'192.0.2.1 via 10.0.2.2 dev {self.selected_uplink} '
                       f'table {self.selected_uplink} src 10.0.2.15 uid 0\n') if self.selected_uplink else ''
@@ -145,7 +178,15 @@ class RecoveryTests(unittest.TestCase):
 
     def run_control(self, sentinel=None):
         with patch.object(proof.time, 'monotonic', lambda: self.clock), patch.object(proof.time, 'sleep', self.sleep):
+            self.calibrate()
             self.control.rpdb_loss(sentinel or self.device.app, 10123)
+
+    def calibrate(self):
+        self.control.observe_lifecycle('before_stop')
+        self.control.command(proof.CLI + ' service stop sing-box')
+        self.control.observe_lifecycle('stopped')
+        self.control.command(proof.CLI + ' service start sing-box')
+        self.control.observe_lifecycle('after_start')
 
     def test_normal_tick_proves_missing_then_real_observations_of_recovery(self):
         self.run_control()
@@ -159,12 +200,96 @@ class RecoveryTests(unittest.TestCase):
         self.assertGreaterEqual(self.clock, 60)
         self.assertFalse(any('service restart' in call or '.state/machines/' in call
                              for call in self.device.calls))
+        lifecycle = result['helper_lifecycle']
+        self.assertEqual(lifecycle['stopped']['helper_fib'], [])
+        self.assertEqual(lifecycle['after_start']['helper'], result['before']['helper'])
+        self.assertEqual(result['before']['helper'], result['fault']['helper'])
+        self.assertNotEqual(result['before']['helper']['table'], result['after']['helper']['table'])
+        self.assertEqual(result['after']['previous_helper_fib'], [])
+        first_delete = next(i for i, call in enumerate(self.device.calls) if ' rule del ' in call)
+        self.assertFalse(any(' service stop ' in call or ' service start ' in call
+                             for call in self.device.calls[first_delete:]))
+
+    def test_helper_table_number_can_be_reused_after_observed_close(self):
+        self.device.reuse_helper = True
+        self.run_control()
+        before, after = self.evidence['before'], self.evidence['after']
+        self.assertEqual(before['helper'], after['helper'])
+        self.assertEqual(after['previous_helper_fib'], after['helper']['fib'])
+        self.assertEqual(self.evidence['status'], 'verified')
+
+    def test_startup_cannot_launder_a_helper_not_removed_by_close(self):
+        self.device.retain_old_helper_fib = True
+        with self.assertRaisesRegex(RuntimeError, 'helper_not_removed_by_close'):
+            self.run_control()
+        self.assertNotIn(proof.CLI + ' service start sing-box', self.device.calls)
+
+    def test_second_or_unknown_priority_one_rule_is_not_adopted(self):
+        for row in ('1: from all lookup 777777', '1: from all fwmark 0x1 lookup 777777'):
+            self.setUp()
+            self.device.rules.append(row)
+            with self.subTest(rule=row), self.assertRaisesRegex(RuntimeError, 'helper_rule_ambiguous'):
+                self.run_control()
+            self.assertNotIn(proof.CLI + ' service stop sing-box', self.device.calls)
+
+    def test_helper_fib_must_be_exclusively_unique_interface_loopback_host_routes(self):
+        for fib in ([], ['default dev eth0'], ['local 127.0.0.2 dev eth0 scope host'],
+                    ['local 127.0.0.1 dev lo scope host'],
+                    ['local 127.0.0.1 dev magicnet0 scope host'], [HELPER_FIB[0]] * 2):
+            self.setUp()
+            self.device.helpers[self.device.helper_table] = fib
+            with self.subTest(fib=fib), self.assertRaises(RuntimeError):
+                self.run_control()
+            self.assertNotIn(proof.CLI + ' service stop sing-box', self.device.calls)
+
+    def test_empty_or_missing_local_anchor_cannot_prove_a_stopped_snapshot(self):
+        for observed in ('', '32766: from all lookup main', '0: from all lookup local\n' * 2):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                if command == proof.IP + ' -4 rule show' and not self.device.running:
+                    return subprocess.CompletedProcess(['adb'], 0, observed, '')
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(observed=observed), self.assertRaisesRegex(RuntimeError, 'local_rule_anchor'):
+                self.run_control()
+            self.assertNotIn(proof.CLI + ' service start sing-box', self.device.calls)
+
+    def test_stopped_fib_read_failure_or_empty_global_dump_is_not_an_empty_helper(self):
+        for code in (0, 1, 124):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                if command == proof.IP + ' -4 route show table all' and not self.device.running:
+                    return subprocess.CompletedProcess(['adb'], code, '', 'read unavailable' if code else '')
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(code=code), self.assertRaises(RuntimeError):
+                self.run_control()
+            self.assertNotIn(proof.CLI + ' service start sing-box', self.device.calls)
+
+    def test_recovery_cannot_leave_previous_helper_fib_behind(self):
+        def sentinel():
+            self.device.retain_old_helper_fib = True
+            return self.device.app()
+        with self.assertRaisesRegex(RuntimeError, 'previous_helper_not_removed'):
+            self.run_control(sentinel)
+
+    def test_unobserved_core_change_after_calibration_cannot_claim_helper_ownership(self):
+        self.calibrate()
+        self.device.stop()
+        self.device.start_core()
+        with patch.object(proof.time, 'monotonic', lambda: self.clock), patch.object(proof.time, 'sleep', self.sleep):
+            with self.assertRaisesRegex(RuntimeError, 'helper_ownership_not_bound_to_core'):
+                self.control.rpdb_loss(self.device.app, 10123)
+        self.assertFalse(any(' rule del ' in call for call in self.device.calls))
 
     def test_exact_zero_selector_may_delete_only_recorded_sibling(self):
         self.device.delete_sibling = True
         self.run_control()
         self.assertEqual(self.evidence['removed_rule_count'], 2)
-        self.assertEqual(self.device.rules, FOREIGN + OWNED)
+        self.assertEqual(Counter(self.device.rules) - Counter([self.device.helper_rule()]),
+                         Counter(FOREIGN + OWNED))
 
     def test_android_goto_target_survives_lookup_only_fault(self):
         # Real API 35 artifact: goto 9002 is outside the active ledger, while
@@ -187,7 +312,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(self.evidence['owned_rules'], owned)
             self.assertEqual(self.evidence['removed_rule_count'], 2)
             self.assertEqual(Counter(self.evidence['fault']['rules']),
-                             Counter(foreign + ['9002: from all nop']))
+                             Counter(foreign + ['9002: from all nop', self.evidence['before']['helper']['rule']]))
             self.assertTrue(all('lookup 2022' in call for call in self.device.calls if ' rule del ' in call))
         with self.assertRaisesRegex(RuntimeError, 'invalid_rule_snapshot'):
             proof.rules('9000: from all goto 9002 [unresolved]')
@@ -276,7 +401,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.evidence['status'], 'verified')
 
     def test_wait_reads_pending_confirmation_before_due_tick(self):
-        self.device.rules = FOREIGN + [row for row in OWNED if 'lookup 2022' not in row]
+        self.calibrate()
+        self.device.rules = FOREIGN + [row for row in OWNED if 'lookup 2022' not in row] + [self.device.helper_rule()]
         self.device.state = state('missing', failures=1)
         self.clock, self.control.last_tick = 60, 0
         observed = []

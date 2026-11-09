@@ -76,6 +76,52 @@ def route_snapshot(value):
     return rules, fib
 
 
+def route_helper(snapshot, rules):
+    helper = snapshot.get('helper')
+    require(isinstance(helper, dict) and type(helper.get('table')) is int
+            and 255 < helper['table'] <= 0x7fffffff and helper['table'] != 2022,
+            'Route helper lacks a valid auxiliary table')
+    rule = f"1: from all lookup {helper['table']}"
+    require(helper.get('rule') == rule and rules[rule] == 1
+            and sum(count for row, count in rules.items() if re.match(r'0*1:', row)) == 1,
+            'Route helper is missing, ambiguous or has unknown selectors')
+    fib = text_rows(helper.get('fib'), 'helper FIB')
+    interfaces = []
+    for row, count in fib.items():
+        match = re.fullmatch(r'local 127\.0\.0\.1(?:/32)? dev ([a-zA-Z0-9_.-]{1,15}) scope host', row)
+        require(match is not None and count == 1 and match[1] not in ('lo', 'magicnet0'),
+                'Route helper has an unknown FIB shape')
+        interfaces.append(match[1])
+    require(bool(interfaces) and len(interfaces) == len(set(interfaces)),
+            'Route helper lacks unique interface loopback routes')
+    return {'rule': rule, 'table': helper['table'], 'fib': fib}
+
+
+def validate_helper_lifecycle(loss, before, before_helper):
+    lifecycle = loss.get('helper_lifecycle')
+    require(isinstance(lifecycle, dict), 'Route helper lacks a stop/start ownership observation')
+    prior, stopped, started = (lifecycle.get(name) for name in ('before_stop', 'stopped', 'after_start'))
+    prior_rules, _ = route_snapshot(prior)
+    started_rules, _ = route_snapshot(started)
+    prior_helper = route_helper(prior, prior_rules)
+    started_helper = route_helper(started, started_rules)
+    require(matches(stopped, {'core_state': 'stopped', 'helper_table': prior_helper['table']}),
+            'Route helper ownership lacks a confirmed stopped core')
+    stopped_rules = text_rows(stopped.get('rules'), 'stopped rules')
+    require(all(rules['0: from all lookup local'] == 1
+                for rules in (prior_rules, stopped_rules, started_rules)),
+            'Route helper calibration lacks the Android local policy rule')
+    require(not any(re.match(r'0*1:', row) for row in stopped_rules)
+            and not text_rows(stopped.get('helper_fib'), 'stopped helper FIB'),
+            'Route helper survived core stop or its table was not observed empty')
+    require(started['core_start_ticks'] > prior['core_start_ticks']
+            and all(started[key] == before[key] for key in ('core_pid', 'core_start_ticks', 'tun_ifindex'))
+            and started_helper == before_helper
+            and prior_rules - Counter([prior_helper['rule']])
+            == started_rules - Counter([started_helper['rule']]),
+            'Route helper calibration changed other rules or does not describe the fault core')
+
+
 def validate_route_recovery(evidence):
     require(matches(evidence, {'schema': 1, 'status': 'verified',
                               'scope': 'disposable-android-app-uid-tun',
@@ -102,12 +148,27 @@ def validate_route_recovery(evidence):
     before_rules, before_fib = route_snapshot(before)
     fault_rules, fault_fib = route_snapshot(fault)
     after_rules, _ = route_snapshot(after)
+    before_helper = route_helper(before, before_rules)
+    fault_helper = route_helper(fault, fault_rules)
+    after_helper = route_helper(after, after_rules)
+    validate_helper_lifecycle(loss, before, before_helper)
+    require(before_helper == fault_helper, 'RPDB fault changed the core route helper')
+    previous_helper_fib = text_rows(after.get('previous_helper_fib'), 'previous helper FIB')
+    if before_helper['table'] == after_helper['table']:
+        require(after_helper == before_helper and previous_helper_fib == after_helper['fib'],
+                'Reused helper table changed without ownership evidence')
+    else:
+        require(before_helper['rule'] not in after_rules and not previous_helper_fib,
+                'Recovery left the previous helper rule or auxiliary table behind')
     owned = text_rows(loss.get('owned_rules'), 'owned rules')
     removed = before_rules - fault_rules
-    require(bool(owned) and not owned - before_rules and not fault_rules - before_rules
+    require(bool(owned) and before_helper['rule'] not in owned
+            and not owned - before_rules and not fault_rules - before_rules
             and sum(removed.values()) == loss['removed_rule_count']
             and not removed - owned and before_rules - owned == fault_rules - owned
-            and not owned - after_rules and before_rules - owned == after_rules - owned,
+            and not owned - after_rules
+            and before_rules - owned - Counter([before_helper['rule']])
+            == after_rules - owned - Counter([after_helper['rule']]),
             'RPDB snapshots do not prove removal and restoration of owned rules')
     identity = ('core_pid', 'core_start_ticks')
     require(all(before[key] == fault[key] for key in (*identity, 'tun_ifindex'))
