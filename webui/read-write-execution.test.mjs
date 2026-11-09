@@ -10,7 +10,7 @@ import * as capture from "./src/composables/operationCapture.ts";
 import * as background from "./src/composables/backgroundTasks.ts";
 import * as utils from "./src/utils.ts";
 import { ForegroundUiGate } from "./src/composables/foregroundUiGate.ts";
-import { runtimeDefaults } from "./src/composables/parsers.ts";
+import { runtimeDefaults, subscriptionDefaults } from "./src/composables/parsers.ts";
 import { connectivityDefaults, parseServiceConnectivity } from "./src/composables/connectivityStatus.ts";
 import { machineFailureText } from "./src/composables/machineStatus.ts";
 import { t } from "./src/i18n/index.ts";
@@ -37,6 +37,7 @@ function fixture(testContext, timeoutMs = 1000) {
     hasKsu: true, busy: false, queueDepth: 0, phase: "idle", output: "", notice: "",
     operationCapture: capture.emptyOperationCapture(),
     backgroundTask: { ...background.backgroundTaskDefaults, id: "operation", status: "running" },
+    subscriptions: { ...subscriptionDefaults },
     runtime: {},
   };
   const context = vm.createContext({
@@ -189,4 +190,98 @@ test("generic shell, private payload and JSON mutation requests remain serialize
     finish(started[i]);
     await operations[i];
   }
+});
+
+test("a private configuration read releases busy state after taking over a panel refresh", async t => {
+  const { context, state, started, finish } = fixture(t);
+  const refresh = context.refreshAll();
+  await setImmediate();
+  const repository = context.loadConfigRepository();
+  await setImmediate();
+  assert.equal(started.length, 2);
+  assert.match(started[0].command, /--json service status/);
+  assert.match(started[1].command, /config-editor repo get-json/);
+  finish(started[0]);
+  await refresh;
+  assert.equal(started.length, 2, "a superseded refresh must not enqueue its remaining pages");
+  assert.equal(state.busy, true, "the private read owns loading until its own completion");
+  finish(started[1], JSON.stringify({ url: "https://example.test/config", reference: "main", path: "config.json" }));
+  assert.equal((await repository).reference, "main");
+  assert.equal(state.busy, false);
+  assert.equal(state.task, "");
+  assert.doesNotMatch(state.output, /example\.test|panel refreshed/);
+});
+
+test("an older private command cannot clear a newer command's busy state or feedback", async t => {
+  const { context, state, started, finish } = fixture(t);
+  const privateRead = context.loadConfigRepository();
+  await setImmediate();
+  const newer = context.runCli("health", "newer diagnostic");
+  await setImmediate();
+  finish(started[0], JSON.stringify({ url: "private", reference: "main", path: "config.json" }));
+  await privateRead;
+  assert.equal(state.busy, true);
+  assert.equal(state.task, "newer diagnostic");
+  assert.doesNotMatch(state.output, /private output hidden/);
+  await setImmediate();
+  finish(started[1], "healthy");
+  await newer;
+  assert.equal(state.busy, false);
+  assert.match(state.output, /healthy/);
+});
+
+test("failed private payload staging releases a superseded command's busy state", async t => {
+  const { context, state, started, finish } = fixture(t);
+  let finishStaging;
+  context.stagePrivatePayloadWithCli = () => new Promise(resolve => { finishStaging = resolve; });
+  const oldCommand = context.runCli("health", "old diagnostic");
+  await setImmediate();
+  context.MODULE_DIR = "/module";
+  const staging = context.stagePrivatePayload("tmp", "config.json", "private config", "save config");
+  finish(started[0], "old result");
+  await oldCommand;
+  assert.equal(state.busy, true);
+  finishStaging(null);
+  assert.equal(await staging, null);
+  assert.equal(state.busy, false);
+  assert.equal(state.task, "");
+  assert.equal(state.phase, "error");
+  assert.doesNotMatch(state.output, /old result|private config/);
+});
+
+test("background launch releases foreground loading while device work keeps its own lock", async t => {
+  const { context, state, started, finish } = fixture(t);
+  state.backgroundTask.status = "idle";
+  const oldCommand = context.runCli("health", "old diagnostic");
+  await setImmediate();
+  const launching = context.startBackgroundCli("service restart", "restart");
+  finish(started[0], "old result");
+  await oldCommand;
+  await setImmediate();
+  assert.equal(state.busy, true);
+  const operationId = state.backgroundTask.id;
+  finish(started[1], `[accepted] id=${operationId}`);
+  await launching;
+  assert.equal(state.busy, false);
+  assert.equal(state.task, "");
+  assert.equal(state.backgroundTask.status, "running");
+  assert.equal(background.backgroundTaskBlocksLaunch(state.backgroundTask), true);
+});
+
+test("a completed repository save preserves a newer operation's feedback", async t => {
+  const { context, state, started, finish } = fixture(t);
+  context.stagePrivatePayload = async () => ({ basename: "private.json", path: "/private/payload" });
+  context.removePrivatePayload = async () => true;
+  const saving = context.saveConfigRepository({ url: "https://example.test/config", ref: "main", path: "config.json" });
+  await setImmediate();
+  const newer = context.runCli("--json service status", "newer diagnostic", false, "", "read");
+  await setImmediate();
+  const notice = state.notice;
+  finish(started[0], "saved");
+  assert.equal(await saving, true);
+  assert.equal(state.busy, true);
+  assert.equal(state.notice, notice);
+  await setImmediate();
+  finish(started[1], "healthy");
+  await newer;
 });

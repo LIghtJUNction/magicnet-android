@@ -121,6 +121,7 @@ const state = reactive({
   wifiPolicy: { ...wifiPolicyDefaults },
   topology: "",
   sysroute: "",
+  subscriptionReadStatus: "idle" as "idle" | "loading" | "ready" | "error",
   subscriptions: {
     ...subscriptionDefaults,
   } as SubscriptionState,
@@ -252,30 +253,39 @@ async function runTrackedQuietShellOutcome(
   access: ExecAccess = "write",
 ): Promise<ExecOutcome> {
   const foregroundToken = foregroundUiGate.begin();
-  const operationSequence = trackRedactedOperation(redactedPreview, label);
-  const outcome = await runShellOutcome(
-    commandBody,
-    label,
-    true,
-    redactedPreview,
-    false,
-    access,
-  );
-  if (foregroundUiGate.owns(foregroundToken)) {
-    const phase = outcome.ok ? "done" : "error";
-    const result = outcome.ok
-      ? "[info] completed; private output hidden"
-      : outcome.timedOut
-        ? "[exec-timeout] private output hidden"
-        : `[error] errno=${outcome.errno}; private output hidden`;
-    publishTrackedOperation(
-      operationSequence,
-      phase,
-      outcome.ok ? t("完成：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) }),
-      `$ ${redactedPreview}\n${result}`,
+  state.busy = true;
+  state.task = label;
+  try {
+    const operationSequence = trackRedactedOperation(redactedPreview, label);
+    const outcome = await runShellOutcome(
+      commandBody,
+      label,
+      true,
+      redactedPreview,
+      false,
+      access,
     );
+    if (foregroundUiGate.owns(foregroundToken)) {
+      const phase = outcome.ok ? "done" : "error";
+      const result = outcome.ok
+        ? "[info] completed; private output hidden"
+        : outcome.timedOut
+          ? "[exec-timeout] private output hidden"
+          : `[error] errno=${outcome.errno}; private output hidden`;
+      publishTrackedOperation(
+        operationSequence,
+        phase,
+        outcome.ok ? t("完成：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) }),
+        `$ ${redactedPreview}\n${result}`,
+      );
+    }
+    return outcome;
+  } finally {
+    if (foregroundUiGate.owns(foregroundToken)) {
+      state.busy = false;
+      state.task = "";
+    }
   }
-  return outcome;
 }
 
 async function runShell(
@@ -368,30 +378,39 @@ async function stagePrivatePayload(
   chunkSize?: number,
 ) {
   const foregroundToken = foregroundUiGate.begin();
-  const operationSequence = trackRedactedOperation(
-    redactedCliPreview(`webui payload stage ${namespace} [private-payload]`),
-    label,
-  );
-  const staged = await stagePrivatePayloadWithCli(
-    runPrivatePayloadCli,
-    MODULE_DIR,
-    namespace,
-    basename,
-    payload,
-    label,
-    chunkSize,
-  );
-  if (foregroundUiGate.owns(foregroundToken)) {
-    publishTrackedOperation(
-      operationSequence,
-      staged ? "done" : "error",
-      staged ? t("完成：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) }),
-      staged
-        ? `$ ${state.lastCommand}\n[info] completed; private output hidden`
-        : `$ ${state.lastCommand}\n[error] private payload staging failed; private output hidden`,
+  state.busy = true;
+  state.task = label;
+  try {
+    const operationSequence = trackRedactedOperation(
+      redactedCliPreview(`webui payload stage ${namespace} [private-payload]`),
+      label,
     );
+    const staged = await stagePrivatePayloadWithCli(
+      runPrivatePayloadCli,
+      MODULE_DIR,
+      namespace,
+      basename,
+      payload,
+      label,
+      chunkSize,
+    );
+    if (foregroundUiGate.owns(foregroundToken)) {
+      publishTrackedOperation(
+        operationSequence,
+        staged ? "done" : "error",
+        staged ? t("完成：{p0}", { p0: t(label) }) : t("失败：{p0}", { p0: t(label) }),
+        staged
+          ? `$ ${state.lastCommand}\n[info] completed; private output hidden`
+          : `$ ${state.lastCommand}\n[error] private payload staging failed; private output hidden`,
+      );
+    }
+    return staged;
+  } finally {
+    if (foregroundUiGate.owns(foregroundToken)) {
+      state.busy = false;
+      state.task = "";
+    }
   }
-  return staged;
 }
 
 async function removePrivatePayload(
@@ -422,105 +441,114 @@ async function startBackgroundCli(
     return text;
   }
   const foregroundToken = foregroundUiGate.begin();
-  const ownsForegroundUi = (): boolean =>
-    foregroundUiGate.owns(foregroundToken);
-  const redactOutput = Boolean(previewOverride);
-  const subscriptionTask = isSubscriptionBackgroundArgs(lifecycleArgs);
-  const subscriptionBaselineKnown = subscriptionTask
-    ? await refreshSubs(true, foregroundToken, false)
-    : false;
-  if (!ownsForegroundUi()) {
-    return `[warning] ${label} superseded by a newer foreground operation`;
-  }
-  if (subscriptionTask && !subscriptionBaselineKnown) {
-    const text = t("[error] unavailable: 读取订阅基线失败，任务未启动。请确认设备连接后重试。");
-    state.phase = "error";
-    state.notice = t("未执行：{p0}", { p0: t(label) });
-    state.output = text;
-    return text;
-  }
-  const operationId = createBackgroundOperationId();
-  const log = backgroundLogPath(label, operationId);
-  stopBackgroundLogFollow();
-  const startedAt = Date.now();
-  state.backgroundTask = {
-    id: operationId,
-    label,
-    args: displayArgs,
-    log: redactOutput ? "" : log,
-    startedAt,
-    updatedAt: startedAt,
-    finishedAt: 0,
-    status: "running",
-    subscriptionBaselineKnown,
-    subscriptionBaselineAttemptEpoch: state.subscriptions.lastAttemptEpoch,
-    subscriptionBaselineGenerationId: state.subscriptions.lastGenerationId,
-  };
-  const operationSequence = trackRedactedOperation(
-    previewOverride || redactedCliPreview(displayArgs),
-    label,
-  );
-  await nextTick();
-  await nextFrame();
-  const command = backgroundLaunchCommand(
-    args,
-    label,
-    log,
-    operationId,
-  );
-  const outcome = await runShellOutcome(
-    command,
-    t("投递 {p0}", { p0: t(label) }),
-    true,
-    previewOverride,
-  );
-  if (state.backgroundTask.id !== operationId) return outcome.text;
-  const accepted =
-    outcome.ok && backgroundAccepted(outcome.stdout, operationId);
-  if (accepted || outcome.timedOut) {
-    if (outcome.timedOut && ownsForegroundUi()) {
-      const output = redactOutput
-        ? t("{p0} 的投递确认超时；这不代表设备侧任务失败。正在继续跟踪安全状态。", { p0: t(label) })
-        : t("{p0} 的投递确认超时；这不代表设备侧任务失败。正在继续跟踪后台日志。", { p0: t(label) });
-      publishTrackedOperation(
-        operationSequence,
-        "running",
-        t("投递确认超时，继续对账：{p0}", { p0: t(label) }),
-        output,
-      );
+  state.busy = true;
+  state.task = label;
+  try {
+    const ownsForegroundUi = (): boolean =>
+      foregroundUiGate.owns(foregroundToken);
+    const redactOutput = Boolean(previewOverride);
+    const subscriptionTask = isSubscriptionBackgroundArgs(lifecycleArgs);
+    const subscriptionBaselineKnown = subscriptionTask
+      ? await refreshSubs(true, foregroundToken, false)
+      : false;
+    if (!ownsForegroundUi()) {
+      return `[warning] ${label} superseded by a newer foreground operation`;
     }
-    followBackgroundLogs(
-      log,
+    if (subscriptionTask && !subscriptionBaselineKnown) {
+      const text = t("[error] unavailable: 读取订阅基线失败，任务未启动。请确认设备连接后重试。");
+      state.phase = "error";
+      state.notice = t("未执行：{p0}", { p0: t(label) });
+      state.output = text;
+      return text;
+    }
+    const operationId = createBackgroundOperationId();
+    const log = backgroundLogPath(label, operationId);
+    stopBackgroundLogFollow();
+    const startedAt = Date.now();
+    state.backgroundTask = {
+      id: operationId,
       label,
-      lifecycleArgs,
-      operationId,
-      operationSequence,
-      foregroundToken,
-      0,
-      redactOutput,
+      args: displayArgs,
+      log: redactOutput ? "" : log,
+      startedAt,
+      updatedAt: startedAt,
+      finishedAt: 0,
+      status: "running",
+      subscriptionBaselineKnown,
+      subscriptionBaselineAttemptEpoch: state.subscriptions.lastAttemptEpoch,
+      subscriptionBaselineGenerationId: state.subscriptions.lastGenerationId,
+    };
+    const operationSequence = trackRedactedOperation(
+      previewOverride || redactedCliPreview(displayArgs),
+      label,
     );
-  } else {
-    state.backgroundTask.status = "error";
-    state.backgroundTask.updatedAt = Date.now();
-    state.backgroundTask.finishedAt = state.backgroundTask.updatedAt;
-    const output = redactOutput
-      ? t("{p0} 未投递到后台；私有命令详情已隐藏。请检查设备状态后重试。", { p0: t(label) })
-      : t("{p0} 未投递到后台。\n\n{p1}", { p0: t(label), p1: outcome.text || "[error] accepted marker missing" });
-    if (ownsForegroundUi()) {
-      publishTrackedOperation(
+    await nextTick();
+    await nextFrame();
+    const command = backgroundLaunchCommand(
+      args,
+      label,
+      log,
+      operationId,
+    );
+    const outcome = await runShellOutcome(
+      command,
+      t("投递 {p0}", { p0: t(label) }),
+      true,
+      previewOverride,
+    );
+    if (state.backgroundTask.id !== operationId) return outcome.text;
+    const accepted =
+      outcome.ok && backgroundAccepted(outcome.stdout, operationId);
+    if (accepted || outcome.timedOut) {
+      if (outcome.timedOut && ownsForegroundUi()) {
+        const output = redactOutput
+          ? t("{p0} 的投递确认超时；这不代表设备侧任务失败。正在继续跟踪安全状态。", { p0: t(label) })
+          : t("{p0} 的投递确认超时；这不代表设备侧任务失败。正在继续跟踪后台日志。", { p0: t(label) });
+        publishTrackedOperation(
+          operationSequence,
+          "running",
+          t("投递确认超时，继续对账：{p0}", { p0: t(label) }),
+          output,
+        );
+      }
+      followBackgroundLogs(
+        log,
+        label,
+        lifecycleArgs,
+        operationId,
         operationSequence,
-        "error",
-        t("投递失败：{p0}", { p0: t(label) }),
-        output,
+        foregroundToken,
+        0,
+        redactOutput,
       );
+    } else {
+      state.backgroundTask.status = "error";
+      state.backgroundTask.updatedAt = Date.now();
+      state.backgroundTask.finishedAt = state.backgroundTask.updatedAt;
+      const output = redactOutput
+        ? t("{p0} 未投递到后台；私有命令详情已隐藏。请检查设备状态后重试。", { p0: t(label) })
+        : t("{p0} 未投递到后台。\n\n{p1}", { p0: t(label), p1: outcome.text || "[error] accepted marker missing" });
+      if (ownsForegroundUi()) {
+        publishTrackedOperation(
+          operationSequence,
+          "error",
+          t("投递失败：{p0}", { p0: t(label) }),
+          output,
+        );
+      }
+    }
+    if (outcome.timedOut) {
+      return `[warning] background launch confirmation timed out; reconciliation continues in ${log}`;
+    }
+    return accepted
+      ? outcome.text
+      : `[error] errno=-1 background accepted marker missing`;
+  } finally {
+    if (foregroundUiGate.owns(foregroundToken)) {
+      state.busy = false;
+      state.task = "";
     }
   }
-  if (outcome.timedOut) {
-    return `[warning] background launch confirmation timed out; reconciliation continues in ${log}`;
-  }
-  return accepted
-    ? outcome.text
-    : `[error] errno=-1 background accepted marker missing`;
 }
 
 const startPrivateBackgroundCli: (
@@ -708,12 +736,12 @@ async function refreshAll(): Promise<void> {
       [t("运行诊断"), () => refreshHealth(true, foregroundToken)],
     ];
     for (const [label, step] of steps) {
-      if (ownsForegroundUi()) {
-        state.task = label;
-        state.notice = label;
-      }
+      if (!ownsForegroundUi()) return;
+      state.task = label;
+      state.notice = label;
       await nextTick();
       await nextFrame();
+      if (!ownsForegroundUi()) return;
       if (!(await step())) failed.push(label);
     }
     if (failed.length && ownsForegroundUi()) {
@@ -822,6 +850,7 @@ async function refreshSubs(
   reportFailure = true,
 ): Promise<boolean> {
   const observation = ++subscriptionReadSequence;
+  if (state.subscriptionReadStatus !== "ready") state.subscriptionReadStatus = "loading";
   // Inspector payloads contain credentials. Quiet reads never enter command
   // capture, reactive output or diagnostics; show only structured failure codes.
   const command = startForegroundCommand("--json sub inspect", "读取订阅状态", true, "", foregroundToken, "read");
@@ -831,14 +860,13 @@ async function refreshSubs(
   const parsed = execFailed(text) ? null : parseMachineSubscription(text);
   if (observation !== subscriptionReadSequence) return false;
   if (!parsed) {
-    if (canUpdateRefreshUi(uiToken, allowBusy)) {
-      Object.assign(state.subscriptions, { updateRunning: false, updateLockOwner: "unknown",
-        lastResult: "unknown", lastReason: "none", sourceUsage: [], scheduleRunning: false, scheduleOwner: "unknown", scheduleOwnerValid: false });
-      if (reportFailure) {
-        state.phase = "error";
-        state.notice = t("订阅刷新不完整");
-        state.output = machineFailureText(text);
-      }
+    state.subscriptionReadStatus = "error";
+    Object.assign(state.subscriptions, { updateRunning: false, updateLockOwner: "unknown",
+      lastResult: "unknown", lastReason: "none", sourceUsage: [], scheduleRunning: false, scheduleOwner: "unknown", scheduleOwnerValid: false });
+    if (reportFailure && canUpdateRefreshUi(uiToken, allowBusy)) {
+      state.phase = "error";
+      state.notice = t("订阅刷新不完整");
+      state.output = machineFailureText(text);
     }
     return false;
   }
@@ -846,6 +874,7 @@ async function refreshSubs(
   // foreground button. Otherwise polling may finish but leave the old sources
   // on screen whenever a different page/action has taken the output token.
   state.subscriptions = parsed;
+  state.subscriptionReadStatus = "ready";
   return true;
 }
 
@@ -1187,13 +1216,15 @@ async function saveConfigRepository(repository: {
   );
   if (!staged) return false;
   try {
-    const outcome = await runPrivateCli(
+    const command = runPrivateCli(
       `config-editor repo set-file ${shellQuote(staged.path)}`,
       t("保存配置仓库"),
       "config-editor repo set-file [private-payload]",
     );
+    const foregroundToken = foregroundUiGate.current();
+    const outcome = await command;
     if (!outcome.ok) return false;
-    state.notice = t("配置仓库已保存");
+    if (foregroundUiGate.owns(foregroundToken)) state.notice = t("配置仓库已保存");
     return true;
   } finally {
     await removePrivatePayload("tmp", staged.basename, t("配置仓库私有载荷"));

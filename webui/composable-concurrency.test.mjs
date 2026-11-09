@@ -68,6 +68,7 @@ function backgroundFixture() {
   const delays = [];
   const state = {
     backgroundTask: { id: "operation", status: "running" },
+    subscriptionReadStatus: "idle",
     subscriptions: { ...subscriptionDefaults }, runtime: { ...runtimeDefaults },
     output: "new foreground output", notice: "new notice", phase: "done",
   };
@@ -467,4 +468,55 @@ test("a late pre-removal inspector cannot resurrect removed subscription URLs", 
   assert.equal(await before, false);
   assert.equal(state.subscriptions.configuredCount, 0);
   assert.equal(state.subscriptions.singBoxUrls.length, 0);
+});
+
+test("subscription readiness distinguishes an unread empty default from a verified empty source list", async () => {
+  const { context, state } = backgroundFixture();
+  let resolve;
+  context.runCli = () => new Promise(done => { resolve = done; });
+  assert.equal(state.subscriptionReadStatus, "idle");
+  const reading = context.refreshSubs(true);
+  assert.equal(state.subscriptionReadStatus, "loading");
+  resolve(subscriptionSnapshot({ source: { mode: "remote_url", configured_count: 0 }, configuration: { sing_box_urls: [], user_agent: "", filters: [] } }));
+  assert.equal(await reading, true);
+  assert.equal(state.subscriptionReadStatus, "ready");
+  assert.equal(state.subscriptions.configuredCount, 0);
+});
+
+test("subscription failures invalidate readiness even while another foreground action owns feedback", async () => {
+  const { context, state, supersede } = backgroundFixture();
+  state.subscriptionReadStatus = "ready";
+  state.subscriptions.singBoxUrls = ["https://private.example/sub"];
+  let resolve;
+  context.runCli = () => new Promise(done => { resolve = done; });
+  const reading = context.refreshSubs(true);
+  assert.equal(state.subscriptionReadStatus, "ready", "routine polling must not flicker available controls");
+  supersede();
+  state.busy = true;
+  resolve("[error] errno=1 private raw failure");
+  assert.equal(await reading, false);
+  assert.equal(state.subscriptionReadStatus, "error");
+  assert.deepEqual(Array.from(state.subscriptions.singBoxUrls), ["https://private.example/sub"]);
+  assert.equal(state.subscriptions.lastResult, "unknown");
+  assert.equal(state.output, "new foreground output");
+  assert.equal(state.notice, "new notice");
+  const retrying = context.refreshSubs(true);
+  assert.equal(state.subscriptionReadStatus, "loading");
+  resolve(subscriptionSnapshot());
+  assert.equal(await retrying, true);
+  assert.equal(state.subscriptionReadStatus, "ready");
+});
+
+test("stale subscription failures cannot invalidate a newer successful observation", async () => {
+  const { context, state } = backgroundFixture();
+  const pending = [];
+  context.runCli = () => new Promise(resolve => pending.push(resolve));
+  const before = context.refreshSubs(true);
+  const after = context.refreshSubs(true);
+  pending[1](subscriptionSnapshot());
+  assert.equal(await after, true);
+  assert.equal(state.subscriptionReadStatus, "ready");
+  pending[0]("[error] errno=1 older request failed");
+  assert.equal(await before, false);
+  assert.equal(state.subscriptionReadStatus, "ready");
 });
