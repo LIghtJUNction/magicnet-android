@@ -70,7 +70,16 @@ async function mount(page, failure = "") {
     };
   }, { failure, authKey });
   await page.goto("/#/tailscale", { waitUntil: "networkidle" });
-  await expect(page.getByLabel("设备名称", { exact: true })).toBeEnabled();
+  if (failure === "status") {
+    await expect(page.getByRole("heading", { name: "连接状态未确认", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "读取连接状态", exact: true })).toBeEnabled();
+    await expect.poll(() => page.evaluate(async () => {
+      const { state } = (await import("/src/composables/useMagicNet.ts")).useMagicNet();
+      return window.__tailscale.statusReads > 0 && !state.busy && state.queueDepth === 0;
+    })).toBe(true);
+  } else {
+    await expect(page.getByLabel("设备名称", { exact: true })).toBeEnabled();
+  }
 }
 
 async function fill(page) {
@@ -107,7 +116,8 @@ test("failed status stays unknown and blocks setup until an actual reread succee
   await mount(page, "status");
   await expect(page.getByRole("heading", { name: "连接状态未确认", exact: true })).toBeVisible();
   const connect = page.getByRole("button", { name: "登录 Tailscale 并自动配置", exact: true });
-  await expect(connect).toBeDisabled();
+  await expect(page.locator(".tailscale-setup")).toHaveCount(0);
+  await expect(connect).toHaveCount(0);
   expect(await page.evaluate(() => window.__tailscale.saves + window.__tailscale.restarts)).toBe(0);
   await page.evaluate(() => { window.__tailscale.failure = ""; });
   await page.getByRole("button", { name: "读取连接状态", exact: true }).click();
