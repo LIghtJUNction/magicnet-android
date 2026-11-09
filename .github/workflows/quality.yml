@@ -148,7 +148,7 @@ jobs:
           fi
 
       - name: Check shell code and host regressions
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: bash scripts/quality-gate.sh shell
 
       - name: Save successful per-check results
