@@ -201,13 +201,11 @@ pub(crate) fn service_cmd(app: &App, args: &[String]) -> Result<(), String> {
         "stop" => stop_service(app),
         "restart" => restart(app, args.get(1).map(String::as_str).unwrap_or("current")),
         "toggle" => match args.get(1).map(String::as_str).unwrap_or_default() {
-            "sing-box" | "singbox" => {
-                if singbox_pid_summary(app) == "stopped" {
-                    start_service(app)
-                } else {
-                    stop_service(app)
-                }
-            }
+            "sing-box" | "singbox" => match crate::process::process_state(&singbox_pid_summary(app)) {
+                "stopped" => start_service(app),
+                "running" => stop_service(app),
+                _ => Err("service state is unknown; refresh status before toggling".to_string()),
+            },
             _ => Err("Usage: cli service toggle sing-box".to_string()),
         },
         _ => Err("Usage: cli service {status|start|ensure|stop|restart [current|sing-box]|toggle sing-box|logs [core] [lines]}".to_string()),
@@ -1213,28 +1211,45 @@ fn rollback_transparent_transaction(
         .map_err(|error| format!("finish transparent rollback: {error}"))
 }
 
-fn transparent_status(app: &App) -> Result<(), String> {
-    let configured = read_transparent_mode(app)?.mode;
-    let config = fs::read_to_string(app.moddir.join(TRANSPARENT_CONFIG))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-    let inbound = config
-        .as_ref()
-        .and_then(|value| value.get("inbounds"))
-        .and_then(Value::as_array)
-        .and_then(|inbounds| {
-            inbounds
-                .iter()
-                .find(|inbound| inbound.get("tag").and_then(Value::as_str) == Some("tun-in"))
-        });
-    let effective = match inbound
+/// An effective mode requires one unambiguous managed inbound in the config.
+pub(crate) fn transparent_inbound(config: Option<&Value>) -> Option<&Value> {
+    let mut inbounds = config?
+        .get("inbounds")?
+        .as_array()?
+        .iter()
+        .filter(|inbound| inbound.get("tag").and_then(Value::as_str) == Some("tun-in"));
+    let inbound = inbounds.next()?;
+    inbounds.next().is_none().then_some(inbound)
+}
+
+pub(crate) fn transparent_effective_modes(inbound: Option<&Value>) -> (&str, &str) {
+    match inbound
         .and_then(|value| value.get("type"))
         .and_then(Value::as_str)
     {
-        Some("tun") => "tun",
-        Some("ebpf") => "ebpf",
-        _ => configured.as_str(),
-    };
+        Some("tun") => ("tun", "tun"),
+        Some("ebpf") => {
+            let mode = match inbound.and_then(|value| value.get("mode")) {
+                None => "local",
+                Some(Value::String(mode))
+                    if matches!(mode.as_str(), "local" | "shared" | "hybrid") =>
+                {
+                    mode
+                }
+                _ => "unknown",
+            };
+            ("ebpf", mode)
+        }
+        _ => ("unknown", "unknown"),
+    }
+}
+
+fn transparent_status(app: &App) -> Result<(), String> {
+    let configured = read_transparent_mode(app)?.mode;
+    let config =
+        crate::utils::read_json_file_bounded(&app.moddir.join(TRANSPARENT_CONFIG), 4 * 1024 * 1024);
+    let inbound = transparent_inbound(config.as_ref());
+    let (effective, ebpf_mode) = transparent_effective_modes(inbound);
     let pids = owned_singbox_pids(app)?;
     let running = !pids.is_empty();
     let pid = if running {
@@ -1242,10 +1257,6 @@ fn transparent_status(app: &App) -> Result<(), String> {
     } else {
         "none".to_string()
     };
-    let ebpf_mode = inbound
-        .and_then(|value| value.get("mode"))
-        .and_then(Value::as_str)
-        .unwrap_or("local");
     let shared_interface_values = inbound
         .and_then(|value| value.get("shared"))
         .and_then(|value| value.get("interface"))
@@ -1318,7 +1329,9 @@ fn transparent_status(app: &App) -> Result<(), String> {
             })
         })
         .flatten();
-    let local_cgroup = if effective != "ebpf" || !local_expected {
+    let local_cgroup = if effective == "unknown" || ebpf_mode == "unknown" {
+        "unknown"
+    } else if effective != "ebpf" || !local_expected {
         "inactive"
     } else if !running {
         "configured"
@@ -1332,7 +1345,9 @@ fn transparent_status(app: &App) -> Result<(), String> {
     } else {
         "unknown"
     };
-    let shared_tc = if effective != "ebpf" {
+    let shared_tc = if effective == "unknown" || ebpf_mode == "unknown" {
+        "unknown"
+    } else if effective != "ebpf" {
         "inactive"
     } else if !shared_expected {
         if app.moddir.join(TRANSPARENT_SHARED_PENDING).is_file() {
@@ -1390,7 +1405,7 @@ fn transparent_status(app: &App) -> Result<(), String> {
             }
         })
         .unwrap_or_else(|| "none".to_string());
-    let transition = transparent_transition_phase(app).unwrap_or_else(|| "idle".to_string());
+    let transition = crate::state::transparent_phase(app);
 
     println!("mode={effective}");
     println!("configured_mode={configured}");

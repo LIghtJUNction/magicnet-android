@@ -34,7 +34,7 @@ pub(crate) fn api_cmd(app: &App, args: &[String]) -> Result<(), String> {
         "select" => select_proxy(
             app,
             args.get(1).map(String::as_str).unwrap_or_default(),
-            &args[2..].join(" "),
+            &args.get(2..).unwrap_or_default().join(" "),
         ),
         "replay" => {
             sync_persisted_hotspot_offload(app);

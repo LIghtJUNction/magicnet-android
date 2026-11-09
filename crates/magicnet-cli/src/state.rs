@@ -287,20 +287,21 @@ fn transparent_record(app: &App, config: Option<&Value>) -> StateRecord {
             _ => "invalid".to_string(),
         })
         .unwrap_or_else(|| "tun".to_string());
-    let (effective_type, effective_mode, shared_interfaces) =
-        effective_transparent(config, &configured);
+    let (effective_type, effective_mode, shared_interfaces) = effective_transparent(config);
     let phase = transparent_phase(app);
     let transaction = app.moddir.join(TRANSPARENT_TRANSACTION).is_dir();
-    let capability = if effective_type == "ebpf" {
-        read_token(app.moddir.join(TRANSPARENT_CAPABILITY), "unknown")
-    } else {
-        "not_required".to_string()
+    let capability = match effective_type.as_str() {
+        "ebpf" => read_token(app.moddir.join(TRANSPARENT_CAPABILITY), "unknown"),
+        "tun" => "not_required".to_string(),
+        _ => "unknown".to_string(),
     };
     StateRecord::new(Domain::Transparent)
         .field(
             "state",
             if transaction {
                 "transitioning"
+            } else if effective_type == "unknown" || effective_mode == "unknown" {
+                "unknown"
             } else {
                 "stable"
             },
@@ -322,49 +323,44 @@ fn transparent_record(app: &App, config: Option<&Value>) -> StateRecord {
         )
 }
 
-fn effective_transparent(config: Option<&Value>, configured: &str) -> (String, String, usize) {
-    let Some(config) = config else {
-        return (configured.to_string(), configured.to_string(), 0);
-    };
-    let inbound = config
-        .get("inbounds")
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items
-                .iter()
-                .find(|item| item.get("tag").and_then(Value::as_str) == Some("tun-in"))
-        });
-    let effective_type = inbound
-        .and_then(|item| item.get("type"))
-        .and_then(Value::as_str)
-        .filter(|value| matches!(*value, "tun" | "ebpf"))
-        .unwrap_or(configured)
-        .to_string();
-    let effective_mode = if effective_type == "ebpf" {
-        inbound
-            .and_then(|item| item.get("mode"))
-            .and_then(Value::as_str)
-            .filter(|value| matches!(*value, "local" | "shared" | "hybrid"))
-            .unwrap_or("local")
-            .to_string()
-    } else {
-        "tun".to_string()
-    };
+fn effective_transparent(config: Option<&Value>) -> (String, String, usize) {
+    let inbound = crate::service::transparent_inbound(config);
+    let (effective_type, effective_mode) = crate::service::transparent_effective_modes(inbound);
     let shared_interfaces = inbound
         .and_then(|item| item.get("shared"))
         .and_then(|value| value.get("interface"))
         .and_then(Value::as_array)
         .map(|values| values.iter().filter_map(Value::as_str).count())
         .unwrap_or(0);
-    (effective_type, effective_mode, shared_interfaces)
+    (
+        effective_type.to_string(),
+        effective_mode.to_string(),
+        shared_interfaces,
+    )
 }
 
-fn transparent_phase(app: &App) -> String {
+pub(crate) fn transparent_phase(app: &App) -> String {
     let journal = app.moddir.join(TRANSPARENT_TRANSACTION);
-    if !journal.is_dir() {
-        return "idle".to_string();
+    match fs::symlink_metadata(&journal) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return "idle".to_string(),
+        Ok(metadata) if metadata.is_dir() => {}
+        _ => return "unknown".to_string(),
     }
-    read_token(journal.join("phase"), "unknown")
+    crate::utils::read_module_text_bounded(
+        app,
+        Path::new(".state/transparent-transaction/phase"),
+        128,
+    )
+    .ok()
+    .flatten()
+    .map(|phase| phase.trim().to_string())
+    .filter(|phase| {
+        !phase.is_empty()
+            && phase
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+    })
+    .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn subscription_record(app: &App) -> StateRecord {

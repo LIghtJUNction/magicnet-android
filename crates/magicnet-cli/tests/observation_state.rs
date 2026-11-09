@@ -36,6 +36,125 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn incomplete_proxy_selection_returns_usage_instead_of_panicking() {
+    let fixture = Fixture::new();
+    for args in [vec!["api", "select"], vec!["api", "select", "proxy"]] {
+        let output = fixture.run(&args);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Usage: cli api select"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("panicked"));
+        assert!(!fixture
+            .0
+            .join(".config/magicnet/selector-selections.json")
+            .exists());
+    }
+}
+
+#[test]
+fn unknown_service_toggle_keeps_supervisor_evidence_untouched() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let pidof = fixture.0.join("pidof");
+    fs::write(&pidof, "#!/bin/sh\nexit 2\n").unwrap();
+    fs::set_permissions(&pidof, fs::Permissions::from_mode(0o755)).unwrap();
+    let marker = fixture.0.join(".state/watchdog/magicnet-kernel.pid");
+    fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    fs::write(&marker, "99999999\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_magicnet-cli"))
+        .env("MODDIR", &fixture.0)
+        .env("PATH", &fixture.0)
+        .args(["service", "toggle", "sing-box"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("service state is unknown"));
+    assert_eq!(fs::read_to_string(marker).unwrap(), "99999999\n");
+}
+
+#[test]
+fn transparent_observers_require_effective_configuration_and_preserve_pending_journals() {
+    let fixture = Fixture::new();
+    let config = fixture.0.join(".config/sing-box/config.json");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let intent = fixture.0.join(".config/magicnet/transparent-mode.conf");
+    fs::create_dir_all(intent.parent().unwrap()).unwrap();
+    fs::write(&intent, "MAGICNET_TRANSPARENT_MODE=ebpf\n").unwrap();
+    let status = || {
+        let output = fixture.run(&["--json", "transparent", "status"]);
+        assert!(output.status.success(), "{:?}", output.stderr);
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["data"].clone()
+    };
+    for (text, expected_type, expected_mode) in [
+        (None, "unknown", "unknown"),
+        (Some("invalid json"), "unknown", "unknown"),
+        (Some("{}"), "unknown", "unknown"),
+        (
+            Some(r#"{"inbounds":[{"tag":"tun-in","type":"redirect"}]}"#),
+            "unknown",
+            "unknown",
+        ),
+        (
+            Some(r#"{"inbounds":[{"tag":"tun-in","type":"tun"},{"tag":"tun-in","type":"ebpf"}]}"#),
+            "unknown",
+            "unknown",
+        ),
+        (
+            Some(r#"{"inbounds":[{"tag":"tun-in","type":"ebpf","mode":"invalid"}]}"#),
+            "ebpf",
+            "unknown",
+        ),
+        (
+            Some(r#"{"inbounds":[{"tag":"tun-in","type":"ebpf"}]}"#),
+            "ebpf",
+            "local",
+        ),
+        (
+            Some(r#"{"inbounds":[{"tag":"tun-in","type":"tun"}]}"#),
+            "tun",
+            "tun",
+        ),
+    ] {
+        if let Some(text) = text {
+            fs::write(&config, text).unwrap();
+        }
+        let observed = status();
+        assert_eq!(observed["configured_mode"], "ebpf");
+        assert_eq!(observed["effective_type"], expected_type);
+        assert_eq!(observed["effective_mode"], expected_mode);
+        let output = fixture.run(&["state", "reconcile"]);
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let canonical =
+            fs::read_to_string(fixture.0.join(".state/machines/transparent.state")).unwrap();
+        assert!(canonical
+            .lines()
+            .any(|line| line == format!("effective_type={expected_type}")));
+        assert!(canonical
+            .lines()
+            .any(|line| line == format!("effective_mode={expected_mode}")));
+    }
+    assert_eq!(status()["transition"], "idle");
+    let journal = fixture.0.join(".state/transparent-transaction");
+    fs::create_dir(&journal).unwrap();
+    assert_eq!(status()["transition"], "unknown");
+    for (phase, expected) in [
+        ("candidate-starting\n", "candidate-starting"),
+        ("\n", "unknown"),
+        ("provider token\n", "unknown"),
+    ] {
+        fs::write(journal.join("phase"), phase).unwrap();
+        assert_eq!(status()["transition"], expected);
+        let output = fixture.run(&["state", "reconcile"]);
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let canonical =
+            fs::read_to_string(fixture.0.join(".state/machines/transparent.state")).unwrap();
+        assert!(canonical
+            .lines()
+            .any(|line| line == format!("phase={expected}")));
+        assert!(canonical.contains("transaction_active=1\n"));
+    }
+}
+
+#[test]
 fn subscription_machine_reads_are_structured_and_do_not_create_configuration() {
     for action in ["status", "inspect"] {
         let fixture = Fixture::new();

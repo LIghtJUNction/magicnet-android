@@ -113,6 +113,14 @@ A running process is not proof that the proxy is ready.
 
 `readiness.overall` is true only when both the API and dataplane are ready. Unknown evidence stays `null`; it is never promoted to ready.
 
+Transparent `effective_type` and `effective_mode` come from the unique `tun-in`
+inbound in the materialized configuration. Missing, unreadable, invalid or
+ambiguous input reports `unknown`; configured intent does not fill that gap.
+A valid eBPF inbound without `mode` uses the core's `local` default. A present
+transition journal without a readable phase reports `transition=unknown`;
+`idle` requires the journal to be absent. Canonical state files use the same
+mode and phase observations.
+
 The `transparent_plane_readiness` capability adds `transparent.local_ready` and
 `transparent.shared_ready` to service/transparent snapshots. These are separate
 attachment proofs, with `null` for an inactive or unobserved plane. In hybrid mode,

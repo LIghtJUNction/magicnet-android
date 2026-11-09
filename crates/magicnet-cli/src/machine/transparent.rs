@@ -11,7 +11,6 @@ use crate::{
 const CONFIG: &str = ".config/sing-box/config.json";
 const CAPABILITY: &str = ".state/transparent-ebpf/capability";
 const SHARED_PENDING: &str = ".state/transparent-ebpf/shared.pending";
-const TRANSACTION: &str = ".state/transparent-transaction";
 const RECENT_ERROR: &str = ".state/transparent-recent-error";
 
 pub(super) struct Status {
@@ -60,58 +59,38 @@ fn snapshot_with_probe(
     configured_mode: &str,
     tun_probe: impl FnOnce(Option<&Value>) -> Option<bool>,
 ) -> Status {
-    let config = read_regular_text(&app.moddir.join(CONFIG), 4 * 1024 * 1024)
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-    let inbound = config
-        .as_ref()
-        .and_then(|value| value.get("inbounds"))
-        .and_then(Value::as_array)
-        .and_then(|inbounds| {
-            let mut managed = inbounds
-                .iter()
-                .filter(|inbound| inbound.get("tag").and_then(Value::as_str) == Some("tun-in"));
-            let inbound = managed.next()?;
-            if managed.next().is_some() {
-                None
-            } else {
-                Some(inbound)
-            }
-        });
-    let effective_type = match inbound
-        .and_then(|value| value.get("type"))
-        .and_then(Value::as_str)
-    {
-        Some("tun") => "tun",
-        Some("ebpf") => "ebpf",
-        _ => configured_mode,
-    }
-    .to_string();
-    let effective_mode = if effective_type == "ebpf" {
-        inbound
-            .and_then(|value| value.get("mode"))
-            .and_then(Value::as_str)
-            .filter(|mode| matches!(*mode, "local" | "shared" | "hybrid"))
-            .unwrap_or("local")
-            .to_string()
-    } else {
-        "tun".to_string()
-    };
-    let transition = transaction_phase(app).unwrap_or_else(|| "idle".to_string());
+    let config = crate::utils::read_json_file_bounded(&app.moddir.join(CONFIG), 4 * 1024 * 1024);
+    let inbound = crate::service::transparent_inbound(config.as_ref());
+    let (effective_type, effective_mode) = crate::service::transparent_effective_modes(inbound);
+    let effective_type = effective_type.to_string();
+    let effective_mode = effective_mode.to_string();
+    let transition = crate::state::transparent_phase(app);
     let has_recent_error = regular_file_nonempty(&app.moddir.join(RECENT_ERROR));
 
-    if effective_type != "ebpf" {
+    if effective_type != "ebpf" || effective_mode == "unknown" {
         let ready = match process_state {
-            "running" => tun_probe(inbound),
+            "running" if effective_type == "tun" => tun_probe(inbound),
             "stopped" => Some(false),
             _ => None,
+        };
+        let capability = if effective_type == "tun" {
+            "not_required"
+        } else {
+            "unknown"
+        }
+        .to_string();
+        let attachment = if effective_type == "tun" {
+            "inactive"
+        } else {
+            "unknown"
         };
         return Status {
             configured_mode: configured_mode.to_string(),
             effective_type,
             effective_mode,
-            capability: "not_required".to_string(),
-            local_cgroup: "inactive",
-            shared_tc: "inactive",
+            capability,
+            local_cgroup: attachment,
+            shared_tc: attachment,
             shared_interface_count: 0,
             transition,
             has_recent_error,
@@ -324,20 +303,6 @@ fn network_values(inbound: Option<&Value>) -> Vec<String> {
     }
 }
 
-fn transaction_phase(app: &App) -> Option<String> {
-    let value = read_regular_text(&app.moddir.join(TRANSACTION).join("phase"), 128)?;
-    let value = value.trim();
-    if !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        Some(value.to_string())
-    } else {
-        None
-    }
-}
-
 fn read_regular_text(path: &Path, max_bytes: u64) -> Option<String> {
     let metadata = fs::symlink_metadata(path).ok()?;
     if !metadata.file_type().is_file() || metadata.len() > max_bytes {
@@ -388,12 +353,39 @@ mod tests {
     fn tun_readiness_requires_interface_evidence_only_for_a_running_core() {
         let fixture = crate::test_support::temp_app();
         let app = crate::App::for_test(fixture.moddir.clone());
+        std::fs::create_dir_all(app.moddir.join(".config/sing-box")).unwrap();
+        std::fs::write(
+            app.moddir.join(".config/sing-box/config.json"),
+            r#"{"inbounds":[{"tag":"tun-in","type":"tun","interface_name":"magicnet0"}]}"#,
+        )
+        .unwrap();
         let status = super::snapshot_with_probe(&app, "running", "tun", |_| Some(false));
         assert_eq!(status.dataplane_ready, Some(false));
         for (state, ready) in [("stopped", Some(false)), ("unknown", None)] {
             let status = super::snapshot_with_probe(&app, state, "tun", |_| {
                 panic!("must not probe the interface without a running core")
             });
+            assert_eq!(status.dataplane_ready, ready);
+        }
+    }
+
+    #[test]
+    fn unknown_effective_config_never_probes_or_claims_a_ready_dataplane() {
+        let fixture = crate::test_support::temp_app();
+        let app = crate::App::for_test(fixture.moddir.clone());
+        for (state, ready) in [
+            ("running", None),
+            ("stopped", Some(false)),
+            ("unknown", None),
+        ] {
+            let status = super::snapshot_with_probe(&app, state, "ebpf", |_| {
+                panic!("configured intent cannot authorize a dataplane probe")
+            });
+            assert_eq!(status.effective_type, "unknown");
+            assert_eq!(status.effective_mode, "unknown");
+            assert_eq!(status.capability, "unknown");
+            assert_eq!(status.local_cgroup, "unknown");
+            assert_eq!(status.shared_tc, "unknown");
             assert_eq!(status.dataplane_ready, ready);
         }
     }
