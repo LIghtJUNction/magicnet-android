@@ -32,6 +32,9 @@ magicnet_uninstall_run() {
 
 magicnet_uninstall_cleanup() (
     _rc=0
+    if [ -x "$MODDIR/certificate-policy" ]; then
+        "$MODDIR/certificate-policy" restore || _rc=1
+    fi
     # This is a final uninstall hook, not a reversible UI "remove" request.
     # Prevent a supervisor from restarting the core during teardown.
     [ ! -L "$MODDIR/disable" ] && : >"$MODDIR/disable" || _rc=1

@@ -1,0 +1,26 @@
+#!/system/bin/sh
+# Android user 0 system trust policy. Apps with private trust stores are unaffected.
+MODDIR=${0%/*}
+case "${1:-status}" in
+    apply|disable|restore|preview|status) action=${1:-status} ;;
+    *) printf '%s\n' 'Usage: certificate-policy apply|disable|restore|preview|status' >&2; exit 2 ;;
+esac
+[ "$(id -u)" = 0 ] || { printf '%s\n' 'Root required' >&2; exit 1; }
+store=/apex/com.android.conscrypt/cacerts
+[ -d "$store" ] || store=/system/etc/security/cacerts
+removed=/data/misc/user/0/cacerts-removed
+bridge="$MODDIR/libexec/certificate-policy.jar"
+[ -f "$bridge" ] || bridge="$MODDIR/libexec/network-policy-bridge.jar"
+CLASSPATH="$bridge" /system/bin/app_process /system/bin \
+    io.github.magicnet.CertificatePolicy "$MODDIR" "$store" "$removed" "$action"
+rc=$?
+case "$action" in
+    apply|disable|restore)
+        if [ -d "$removed" ]; then
+            chown system:system "$removed" && chmod 755 "$removed" &&
+                restorecon -RF "$removed" >/dev/null 2>&1 || rc=1
+        fi
+        am broadcast --user 0 -a android.security.action.TRUST_STORE_CHANGED >/dev/null 2>&1 || rc=1
+        ;;
+esac
+exit "$rc"
