@@ -834,6 +834,20 @@ class RecoveryTests(unittest.TestCase):
             proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
         self.assertFalse(any('link set' in call or ' nohup ' in call for call in self.device.calls))
 
+    def test_uplink_rechecks_the_selected_route_immediately_before_mutation(self):
+        original, route_reads = self.device.adb, []
+        def adb(command, **kwargs):
+            if command == proof.IP + ' -4 route get 192.0.2.1':
+                route_reads.append(command)
+                if len(route_reads) == 4:
+                    self.device.uplinks = ['eth0']
+                    self.device.selected_uplink = 'eth0'
+            return original(command, **kwargs)
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, '^uplink_changed_before_mutation$'):
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
+        self.assertFalse(any('link set' in call or ' nohup ' in call for call in self.device.calls))
+
     def test_uplink_timeout_retains_each_failed_predicate_and_short_circuit(self):
         for failure in ('route', 'state', 'ready', 'tcp'):
             self.setUp()
@@ -899,6 +913,41 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(evidence['baseline']['selected_interface'], 'wlan0')
         self.assertEqual(evidence['last_observation']['selected_interface'], 'eth0')
         self.assertTrue(evidence['last_observation']['selected_default'])
+        self.assertTrue(evidence['last_observation']['tcp']['result']['ok'])
+
+    def test_uplink_retries_a_transient_missing_selected_route(self):
+        original = self.device.adb
+        missing = 0
+        def adb(command, **kwargs):
+            nonlocal missing
+            if (command == proof.IP + ' -4 route get 192.0.2.1'
+                    and proof.IP + ' link set dev wlan0 down' in self.device.calls
+                    and missing < 1):
+                missing += 1
+                return subprocess.CompletedProcess(['adb'], 2, '', '')
+            return original(command, **kwargs)
+        self.control.adb = adb
+        evidence = {}
+        proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
+        self.assertEqual(missing, 1)
+        self.assertEqual(evidence['status'], 'verified')
+        self.assertTrue(evidence['last_observation']['tcp']['result']['ok'])
+
+    def test_uplink_retries_when_the_selected_route_changes_during_the_probe(self):
+        calls = 0
+        def sentinel():
+            nonlocal calls
+            calls += 1
+            result = self.device.tcp_app()
+            if calls == 2:
+                self.device.uplinks = ['eth0']
+                self.device.selected_uplink = 'eth0'
+            return result
+        evidence = {}
+        proof.uplink_reconnect(self.control, sentinel, 10123, evidence)
+        self.assertEqual(calls, 3)
+        self.assertEqual(evidence['status'], 'verified')
+        self.assertEqual(evidence['last_observation']['selected_interface'], 'eth0')
         self.assertTrue(evidence['last_observation']['tcp']['result']['ok'])
 
     def test_uplink_errors_preserve_partial_evidence_without_raw_exception_text(self):

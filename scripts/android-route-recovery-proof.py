@@ -577,15 +577,26 @@ def control_peers(text):
 
 def uplink_reconnect(control, sentinel, uid, evidence):
     evidence.update(status='not_verified', stage='select_uplink')
-    routes = lines(control.command(IP + ' -4 route show table all'))
-    interfaces = {match[1] for row in routes if row.startswith('default ') and 'linkdown' not in row
-                  for match in [re.search(r'\bdev (wlan0|eth0)(?: |$)', row)] if match}
-    # Android keeps a default in each network table. Resolve the active egress
-    # through the kernel without sending a packet or assuming Wi-Fi beats eth0.
-    route = control.command(IP + ' -4 route get 192.0.2.1')
-    selected = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', route))
-    require(len(selected) == 1 and selected <= interfaces, 'ambiguous_or_missing_uplink')
-    interface = evidence['interface'] = selected.pop()
+    def selected_uplink(retry=False):
+        routes = lines(control.command(IP + ' -4 route show table all'))
+        interfaces = {match[1] for row in routes
+                      if row.startswith('default ') and 'linkdown' not in row
+                      for match in [re.search(r'\bdev (wlan0|eth0)(?: |$)', row)] if match}
+        # Android keeps a default in each network table. Resolve the active
+        # egress without sending a packet or assuming Wi-Fi beats eth0.
+        try:
+            route = control.command(IP + ' -4 route get 192.0.2.1')
+        except RuntimeError as error:
+            if retry and str(error) == 'device_command_failed':
+                return routes, interfaces, None
+            raise
+        selected = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', route))
+        interface = next(iter(selected)) if len(selected) == 1 else None
+        return routes, interfaces, interface if interface in interfaces else None
+
+    routes, interfaces, interface = selected_uplink()
+    require(interface is not None, 'ambiguous_or_missing_uplink')
+    evidence['interface'] = interface
     evidence['default_interfaces'] = sorted(interfaces)
     # Refuse to lower an interface carrying a TCP adbd peer. Emulator pipe/Unix
     # transports and peers on a different interface keep the control channel up.
@@ -611,15 +622,11 @@ def uplink_reconnect(control, sentinel, uid, evidence):
 
     def recovered(state, key='last_observation'):
         observed = begin_observation(key, state)
-        routes = observed['routes'] = lines(control.command(IP + ' -4 route show table all'))
-        defaults = {match[1] for row in routes if row.startswith('default ') and 'linkdown' not in row
-                    for match in [re.search(r'\bdev (wlan0|eth0)(?: |$)', row)] if match}
-        selected_route = control.command(IP + ' -4 route get 192.0.2.1')
-        selected = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', selected_route))
-        if len(selected) == 1:
-            observed['selected_interface'] = next(iter(selected))
-        routed = observed['selected_default'] = len(selected) == 1 and selected <= defaults
-        if not routed:
+        routes, _, selected = selected_uplink(retry=True)
+        observed['routes'] = routes
+        observed['selected_interface'] = selected
+        observed['selected_default'] = selected is not None
+        if selected is None:
             observed['tcp']['reason'] = 'selected_default_missing'
             return False
         if state['status'] != 'present':
@@ -639,6 +646,16 @@ def uplink_reconnect(control, sentinel, uid, evidence):
             observed['tcp']['reason'] = 'invalid_result'
             return False
         observed['tcp'] = {'called': True, 'result': result}
+        # The application probe may outlive an Android default-network switch.
+        # Re-read both the selected route and the live defaults so the recorded
+        # egress is the one that actually survived the completed probe.
+        routes, _, confirmed = selected_uplink(retry=True)
+        observed['routes'] = routes
+        observed['selected_interface'] = confirmed
+        observed['selected_default'] = confirmed is not None
+        if confirmed != selected:
+            observed['tcp']['reason'] = 'selected_default_changed'
+            return False
         return result.get('transport', 'tcp') == 'tcp' and app_result(result, uid, True)
 
     evidence['stage'] = 'baseline'
@@ -652,6 +669,11 @@ def uplink_reconnect(control, sentinel, uid, evidence):
         return int(text, 16)
 
     require(flags() & 1, 'uplink_not_initially_up')
+    # Re-check immediately before installing the restore guard and mutating the
+    # link. A default-network race after the baseline must not lower an inactive
+    # interface and then claim failover recovery.
+    _, _, current_interface = selected_uplink()
+    require(current_interface == interface, 'uplink_changed_before_mutation')
     up = shlex.join([IP, 'link', 'set', 'dev', interface, 'up'])
     # Independent, short-lived restore guard also survives a host interruption.
     guard = shlex.join([BB, 'sh', '-c', BB + ' sleep 10; ' + up])
