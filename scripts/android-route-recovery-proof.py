@@ -602,7 +602,8 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     evidence['control_transport_verified'] = True
 
     def begin_observation(key, state=None):
-        observed = {'state': state, 'routes': None, 'selected_default': None, 'ready': None,
+        observed = {'state': state, 'routes': None, 'selected_default': None,
+                    'selected_interface': None, 'ready': None,
                     'tcp': {'called': False, 'reason': 'state_not_observed' if state is None
                             else 'route_not_observed'}}
         evidence[key] = observed
@@ -611,9 +612,13 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     def recovered(state, key='last_observation'):
         observed = begin_observation(key, state)
         routes = observed['routes'] = lines(control.command(IP + ' -4 route show table all'))
-        routed = observed['selected_default'] = any(
-            row.startswith('default ') and 'linkdown' not in row
-            and re.search(r'\bdev ' + interface + r'(?: |$)', row) for row in routes)
+        defaults = {match[1] for row in routes if row.startswith('default ') and 'linkdown' not in row
+                    for match in [re.search(r'\bdev (wlan0|eth0)(?: |$)', row)] if match}
+        selected_route = control.command(IP + ' -4 route get 192.0.2.1')
+        selected = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', selected_route))
+        if len(selected) == 1:
+            observed['selected_interface'] = next(iter(selected))
+        routed = observed['selected_default'] = len(selected) == 1 and selected <= defaults
         if not routed:
             observed['tcp']['reason'] = 'selected_default_missing'
             return False
@@ -639,6 +644,7 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     evidence['stage'] = 'baseline'
     begin_observation('baseline')
     require(recovered(control.connectivity(), 'baseline'), 'uplink_baseline_not_ready')
+    require(evidence['baseline']['selected_interface'] == interface, 'uplink_baseline_changed')
 
     def flags():
         text = control.command('cat /sys/class/net/' + interface + '/flags').strip()

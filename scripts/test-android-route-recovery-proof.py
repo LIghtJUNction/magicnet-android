@@ -791,6 +791,7 @@ class RecoveryTests(unittest.TestCase):
         for key in ('baseline', 'last_observation'):
             observed = evidence[key]
             self.assertTrue(observed['selected_default'])
+            self.assertEqual(observed['selected_interface'], 'wlan0')
             self.assertTrue(observed['ready'])
             self.assertEqual(observed['state']['status'], 'present')
             self.assertEqual(observed['tcp'], {'called': True, 'result': self.device.tcp_app()})
@@ -818,6 +819,20 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(evidence['baseline']['tcp']['called'], failure not in ('state', 'ready'))
             self.assertEqual(len(calls), int(failure not in ('state', 'ready')))
             self.assertNotIn('private-value', json.dumps(evidence))
+
+    def test_uplink_baseline_rejects_a_route_change_before_mutation(self):
+        original, route_reads = self.device.adb, []
+        def adb(command, **kwargs):
+            if command == proof.IP + ' -4 route show table all':
+                route_reads.append(command)
+                if len(route_reads) == 2:
+                    self.device.uplinks = ['eth0']
+                    self.device.selected_uplink = 'eth0'
+            return original(command, **kwargs)
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, '^uplink_baseline_changed$'):
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
+        self.assertFalse(any('link set' in call or ' nohup ' in call for call in self.device.calls))
 
     def test_uplink_timeout_retains_each_failed_predicate_and_short_circuit(self):
         for failure in ('route', 'state', 'ready', 'tcp'):
@@ -867,6 +882,24 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(observed['tcp']['result']['reason'], 'timeout')
                 self.assertEqual(observed['tcp']['result']['accepted'], 0)
             self.assertEqual(observed['selected_default'], failure != 'route')
+
+    def test_uplink_kernel_selected_failover_is_accepted(self):
+        original = self.device.adb
+        def adb(command, **kwargs):
+            result = original(command, **kwargs)
+            if command == proof.IP + ' link set dev wlan0 down':
+                self.device.uplinks = ['eth0']
+                self.device.selected_uplink = 'eth0'
+            return result
+        self.control.adb = adb
+        evidence = {}
+        proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
+        self.assertEqual(evidence['status'], 'verified')
+        self.assertEqual(evidence['interface'], 'wlan0')
+        self.assertEqual(evidence['baseline']['selected_interface'], 'wlan0')
+        self.assertEqual(evidence['last_observation']['selected_interface'], 'eth0')
+        self.assertTrue(evidence['last_observation']['selected_default'])
+        self.assertTrue(evidence['last_observation']['tcp']['result']['ok'])
 
     def test_uplink_errors_preserve_partial_evidence_without_raw_exception_text(self):
         for failure in ('route', 'ready', 'tcp'):
