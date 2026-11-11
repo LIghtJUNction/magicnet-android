@@ -138,7 +138,7 @@ def completed_report():
         'uplink_reconnect': {'status': 'verified', 'interface': 'wlan0', 'down_observed': True,
                              'up_observed': True, 'ready_after_recovery': True, 'app_after_recovery': True,
                              'control_transport_verified': True, 'control_channel_survived': True,
-                             'restore_guard_finished': True,
+                             'restore_guard_finished': True, 'restore_method': 'android_wifi_toggle',
                              'down_flags': 4098, 'up_flags': 4163,
                              'baseline': uplink_observation(recovered),
                              'last_observation': uplink_observation(recovered | {'checked_at': 102}),
@@ -673,7 +673,8 @@ class AndroidReportGateTests(unittest.TestCase):
     def test_uplink_requires_observed_kernel_link_flags(self):
         for key, value in (('down_flags', None), ('down_flags', False), ('down_flags', 1),
                            ('up_flags', None), ('up_flags', True), ('up_flags', 0),
-                           ('down_flags', -2), ('up_flags', -1), ('interface', 'lo')):
+                           ('down_flags', -2), ('up_flags', -1), ('interface', 'lo'),
+                           ('restore_method', None), ('restore_method', 'link_up')):
             with self.subTest(key=key, value=value):
                 report = completed_report()
                 report['provenance']['route_recovery']['uplink_reconnect'][key] = value
@@ -741,6 +742,7 @@ class AndroidReportGateTests(unittest.TestCase):
                 self.assert_rejected(report)
         report = completed_report()
         report['provenance']['route_recovery']['uplink_reconnect']['interface'] = 'eth0'
+        report['provenance']['route_recovery']['uplink_reconnect']['restore_method'] = 'link_up'
         GATE.validate_report(report, SHA)
 
     def test_uplink_requires_actual_same_uid_tcp_success_before_and_after(self):

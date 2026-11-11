@@ -203,7 +203,7 @@ class Device:
             output = self.peers
         elif command == proof.IP + ' -4 route get 10.0.2.2':
             output = '10.0.2.2 dev wlan0 src 10.0.2.15'
-        elif command == 'cat /sys/class/net/wlan0/flags':
+        elif command.startswith('if [ -r /sys/class/net/') and command.endswith('/flags; else echo 0x0; fi'):
             self.flag_reads += 1
             if self.fail_down_observation and self.flag_reads == 2:
                 rc = 1
@@ -212,9 +212,9 @@ class Device:
             output = '500 (sh) S ' + '0 ' * 18 + '850\n'
         elif command == 'if [ -r /proc/500/stat ]; then cat /proc/500/stat; else echo gone; fi':
             output = 'gone\n'
-        elif command == proof.IP + ' link set dev wlan0 down':
+        elif command in (proof.IP + ' link set dev wlan0 down', proof.IP + ' link set dev eth0 down'):
             self.flags &= ~1
-        elif command == proof.IP + ' link set dev wlan0 up':
+        elif command.startswith(proof.IP + ' link set dev wlan0 up') or command == proof.IP + ' link set dev eth0 up':
             self.flags |= 1
         else:
             raise AssertionError('unexpected command: ' + command)
@@ -797,6 +797,69 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(evidence['last_observation']['state'], evidence['recovery_after'])
         self.assertNotIn('private-value', json.dumps(evidence))
 
+    def test_wifi_restore_is_in_both_the_guard_and_foreground(self):
+        evidence = {}
+        proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
+        restore = (proof.IP + ' link set dev wlan0 up'
+                   ' && /system/bin/cmd wifi set-wifi-enabled disabled'
+                   f' && {proof.BB} sleep 2'
+                   ' && /system/bin/cmd wifi set-wifi-enabled enabled')
+        self.assertEqual(evidence['restore_method'], 'android_wifi_toggle')
+        self.assertIn(restore, self.device.calls)
+        guard = next(call for call in self.device.calls if call.startswith(proof.BB + ' nohup '))
+        self.assertIn(restore, guard)
+
+    def test_ethernet_restore_does_not_toggle_wifi(self):
+        self.device.uplinks = ['eth0']
+        self.device.selected_uplink = 'eth0'
+        evidence = {}
+        proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
+        self.assertEqual(evidence['restore_method'], 'link_up')
+        self.assertFalse(any('cmd wifi' in call for call in self.device.calls))
+        self.assertIn(proof.IP + ' link set dev eth0 up', self.device.calls)
+
+    def test_wifi_interface_recreation_is_observed_with_a_bounded_wait(self):
+        for returns in (True, False):
+            self.setUp()
+            original = self.device.adb
+            restored = False
+            def adb(command, **kwargs):
+                nonlocal restored
+                if command.startswith(proof.IP + ' link set dev wlan0 up'):
+                    restored = True
+                if restored and command.startswith('if [ -r /sys/class/net/'):
+                    value = '0x1003' if returns and self.clock >= 3 else '0x0'
+                    return subprocess.CompletedProcess(['adb'], 0, value, '')
+                return original(command, **kwargs)
+            self.control.adb = adb
+            evidence = {}
+            with self.subTest(returns=returns), \
+                    patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                    patch.object(proof.time, 'sleep', self.sleep):
+                if returns:
+                    proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
+                    self.assertEqual(self.clock, 3)
+                    self.assertTrue(evidence['up_observed'])
+                else:
+                    with self.assertRaisesRegex(RuntimeError, '^uplink_restore_failed$'):
+                        proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
+                    self.assertEqual(self.clock, 30)
+                    self.assertFalse(evidence['up_observed'])
+
+    def test_wifi_restore_command_failure_cannot_report_recovery(self):
+        original = self.device.adb
+        def adb(command, **kwargs):
+            if command.startswith(proof.IP + ' link set dev wlan0 up'):
+                return subprocess.CompletedProcess(['adb'], 1, '', '')
+            return original(command, **kwargs)
+        self.control.adb = adb
+        evidence = {}
+        with self.assertRaisesRegex(RuntimeError, 'device_command_failed'):
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
+        self.assertEqual(evidence['status'], 'not_verified')
+        self.assertTrue(evidence['restore_guard_finished'])
+        self.assertNotIn('recovery_after', evidence)
+
     def test_uplink_baseline_must_succeed_before_guard_or_link_mutation(self):
         for failure in ('state', 'ready', 'tcp', 'udp', 'invalid_result'):
             self.setUp()
@@ -925,7 +988,8 @@ class RecoveryTests(unittest.TestCase):
         self.device.fail_down_observation = True
         with self.assertRaisesRegex(RuntimeError, 'device_command_failed'):
             proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {})
-        self.assertIn(proof.IP + ' link set dev wlan0 up', self.device.calls[-3:])
+        self.assertTrue(any(call.startswith(proof.IP + ' link set dev wlan0 up')
+                            for call in self.device.calls[-3:]))
         self.assertTrue(self.device.flags & 1)
 
     def test_live_restore_guard_must_finish_before_next_phase(self):

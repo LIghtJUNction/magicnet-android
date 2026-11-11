@@ -355,6 +355,9 @@ def validate_route_recovery(evidence):
                     for key in ('down_flags', 'up_flags'))
             and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
             'Local uplink reconnect was not verified')
+    require(reconnect.get('restore_method') == ('android_wifi_toggle'
+            if reconnect['interface'] == 'wlan0' else 'link_up'),
+            'Local uplink restore method is missing or inconsistent')
     baseline = uplink_observation(reconnect.get('baseline'), reconnect['interface'],
                                   evidence['app_uid'], recovered['recovery_attempts'])
     final = uplink_observation(reconnect.get('last_observation'), reconnect['interface'],

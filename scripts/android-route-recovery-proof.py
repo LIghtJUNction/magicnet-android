@@ -641,14 +641,24 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     require(recovered(control.connectivity(), 'baseline'), 'uplink_baseline_not_ready')
 
     def flags():
-        text = control.command('cat /sys/class/net/' + interface + '/flags').strip()
+        path = '/sys/class/net/' + interface + '/flags'
+        text = control.command(f'if [ -r {path} ]; then cat {path}; else echo 0x0; fi').strip()
         require(re.fullmatch(r'0x[0-9a-fA-F]+', text), 'invalid_interface_flags')
         return int(text, 16)
 
     require(flags() & 1, 'uplink_not_initially_up')
     up = shlex.join([IP, 'link', 'set', 'dev', interface, 'up'])
+    restore = up
+    evidence['restore_method'] = 'link_up'
+    if interface == 'wlan0':
+        # A raw link down tears down the emulator supplicant. Let Android
+        # recreate it and reacquire the network before observing recovery.
+        restore += (' && /system/bin/cmd wifi set-wifi-enabled disabled'
+                    f' && {BB} sleep 2'
+                    ' && /system/bin/cmd wifi set-wifi-enabled enabled')
+        evidence['restore_method'] = 'android_wifi_toggle'
     # Independent, short-lived restore guard also survives a host interruption.
-    guard = shlex.join([BB, 'sh', '-c', BB + ' sleep 10; ' + up])
+    guard = shlex.join([BB, 'sh', '-c', BB + ' sleep 10; ' + restore])
     guard_pid, guard_start, _ = guard_identity(control.command(
         f'{BB} nohup {BB} true </dev/null >/dev/null 2>&1 || exit 1; '
         f'{BB} nohup {guard} </dev/null >/dev/null 2>&1 & p=$!; cat /proc/$p/stat'))
@@ -662,7 +672,7 @@ def uplink_reconnect(control, sentinel, uid, evidence):
         evidence['control_channel_survived'] = True
     finally:
         try:
-            control.command(up)
+            control.command(restore)
         finally:
             # Do not carry the guard's delayed `up` into the next lifecycle phase.
             deadline = time.monotonic() + 15
@@ -675,7 +685,13 @@ def uplink_reconnect(control, sentinel, uid, evidence):
                     break
                 time.sleep(1)
             require(evidence.get('restore_guard_finished') is True, 'uplink_restore_guard_deadline')
+        # Wi-Fi service calls are asynchronous and may recreate wlan0 after
+        # returning. Observe its flags with a bounded wait before reconnect.
+        deadline = time.monotonic() + 30
         evidence['up_flags'] = flags()
+        while not evidence['up_flags'] & 1 and time.monotonic() < deadline:
+            time.sleep(1)
+            evidence['up_flags'] = flags()
         evidence['up_observed'] = evidence['up_flags'] & 1 == 1
     require(evidence['up_observed'], 'uplink_restore_failed')
     evidence['stage'] = 'reconnect'
