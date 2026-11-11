@@ -6,6 +6,22 @@ with tempfile.TemporaryDirectory(prefix='magicnet-cert-test-') as tmp:
     root=pathlib.Path(tmp)
     classes=root/'classes'; classes.mkdir()
     subprocess.run(['javac','--release','8','-d',str(classes),str(ROOT/'crates/magicnet-cli/android/CertificatePolicy.java')],check=True)
+    # Boot apply must return before invoking Android tools or creating state.
+    boot=root/'boot'; boot.mkdir()
+    boot_wrapper=boot/'certificate-policy'
+    boot_wrapper.write_bytes((ROOT/'src/MagicNet/certificate-policy').read_bytes())
+    tools=root/'tools'; tools.mkdir()
+    (tools/'id').write_text('#!/bin/sh\nprintf "0\\n"\n')
+    (tools/'id').chmod(0o755)
+    import os
+    env=dict(os.environ, PATH=str(tools)+os.pathsep+os.environ['PATH'])
+    subprocess.run(['sh',str(boot_wrapper),'apply'],env=env,check=True)
+    assert list(boot.iterdir())==[boot_wrapper]
+    boot_config=boot/'.config/magicnet/certificate-policy'
+    boot_config.mkdir(parents=True)
+    (boot_config/'enabled').write_text('false\n')
+    subprocess.run(['sh',str(boot_wrapper),'apply'],env=env,check=True)
+    assert not (boot/'.state').exists()
     module=root/'module'; store=root/'store'; removed=root/'removed'
     store.mkdir(); removed.mkdir()
     config=module/'.config/magicnet/certificate-policy'; config.mkdir(parents=True)
@@ -16,6 +32,8 @@ with tempfile.TemporaryDirectory(prefix='magicnet-cert-test-') as tmp:
         assert (result.returncode==0)==ok,result.stderr
         return result.stdout
     (config/'rules').write_text('keyword=CHINA\n')
+    assert 'configured=false' in run('status')
+    run('apply'); assert not list(removed.iterdir())
     assert 'matched=1' in run('preview')
     run('disable'); run('apply')
     assert [p.name for p in removed.iterdir()]==['11111111.0']

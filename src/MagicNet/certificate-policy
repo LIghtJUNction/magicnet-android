@@ -6,6 +6,12 @@ case "${1:-status}" in
     *) printf '%s\n' 'Usage: certificate-policy apply|disable|restore|preview|status' >&2; exit 2 ;;
 esac
 [ "$(id -u)" = 0 ] || { printf '%s\n' 'Root required' >&2; exit 1; }
+# Boot application is opt-in and performs no trust-store work by default.
+if [ "$action" = apply ]; then
+    intent="$MODDIR/.config/magicnet/certificate-policy/enabled"
+    if [ ! -e "$intent" ]; then exit 0; fi
+    if [ "$(cat "$intent")" = false ]; then exit 0; fi
+fi
 store=/apex/com.android.conscrypt/cacerts
 [ -d "$store" ] || store=/system/etc/security/cacerts
 removed=/data/misc/user/0/cacerts-removed

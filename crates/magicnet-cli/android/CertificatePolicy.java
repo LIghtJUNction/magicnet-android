@@ -79,7 +79,7 @@ public final class CertificatePolicy {
         Path intent=config.resolve("enabled");
         if(action.equals("restore")) atomic(intent,"false\n".getBytes("UTF-8"));
         if(action.equals("disable")) atomic(intent,"true\n".getBytes("UTF-8"));
-        String value=Files.exists(intent)?new String(read(intent),"UTF-8").trim():"true";
+        String value=Files.exists(intent)?new String(read(intent),"UTF-8").trim():"false";
         if(!value.equals("true")&&!value.equals("false")) throw new IOException("invalid enabled intent");
         boolean enabled=value.equals("true");
         if(action.equals("status")) {
