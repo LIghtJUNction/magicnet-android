@@ -6,4 +6,8 @@ case "$0" in
     *) . "${MODDIR:-$(pwd)}/lib/magicnet/entry.sh" || exit 1 ;;
 esac
 
+if [ -x "${0%/*}/certificate-policy" ]; then
+    "${0%/*}/certificate-policy" apply || printf '%s\n' '[MagicNet] Certificate policy failed; check certificate-policy status.' >&2
+fi
+
 kamfw run boot-completed -- "$@"

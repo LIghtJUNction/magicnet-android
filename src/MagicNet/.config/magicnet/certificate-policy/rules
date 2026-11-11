@@ -1,0 +1,7 @@
+# Literal matching, not regular expressions. Subjects are canonical RFC2253.
+# sha256=<64 hex, optional colons>; subject=<full subject>; keyword=<substring>
+keyword=china
+keyword=O=BEIJING CERTIFICATE AUTHORITY
+keyword=O=GUANG DONG CERTIFICATE AUTHORITY
+keyword=O=UniTrust
+keyword=O=TrustAsia Technologies
