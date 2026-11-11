@@ -42,7 +42,7 @@ def uplink_observation(state):
     return {'state': state.copy(),
             'routes': ['default via 10.0.2.2 dev eth0 table eth0',
                        'default via 192.168.1.1 dev wlan0 table wlan0'],
-            'selected_default': True, 'ready': True,
+            'selected_default': True, 'selected_interface': 'wlan0', 'ready': True,
             'tcp': {'called': True, 'result': {
                 'complete': True, 'ok': True, 'uid': 10123,
                 'reason': 'sentinel', 'accepted': 1, 'elapsed_ms': 12}}}
@@ -724,7 +724,7 @@ class AndroidReportGateTests(unittest.TestCase):
             report['provenance']['route_recovery']['uplink_reconnect'].pop(name)
             self.assert_rejected(report)
 
-    def test_uplink_recomputes_original_interface_default_in_both_observations(self):
+    def test_uplink_recomputes_kernel_selected_default_in_both_observations(self):
         for name in ('baseline', 'last_observation'):
             for routes in (None, [], ['default via 10.0.2.2 dev eth0'],
                            ['192.168.1.0/24 dev wlan0 scope link'],
@@ -739,8 +739,22 @@ class AndroidReportGateTests(unittest.TestCase):
                 report = completed_report()
                 report['provenance']['route_recovery']['uplink_reconnect'][name]['selected_default'] = selected
                 self.assert_rejected(report)
+            for selected_interface in ('', 'magicnet0', 'wlan01', None):
+                report = completed_report()
+                report['provenance']['route_recovery']['uplink_reconnect'][name][
+                    'selected_interface'] = selected_interface
+                self.assert_rejected(report)
         report = completed_report()
-        report['provenance']['route_recovery']['uplink_reconnect']['interface'] = 'eth0'
+        reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+        reconnect['interface'] = 'eth0'
+        reconnect['baseline']['selected_interface'] = 'eth0'
+        reconnect['last_observation']['selected_interface'] = 'eth0'
+        GATE.validate_report(report, SHA)
+
+        report = completed_report()
+        reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+        reconnect['last_observation']['routes'] = ['default via 10.0.2.2 dev eth0 table eth0']
+        reconnect['last_observation']['selected_interface'] = 'eth0'
         GATE.validate_report(report, SHA)
 
     def test_uplink_requires_actual_same_uid_tcp_success_before_and_after(self):
