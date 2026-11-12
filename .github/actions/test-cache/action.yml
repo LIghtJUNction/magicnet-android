@@ -9,7 +9,7 @@ runs:
   steps:
     - name: Restore successful test results
       if: inputs.mode == 'restore'
-      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           .cache/ci-test-results
@@ -23,7 +23,7 @@ runs:
       run: echo 'CI_TEST_CACHE=1' >> "$GITHUB_ENV"
     - name: Save only completed successful checks
       if: inputs.mode == 'save'
-      uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           .cache/ci-test-results
