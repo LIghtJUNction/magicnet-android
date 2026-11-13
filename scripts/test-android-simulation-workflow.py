@@ -52,6 +52,41 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(any(command in step.get('run', '') for step in self.jobs['harness']['steps']))
         self.assertIn('CI_TEST_FORCE=1 check ' + command, (ROOT / 'scripts/test-host.sh').read_text())
 
+    def test_host_observer_keeps_exact_emulator_arguments_and_real_child_pid(self):
+        boot = self.step('Boot pristine Android 15 AVD')['run']
+        self.assertIn('nohup python3 scripts/android-host-observer.py', boot)
+        arguments = boot.split('watch -- \\\n', 1)[1].split('>artifacts/', 1)[0]
+        self.assertEqual(shlex.split(arguments.replace('\\\n', ' ')), [
+            'emulator', '@$AVD_NAME', '-kernel', '$MAGICNET_AVD_KERNEL',
+            '-port', '5554', '-accel', 'on', '-no-window', '-noaudio',
+            '-no-boot-anim', '-no-snapshot', '-no-snapshot-save',
+            '-gpu', 'swiftshader_indirect', '-memory', '$AVD_MEMORY', '-show-kernel',
+        ])
+        self.assertNotIn('echo $! >artifacts/android-kernelsu/emulator.pid', boot)
+        command = 'python3 scripts/test-android-host-observer.py'
+        self.assertTrue(any(command in s.get('run', '') for s in self.jobs['harness']['steps']))
+
+    def test_host_snapshot_precedes_stop_without_masking_mandatory_evidence(self):
+        capture = self.step('Capture emulator host evidence before cleanup')
+        self.assertEqual(capture['if'], 'always()')
+        self.assertIn('timeout --kill-after=1s 15s python3', capture['run'])
+        self.assertIn('snapshot || true', capture['run'])
+        names = [s.get('name') for s in self.steps]
+        self.assertLess(names.index(capture['name']), names.index('Stop emulator'))
+        self.assertLess(names.index('Stop emulator'), names.index('Upload Android acceptance report'))
+        stop = self.step('Stop emulator')['run']
+        self.assertLess(stop.index('mark-stop'), stop.index('adb emu kill'))
+        self.assertLess(stop.index('adb emu kill'), stop.index('terminate'))
+        self.assertEqual(stop.count('timeout --kill-after=1s 3s python3'), 2)
+        self.assertNotIn('kill "$(cat', stop)
+        gate = self.step('Verify mandatory Android evidence')
+        self.assertNotIn('continue-on-error', gate)
+        self.assertNotIn('|| true', gate['run'])
+        self.assertEqual(gate['run'],
+                         'python3 scripts/require-android-acceptance.py --report '
+                         'artifacts/android-kernelsu/simulation.json --source-sha "$MAGICNET_SOURCE_SHA"')
+        self.assertEqual(self.step('Exercise Android KernelSU lifecycle')['timeout-minutes'], '35')
+
     def test_harness_initializes_real_startup_helper_before_core_checks(self):
         harness = self.jobs['harness']['steps']
         names = [step.get('name') for step in harness]
