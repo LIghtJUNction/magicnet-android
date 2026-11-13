@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -93,6 +94,7 @@ class Device:
         self.uplinks = ['wlan0']
         self.selected_uplink = 'wlan0'
         self.peers = 'ADBD\n/dev/null\nsocket:[77]\nTCP\n' + HEADER + '\n' + HEADER + '\n'
+        self.qemu, self.abi, self.wifi_on = '1', 'x86_64', True
 
     def helper_rule(self):
         return '1: from all lookup ' + str(self.helper_table)
@@ -210,6 +212,22 @@ class Device:
         elif command == proof.IP + ' -4 route get 192.0.2.1':
             output = (f'192.0.2.1 via 10.0.2.2 dev {self.selected_uplink} '
                       f'table {self.selected_uplink} src 10.0.2.15 uid 0\n') if self.selected_uplink else ''
+        elif command == 'getprop ro.kernel.qemu':
+            output = self.qemu
+        elif command == 'getprop ro.product.cpu.abi':
+            output = self.abi
+        elif command == proof.WIFI + ' status':
+            output = ('Wifi is enabled' if self.wifi_on else 'Wifi is disabled') + '\nWifiInfo: private-ssid\n'
+        elif command in (proof.WIFI + ' set-wifi-enabled enabled', proof.WIFI + ' set-wifi-enabled disabled'):
+            self.wifi_on = command.endswith(' enabled')
+            self.networks = [item for item in self.networks if 'wlan0' not in item['interfaces']]
+            if self.wifi_on:
+                self.networks.append(copy.deepcopy(NETWORKS[-1]))
+            self.rules = [row for row in self.rules if not row.endswith(' lookup wlan0')]
+            if self.wifi_on:
+                self.rules.append(FOREIGN[2])
+            self.uplinks = ['eth0', 'wlan0'] if self.wifi_on else ['eth0']
+            self.selected_uplink = 'wlan0' if self.wifi_on else 'eth0'
         elif command.startswith('p=$(' + proof.BB + ' pidof adbd)'):
             output = self.peers
         elif command == proof.IP + ' -4 route get 10.0.2.2':
@@ -230,6 +248,265 @@ class Device:
         else:
             raise AssertionError('unexpected command: ' + command)
         return subprocess.CompletedProcess(['adb'], rc, output, '')
+
+
+class NetworkFixtureTests(unittest.TestCase):
+    def setUp(self):
+        self.device, self.evidence, self.clock = Device(), {}, 0
+        self.control = proof.Control(self.device.adb, {})
+
+    def sleep(self, seconds):
+        self.clock += seconds
+
+    def run_fixture(self, body=lambda: None):
+        with patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                patch.object(proof.time, 'sleep', self.sleep):
+            with proof.single_uplink_fixture(self.control, self.evidence):
+                body()
+
+    def run_report(self, *, evidence=None, udp_sentinel=None, failure_observer=None, cleanup_observer=None):
+        def inner_verify(adb, _instrument, _component, *, fault_control, lifecycle_observer):
+            self.assertFalse(self.device.wifi_on)
+            try:
+                lifecycle_observer('before_stop')
+                adb(proof.CLI + ' service stop sing-box')
+                lifecycle_observer('stopped')
+                adb(proof.CLI + ' service start sing-box')
+                lifecycle_observer('after_start')
+                fault_control(self.device.tcp_app, 10123, udp_sentinel or self.device.app)
+                return dict(status='verified', positive=True, reject=True, positive_after=True, restored=True)
+            finally:
+                if cleanup_observer:
+                    cleanup_observer()
+
+        module = SimpleNamespace(verify=inner_verify)
+        spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda _: None))
+        with patch.dict(os.environ, MAGICNET_DISPOSABLE_AVD='1', ANDROID_SERIAL='emulator-5554'), \
+                patch.object(proof.importlib.util, 'spec_from_file_location', return_value=spec), \
+                patch.object(proof.importlib.util, 'module_from_spec', return_value=module), \
+                patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                patch.object(proof.time, 'sleep', self.sleep):
+            return proof.verify(self.control.adb, None, None, evidence, failure_observer=failure_observer)
+
+    def test_enabled_wifi_is_disabled_before_two_stable_ethernet_observations_then_restored(self):
+        def body():
+            self.assertFalse(self.device.wifi_on)
+            self.assertTrue(self.evidence['prepared'])
+            self.assertEqual(self.clock, proof.POLL_INTERVAL)
+            observations = self.evidence['stable_observations']
+            self.assertEqual(len(observations), 2)
+            self.assertEqual(observations[0], observations[1])
+            self.assertIsNot(observations[0], observations[1])
+            self.assertEqual(observations[0]['egress'], 'eth0')
+            physical = [item for item in observations[0]['netd']['networks'] if item['type'] == 'PHYSICAL']
+            self.assertEqual([item['interfaces'] for item in physical], [['eth0']])
+            self.assertIn(ETH0_RULES[0], observations[0]['rules'])
+        self.run_fixture(body)
+        self.assertTrue(self.device.wifi_on)
+        self.assertTrue(self.evidence['wifi_initial_enabled'])
+        self.assertTrue(self.evidence['wifi_final_enabled'])
+        self.assertTrue(self.evidence['restored'])
+        self.assertTrue(self.evidence['control_transport_verified'])
+        self.assertNotIn('private-ssid', json.dumps(self.evidence))
+        self.assertLess(self.device.calls.index('getprop ro.product.cpu.abi'),
+                        self.device.calls.index(proof.WIFI + ' set-wifi-enabled disabled'))
+
+    def test_initially_disabled_wifi_remains_disabled(self):
+        self.device.adb(proof.WIFI + ' set-wifi-enabled disabled')
+        self.device.calls.clear()
+        self.run_fixture()
+        self.assertFalse(self.evidence['wifi_initial_enabled'])
+        self.assertFalse(self.evidence['wifi_final_enabled'])
+        self.assertTrue(self.evidence['restored'])
+        self.assertNotIn(proof.WIFI + ' set-wifi-enabled enabled', self.device.calls)
+        self.assertEqual(self.device.calls.count(proof.WIFI + ' set-wifi-enabled disabled'), 1)
+
+    def test_real_device_or_wrong_abi_is_rejected_before_wifi_mutation(self):
+        for attribute, value in (('qemu', '0'), ('qemu', ''), ('abi', 'arm64-v8a'), ('abi', 'x86')):
+            self.setUp()
+            setattr(self.device, attribute, value)
+            with self.subTest(attribute=attribute, value=value), self.assertRaisesRegex(
+                    RuntimeError, '^disposable_x86_emulator_required$'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertFalse(any('set-wifi-enabled' in call for call in self.device.calls))
+
+    def test_wifi_carried_or_ambiguous_adb_transport_is_rejected_before_disable(self):
+        for route in ('10.0.2.2 dev wlan0 src 10.0.2.15', '', '10.0.2.2 dev eth0 dev wlan0'):
+            self.setUp()
+            self.device.peers += TCP + '\n'
+            original = self.device.adb
+            def adb(command, **kwargs):
+                return (subprocess.CompletedProcess(['adb'], 0, route, '')
+                        if command == proof.IP + ' -4 route get 10.0.2.2'
+                        else original(command, **kwargs))
+            self.control.adb = adb
+            with self.subTest(route=route), self.assertRaisesRegex(RuntimeError, 'uplink_carries_adb_control'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertFalse(any('set-wifi-enabled' in call for call in self.device.calls))
+
+    def test_unknown_wifi_status_is_not_guessed_or_copied_into_evidence(self):
+        for text in ('', 'Wifi is unknown\nprivate-ssid', 'Wifi is enabled unexpectedly',
+                     'private-ssid\nWifi is enabled'):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                return (subprocess.CompletedProcess(['adb'], 0, text, '') if command == proof.WIFI + ' status'
+                        else original(command, **kwargs))
+            self.control.adb = adb
+            with self.subTest(text=text), self.assertRaisesRegex(RuntimeError, '^wifi_state_unavailable$'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertFalse(any('set-wifi-enabled' in call for call in self.device.calls))
+            self.assertNotIn('private-ssid', json.dumps(self.evidence))
+
+    def test_async_wlan_teardown_and_policy_changes_reset_stable_observations(self):
+        original = self.device.adb
+        def adb(command, **kwargs):
+            result = original(command, **kwargs)
+            if command == proof.NETD and self.clock == 0:
+                current = self.device.networks
+                self.device.networks = current + [copy.deepcopy(NETWORKS[-1])]
+                result.stdout = self.device.netd_dump()
+                self.device.networks = current
+            if command == proof.IP + ' -4 rule show' and self.clock == proof.POLL_INTERVAL:
+                result.stdout += '\n31000: from all fwmark 0x0/0xffff lookup wlan0'
+            return result
+        self.control.adb = adb
+        self.run_fixture()
+        self.assertEqual(self.clock, proof.POLL_INTERVAL * 3)
+        self.assertNotIn('31000: from all fwmark 0x0/0xffff lookup wlan0',
+                         self.evidence['stable_observations'][0]['rules'])
+
+    def test_persistent_competing_network_or_wrong_egress_never_enters_proof(self):
+        for failure in ('physical', 'virtual_wlan', 'egress', 'selector'):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                result = original(command, **kwargs)
+                if command == proof.NETD and failure in ('physical', 'virtual_wlan'):
+                    current = self.device.networks
+                    extra = copy.deepcopy(NETWORKS[-1])
+                    if failure == 'virtual_wlan':
+                        extra['type'] = 'VIRTUAL'
+                        extra['details'] = ['Allowed UID ranges: unrestricted']
+                    self.device.networks = current + [extra]
+                    result.stdout = self.device.netd_dump()
+                    self.device.networks = current
+                if command == proof.IP + ' -4 route get 192.0.2.1' and failure == 'egress':
+                    result.stdout = '192.0.2.1 dev wlan0'
+                if command == proof.IP + ' -4 rule show' and failure == 'selector':
+                    result.stdout = result.stdout.replace(ETH0_RULES[0], '')
+                return result
+            self.control.adb = adb
+            with self.subTest(failure=failure), self.assertRaisesRegex(RuntimeError, '^single_uplink_baseline_deadline$'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertEqual(self.clock, proof.BASELINE_TIMEOUT)
+            self.assertFalse(self.evidence['prepared'])
+            self.assertTrue(self.evidence['restored'])
+            self.assertTrue(self.device.wifi_on)
+
+    def test_body_failure_and_partial_disable_failure_restore_initial_state(self):
+        for during_disable in (False, True):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                result = original(command, **kwargs)
+                if during_disable and command == proof.WIFI + ' set-wifi-enabled disabled':
+                    result.returncode = 1
+                return result
+            self.control.adb = adb
+            def body():
+                raise RuntimeError('fixture_test_failure')
+            with self.subTest(during_disable=during_disable), self.assertRaisesRegex(
+                    RuntimeError, '^device_command_failed$' if during_disable else '^fixture_test_failure$'):
+                self.run_fixture(body)
+            self.assertTrue(self.evidence['restored'])
+            self.assertTrue(self.evidence['wifi_final_enabled'])
+            self.assertTrue(self.device.wifi_on)
+
+    def test_competing_network_reappearing_after_preparation_is_rejected_before_fault(self):
+        for stage in ('snapshot', 'uplink'):
+            self.setUp()
+            def body():
+                self.device.adb(proof.WIFI + ' set-wifi-enabled enabled')
+                if stage == 'snapshot':
+                    self.control.snapshot()
+                else:
+                    proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {}, required_interface='eth0')
+            with self.subTest(stage=stage), self.assertRaisesRegex(RuntimeError, '^single_uplink_changed$'):
+                self.run_fixture(body)
+            self.assertTrue(self.evidence['restored'])
+            self.assertFalse(self.control.single_ethernet_required)
+            self.assertFalse(any('link set' in call or ' rule del ' in call for call in self.device.calls))
+
+    def test_failed_restore_command_or_readback_retains_failure_and_never_verifies(self):
+        for failure in ('command', 'readback', 'timeout'):
+            self.setUp()
+            original = self.device.adb
+            restoring = False
+            def adb(command, **kwargs):
+                nonlocal restoring
+                if command == proof.WIFI + ' set-wifi-enabled enabled':
+                    restoring = True
+                    if failure in ('command', 'timeout'):
+                        return subprocess.CompletedProcess(['adb'], int(failure == 'command'), '', '')
+                if restoring and command == proof.WIFI + ' status' and failure == 'readback':
+                    return subprocess.CompletedProcess(['adb'], 1, 'private-ssid', '')
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(failure=failure):
+                result = self.run_report()
+                self.assertEqual(result['rpdb_loss']['status'], 'verified')
+                self.assertEqual(result['uplink_reconnect']['status'], 'verified')
+                self.assertEqual(result['tun_controls']['status'], 'verified')
+                self.assertEqual(result['status'], 'not_verified')
+                self.assertFalse(result['restored'])
+                self.assertFalse(result['network_fixture']['restored'])
+                self.assertEqual(result['reason'], 'network_fixture_restore_failed')
+                self.assertIn('restore_reason', result['network_fixture'])
+                self.assertNotIn('private-ssid', json.dumps(result))
+
+    def test_whole_route_proof_runs_on_ethernet_and_restores_wifi_before_success(self):
+        result = self.run_report(failure_observer=lambda: self.fail('must not capture diagnostics on success'))
+        self.assertEqual(result['status'], 'verified')
+        self.assertTrue(result['restored'])
+        self.assertTrue(result['network_fixture']['restored'])
+        self.assertTrue(self.device.wifi_on)
+        self.assertEqual(result['uplink_reconnect']['interface'], 'eth0')
+        self.assertEqual(result['uplink_reconnect']['restore_method'], 'link_up')
+        self.assertTrue(all('link set dev wlan0' not in call for call in self.device.calls))
+        first_disable = self.device.calls.index(proof.WIFI + ' set-wifi-enabled disabled')
+        first_stop = self.device.calls.index(proof.CLI + ' service stop sing-box')
+        final_enable = self.device.calls.index(proof.WIFI + ' set-wifi-enabled enabled')
+        self.assertLess(first_disable, first_stop)
+        self.assertGreater(final_enable, self.device.calls.index(proof.IP + ' link set dev eth0 up'))
+        self.assertTrue(all('wlan0' not in item['interfaces']
+                            for key in ('before', 'fault', 'after')
+                            for item in result['rpdb_loss'][key]['netd']['networks']))
+
+    def test_failure_observer_sees_original_fault_before_cleanup_once_and_cannot_replace_reason(self):
+        for capture_fails in (False, True):
+            self.setUp()
+            result, events = {}, []
+            def udp():
+                return self.device.app() | {'ok': False, 'reason': 'timeout', 'elapsed_ms': 5000, 'accepted': 0}
+            def capture():
+                events.append('capture')
+                self.assertFalse(self.device.wifi_on)
+                self.assertEqual(result['reason'], 'baseline_app_not_captured')
+                self.assertEqual(result['rpdb_loss']['baseline_app']['reason'], 'timeout')
+                self.assertNotIn('fault', result['rpdb_loss'])
+                if capture_fails:
+                    raise ValueError('private-diagnostic-failure')
+            with self.subTest(capture_fails=capture_fails):
+                self.run_report(evidence=result, udp_sentinel=udp, failure_observer=capture,
+                                cleanup_observer=lambda: events.append('cleanup'))
+                self.assertEqual(events, ['capture', 'cleanup'])
+                self.assertEqual(result['status'], 'not_verified')
+                self.assertEqual(result['reason'], 'baseline_app_not_captured')
+                self.assertTrue(result['network_fixture']['restored'])
+                self.assertTrue(self.device.wifi_on)
+                self.assertEqual(result.get('failure_observer_failure'), 'capture_failed' if capture_fails else None)
+                self.assertNotIn('private-diagnostic-failure', json.dumps(result))
 
 
 class RecoveryTests(unittest.TestCase):

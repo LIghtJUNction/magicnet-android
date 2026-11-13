@@ -9,6 +9,7 @@ the original config even when a control fails.
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
 import importlib.util
 import ipaddress
 import json
@@ -27,6 +28,7 @@ TUN = 'magicnet0'
 LIMIT = 65536
 NETD_LIMIT = 1024 * 1024
 NETD = '/system/bin/dumpsys -t 5 netd --short'
+WIFI = '/system/bin/cmd wifi'
 NETD_PERMISSIONS = {'NONE': 0, 'NETWORK': 0x40000, 'SYSTEM': 0xc0000}
 TICK_INTERVAL = 60
 BASELINE_TIMEOUT = 180
@@ -285,10 +287,17 @@ def foreign_rules_preserved(before, after, before_rules, after_rules):
     return before_rules - old_selectors == after_rules - new_selectors
 
 
+def single_ethernet(netd):
+    physical = [item for item in netd['networks'] if item['type'] == 'PHYSICAL']
+    return (len(physical) == 1 and physical[0]['interfaces'] == ['eth0']
+            and not any('wlan0' in item['interfaces'] for item in netd['networks']))
+
+
 class Control:
     def __init__(self, adb, evidence):
         self.adb, self.evidence = adb, evidence
         self.last_tick = -float('inf')
+        self.single_ethernet_required = False
 
     def command(self, text, timeout=10, *, limit=LIMIT):
         cp = self.adb(text, timeout=timeout)
@@ -381,6 +390,7 @@ class Control:
 
     def snapshot(self):
         netd = self.netd_observation()
+        require(not self.single_ethernet_required or single_ethernet(netd), 'single_uplink_changed')
         identity = self.identity()
         index = self.command('cat /sys/class/net/' + TUN + '/ifindex').strip()
         require(re.fullmatch(r'[1-9][0-9]*', index), 'invalid_tun_identity')
@@ -596,7 +606,84 @@ def control_peers(text):
     return peers
 
 
-def uplink_reconnect(control, sentinel, uid, evidence):
+def verify_control_transport(control, interface):
+    peers = control_peers(control.command(
+        f'p=$({BB} pidof adbd) || exit 1; test -n "$p" || exit 1; printf "ADBD\\n"; '
+        'for n in $p; do test -r /proc/$n/fd || exit 1; '
+        'for f in /proc/$n/fd/*; do readlink "$f" || exit 1; done; done; '
+        'printf "TCP\\n"; cat /proc/net/tcp /proc/net/tcp6'))
+    for peer in peers:
+        route = control.command(shlex.join([IP, '-6' if ':' in peer else '-4', 'route', 'get', peer]))
+        devices = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', route))
+        require(len(devices) == 1 and interface not in devices,
+                'uplink_carries_adb_control_or_unknown_route')
+
+
+def wifi_enabled(control):
+    # Android 15 WifiShellCommand prints this first from getWifiEnabledState().
+    # The remaining status can contain an SSID; retain only the boolean.
+    status = control.command(WIFI + ' status').splitlines()
+    require(status and status[0] in ('Wifi is enabled', 'Wifi is disabled'),
+            'wifi_state_unavailable')
+    return status[0] == 'Wifi is enabled'
+
+
+@contextmanager
+def single_uplink_fixture(control, evidence):
+    evidence.update(scope='disposable-single-eth0', prepared=False, restored=False)
+    require(control.command('getprop ro.kernel.qemu').strip() == '1'
+            and control.command('getprop ro.product.cpu.abi').strip() == 'x86_64',
+            'disposable_x86_emulator_required')
+    evidence.update(qemu=True, abi='x86_64')
+    initial = evidence['wifi_initial_enabled'] = wifi_enabled(control)
+    verify_control_transport(control, 'wlan0')
+    evidence['control_transport_verified'] = True
+    previously_required = control.single_ethernet_required
+    try:
+        if initial:
+            control.command(WIFI + ' set-wifi-enabled disabled')
+        deadline, previous = time.monotonic() + BASELINE_TIMEOUT, None
+        while time.monotonic() < deadline:
+            disabled = not wifi_enabled(control)
+            netd = control.netd_observation()
+            observed = None
+            if disabled and single_ethernet(netd):
+                rows = control.rule_snapshot()
+                route = control.command(IP + ' -4 route get 192.0.2.1')
+                devices = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', route))
+                if (devices == {'eth0'} and control.netd_observation() == netd
+                        and all(Counter(rows)[row] == count
+                                for row, count in ethernet_rules(netd).items())):
+                    observed = {'netd': netd, 'rules': rows, 'egress': 'eth0'}
+            if observed is not None and observed == previous:
+                evidence.update(wifi_disabled=True, stable_observations=[previous, observed],
+                                prepared=True)
+                break
+            previous = observed
+            time.sleep(min(POLL_INTERVAL, max(0, deadline - time.monotonic())))
+        require(evidence['prepared'], 'single_uplink_baseline_deadline')
+        control.single_ethernet_required = True
+        yield
+    finally:
+        control.single_ethernet_required = previously_required
+        try:
+            # Reassert the known original setting even after a partial failure;
+            # an unavailable post-proof status must not skip restoration.
+            control.command(WIFI + ' set-wifi-enabled ' + ('enabled' if initial else 'disabled'))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                current = evidence['wifi_final_enabled'] = wifi_enabled(control)
+                if current == initial:
+                    evidence['restored'] = True
+                    break
+                time.sleep(1)
+            require(evidence['restored'], 'wifi_restore_deadline')
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:
+            evidence['restore_reason'] = str(error) if isinstance(error, RuntimeError) else 'wifi_restore_failed'
+            raise RuntimeError('network_fixture_restore_failed') from None
+
+
+def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=None):
     evidence.update(status='not_verified', stage='select_uplink')
     routes = lines(control.command(IP + ' -4 route show table all'))
     interfaces = {match[1] for row in routes if row.startswith('default ') and 'linkdown' not in row
@@ -608,18 +695,11 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     require(len(selected) == 1 and selected <= interfaces, 'ambiguous_or_missing_uplink')
     interface = evidence['interface'] = selected.pop()
     evidence['default_interfaces'] = sorted(interfaces)
+    require(required_interface is None or interface == required_interface and interfaces == {required_interface},
+            'single_uplink_changed')
     # Refuse to lower an interface carrying a TCP adbd peer. Emulator pipe/Unix
     # transports and peers on a different interface keep the control channel up.
-    peers = control_peers(control.command(
-        f'p=$({BB} pidof adbd) || exit 1; test -n "$p" || exit 1; printf "ADBD\\n"; '
-        'for n in $p; do test -r /proc/$n/fd || exit 1; '
-        'for f in /proc/$n/fd/*; do readlink "$f" || exit 1; done; done; '
-        'printf "TCP\\n"; cat /proc/net/tcp /proc/net/tcp6'))
-    for peer in peers:
-        route = control.command(shlex.join([IP, '-6' if ':' in peer else '-4', 'route', 'get', peer]))
-        require(re.search(r'\bdev [a-zA-Z0-9_.-]+(?:\s|$)', route)
-                and not re.search(r'\bdev ' + interface + r'(?:\s|$)', route),
-                'uplink_carries_adb_control_or_unknown_route')
+    verify_control_transport(control, interface)
     evidence['control_transport_verified'] = True
 
     def begin_observation(key, state=None):
@@ -723,7 +803,7 @@ def uplink_reconnect(control, sentinel, uid, evidence):
                     status='verified', stage='complete')
 
 
-def verify(adb, instrument, component, evidence=None):
+def verify(adb, instrument, component, evidence=None, *, failure_observer=None):
     evidence = {} if evidence is None else evidence
     evidence.update(schema=1, status='not_verified', scope='disposable-android-app-uid-tun')
     if os.environ.get('MAGICNET_DISPOSABLE_AVD') != '1' or not re.fullmatch(
@@ -736,6 +816,7 @@ def verify(adb, instrument, component, evidence=None):
     rpdb = evidence['rpdb_loss'] = {'status': 'not_verified', 'recovery_entry': 'connectivity.tick',
                                    'recovery_tick_count': 0}
     control = Control(adb, rpdb)
+    failure_observed = False
 
     def observe(stage):
         try:
@@ -745,20 +826,36 @@ def verify(adb, instrument, component, evidence=None):
             raise RuntimeError('helper_control_failed') from None
 
     def fault(sentinel, uid, udp_sentinel):
+        nonlocal failure_observed
         evidence['app_uid'] = uid
         try:
             control.rpdb_loss(udp_sentinel, uid)
             reconnect = evidence['uplink_reconnect'] = {'recovery_tick_count': 0}
-            uplink_reconnect(Control(adb, reconnect), sentinel, uid, reconnect)
+            uplink_reconnect(Control(adb, reconnect), sentinel, uid, reconnect, required_interface='eth0')
         except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:
             # RuntimeError text is exclusively a fixed token from this harness.
             evidence['reason'] = str(error) if isinstance(error, RuntimeError) else 'fault_observation_failed'
+            if failure_observer is not None and not failure_observed:
+                failure_observed = True
+                try:
+                    failure_observer()
+                except Exception:
+                    evidence['failure_observer_failure'] = 'capture_failed'
             raise RuntimeError('route_control_failed') from None
 
-    result = proof.verify(adb, instrument, component, fault_control=fault, lifecycle_observer=observe)
+    fixture = evidence['network_fixture'] = {}
+    result = {'status': 'not_verified', 'positive': False, 'reject': False,
+              'positive_after': False, 'restored': False}
+    try:
+        with single_uplink_fixture(control, fixture):
+            result = proof.verify(adb, instrument, component, fault_control=fault, lifecycle_observer=observe)
+    except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:
+        evidence.setdefault('reason', str(error) if isinstance(error, RuntimeError) else 'network_fixture_failed')
     evidence['tun_controls'] = result
     evidence.update({key: result.get(key) is True for key in ('positive', 'reject', 'positive_after', 'restored')})
-    if result['status'] == 'verified' and all(evidence.get(key, {}).get('status') == 'verified'
+    evidence['restored'] = evidence['restored'] and fixture.get('restored') is True
+    if result['status'] == 'verified' and fixture.get('prepared') is True and evidence['restored'] \
+            and all(evidence.get(key, {}).get('status') == 'verified'
                                            for key in ('rpdb_loss', 'uplink_reconnect')):
         evidence['status'] = 'verified'
         evidence.pop('reason', None)

@@ -64,14 +64,17 @@ def eth0_uid_rules(net_id, priority, ranges):
             for base, mark in ((15000, 0x10000 | net_id), (22000, net_id))]
 
 
-def netd_state():
-    return {'networks': [
+def netd_state(*, wifi=False):
+    networks = [
                 {'net_id': 99, 'type': 'LOCAL', 'interfaces': [],
                  'details': ['Allowed UID ranges: unrestricted']},
                 {'net_id': 100, 'type': 'PHYSICAL', 'interfaces': ['eth0'],
-                 'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']},
+                 'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']}]
+    if wifi:
+        networks.append(
                 {'net_id': 101, 'type': 'PHYSICAL', 'interfaces': ['wlan0'],
-                 'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']}],
+                 'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']})
+    return {'networks': networks,
             'eth0_ifindex': 2,
             'eth0_fib': ['10.0.2.0/24 dev eth0 proto kernel scope link src 10.0.2.15',
                          'default via 10.0.2.2 dev eth0']}
@@ -128,6 +131,13 @@ def completed_report():
     recovery = {
         'schema': 1, 'status': 'verified', 'scope': 'disposable-android-app-uid-tun',
         'positive': True, 'reject': True, 'positive_after': True, 'restored': True, 'app_uid': 10123,
+        'network_fixture': {
+            'scope': 'disposable-single-eth0', 'qemu': True, 'abi': 'x86_64',
+            'control_transport_verified': True, 'wifi_initial_enabled': True,
+            'wifi_disabled': True, 'prepared': True, 'wifi_final_enabled': True,
+            'restored': True, 'stable_observations': [
+                {'netd': netd_state(), 'rules': unowned.copy(), 'egress': 'eth0'} for _ in range(2)],
+        },
         'rpdb_loss': {
             'status': 'verified', 'removed_rule_count': 1, 'core_identity_unchanged': True,
             'tun_unchanged': True, 'fib_unchanged': True, 'unowned_rules_unchanged': True,
@@ -148,10 +158,11 @@ def completed_report():
             'first_missing_identity': {'core_pid': 400, 'core_start_ticks': 10000},
             'recovery_after': recovered,
         },
-        'uplink_reconnect': {'status': 'verified', 'interface': 'wlan0', 'down_observed': True,
+        'uplink_reconnect': {'status': 'verified', 'interface': 'eth0', 'down_observed': True,
+                             'default_interfaces': ['eth0'],
                              'up_observed': True, 'ready_after_recovery': True, 'app_after_recovery': True,
                              'control_transport_verified': True, 'control_channel_survived': True,
-                             'restore_guard_finished': True, 'restore_method': 'android_wifi_toggle',
+                             'restore_guard_finished': True, 'restore_method': 'link_up',
                              'down_flags': 4098, 'up_flags': 4163,
                              'baseline': uplink_observation(recovered),
                              'last_observation': uplink_observation(recovered | {'checked_at': 102}),
@@ -219,6 +230,84 @@ class AndroidReportGateTests(unittest.TestCase):
     def test_complete_current_local_evidence_is_accepted(self):
         report = completed_report()
         self.assertIs(GATE.validate_report(report, SHA), report)
+
+    def test_network_fixture_restores_both_possible_initial_wifi_states(self):
+        for enabled in (True, False):
+            report = completed_report()
+            fixture = report['provenance']['route_recovery']['network_fixture']
+            fixture.update(wifi_initial_enabled=enabled, wifi_final_enabled=enabled)
+            GATE.validate_report(report, SHA)
+            fixture['wifi_final_enabled'] = not enabled
+            self.assert_rejected(report)
+
+    def test_network_fixture_requires_disposable_identity_control_and_cleanup(self):
+        for key, value in (
+                ('scope', 'physical-phone'), ('qemu', False), ('qemu', 1),
+                ('abi', 'arm64-v8a'), ('control_transport_verified', False),
+                ('control_transport_verified', 1), ('wifi_disabled', False),
+                ('wifi_disabled', 1), ('prepared', False), ('prepared', 1),
+                ('restored', False), ('restored', 1), ('wifi_initial_enabled', 1),
+                ('wifi_final_enabled', 'true')):
+            with self.subTest(key=key, value=value):
+                report = completed_report()
+                report['provenance']['route_recovery']['network_fixture'][key] = value
+                self.assert_rejected(report)
+        report = completed_report()
+        report['provenance']['route_recovery'].pop('network_fixture')
+        self.assert_rejected(report)
+
+    def test_network_fixture_requires_two_actual_identical_baseline_snapshots(self):
+        for change in ('missing', 'count-only', 'one', 'three', 'metadata-change', 'rule-change'):
+            with self.subTest(change=change):
+                report = completed_report()
+                fixture = report['provenance']['route_recovery']['network_fixture']
+                observations = fixture['stable_observations']
+                if change == 'missing':
+                    fixture.pop('stable_observations')
+                elif change == 'count-only':
+                    fixture['stable_observations'] = 2
+                elif change == 'one':
+                    observations.pop()
+                elif change == 'three':
+                    observations.append(copy.deepcopy(observations[0]))
+                elif change == 'metadata-change':
+                    observations[1]['netd']['eth0_ifindex'] += 1
+                else:
+                    observations[1]['rules'].append('12000: from all lookup main')
+                self.assert_rejected(report)
+
+    def test_network_fixture_baseline_needs_live_bound_selectors_and_eth0_egress(self):
+        for change in ('missing-netd', 'missing-rules', 'missing-egress', 'wifi-egress',
+                       'missing-selector', 'duplicate-selector', 'missing-local', 'wifi-present'):
+            with self.subTest(change=change):
+                report = completed_report()
+                observations = report['provenance']['route_recovery']['network_fixture']['stable_observations']
+                for snapshot in observations:
+                    if change in ('missing-netd', 'missing-rules', 'missing-egress'):
+                        snapshot.pop(change.removeprefix('missing-'))
+                    elif change == 'wifi-egress':
+                        snapshot['egress'] = 'wlan0'
+                    elif change == 'missing-selector':
+                        snapshot['rules'].remove(eth0_rules(100)[0])
+                    elif change == 'duplicate-selector':
+                        snapshot['rules'].append(eth0_rules(100)[0])
+                    elif change == 'missing-local':
+                        snapshot['rules'].remove('0: from all lookup local')
+                    else:
+                        snapshot['netd'] = netd_state(wifi=True)
+                self.assert_rejected(report)
+
+    def test_prepared_claim_does_not_excuse_wifi_during_the_fault_or_calibration(self):
+        for name in ('before', 'fault', 'after', 'before_stop', 'after_start', 'all'):
+            report = completed_report()
+            loss = report['provenance']['route_recovery']['rpdb_loss']
+            snapshots = {key: loss[key] for key in ('before', 'fault', 'after')}
+            snapshots.update({key: loss['helper_lifecycle'][key] for key in ('before_stop', 'after_start')})
+            for key, snapshot in snapshots.items():
+                if name in ('all', key):
+                    snapshot['netd'] = netd_state(wifi=True)
+            with self.subTest(name=name):
+                self.assert_rejected(report)
 
     def test_missing_duplicate_unrun_or_legacy_phase_never_passes(self):
         for change in ('missing', 'duplicate', 'legacy', 'failed', 'not_run', 'skipped', 'zero-proof'):
@@ -597,12 +686,13 @@ class AndroidReportGateTests(unittest.TestCase):
         )
         for path, value in changes:
             with self.subTest(path=path, value=value):
-                report = completed_report()
-                target = report['provenance']['route_recovery']['rpdb_loss']['after']['netd']
+                snapshot = {'netd': netd_state(wifi=True)}
+                target = snapshot['netd']
                 for key in path[:-1]:
                     target = target[key]
                 target[path[-1]] = value
-                self.assert_rejected(report)
+                with self.assertRaises(RuntimeError):
+                    GATE.netd_observation(snapshot)
 
     def test_netd_renumbering_cannot_excuse_partial_duplicate_or_unrelated_rules(self):
         for stage in ('after', 'before_stop'):
@@ -630,6 +720,9 @@ class AndroidReportGateTests(unittest.TestCase):
             with self.subTest(change=change):
                 report = completed_report()
                 after = report['provenance']['route_recovery']['rpdb_loss']['after']
+                if change == 'occupied-id':
+                    after['netd']['networks'].append({'net_id': 101, 'type': 'DUMMY',
+                        'interfaces': ['dummy0'], 'details': ['Allowed UID ranges: unrestricted']})
                 renumber_eth0(after, 101 if change == 'occupied-id' else 102)
                 observed = after['netd']
                 if change == 'ifindex':
@@ -640,9 +733,9 @@ class AndroidReportGateTests(unittest.TestCase):
                     observed['networks'][1]['details'] = ['Allowed UID ranges: unrestricted',
                                                         'Required permission: SYSTEM']
                 elif change == 'other-interface':
-                    observed['networks'][1]['interfaces'] = ['wlan1']
+                    observed['networks'][0]['interfaces'] = ['dummy0']
                 elif change == 'other-id':
-                    observed['networks'][1]['net_id'] = 98
+                    observed['networks'][0]['net_id'] = 98
                     observed['networks'].sort(key=lambda item: item['net_id'])
                 elif change == 'old-id':
                     observed['networks'].append({'net_id': 100, 'type': 'DUMMY', 'interfaces': [],
@@ -657,8 +750,7 @@ class AndroidReportGateTests(unittest.TestCase):
                 loss = report['provenance']['route_recovery']['rpdb_loss']
                 snapshot = loss['fault'] if change == 'fault' else loss['after']
                 if change == 'same-id-metadata':
-                    snapshot['netd']['networks'][2]['details'] = ['Allowed UID ranges: unrestricted',
-                                                               'Required permission: SYSTEM']
+                    snapshot['netd']['networks'][0]['details'] = ['Allowed UID ranges: uids{ }']
                 else:
                     renumber_eth0(snapshot, 102)
                     if change == 'no-owner-change':
@@ -877,10 +969,18 @@ class AndroidReportGateTests(unittest.TestCase):
         for key, value in (('down_flags', None), ('down_flags', False), ('down_flags', 1),
                            ('up_flags', None), ('up_flags', True), ('up_flags', 0),
                            ('down_flags', -2), ('up_flags', -1), ('interface', 'lo'),
-                           ('restore_method', None), ('restore_method', 'link_up')):
+                           ('restore_method', None), ('restore_method', 'android_wifi_toggle'),
+                           ('interface', 'wlan0')):
             with self.subTest(key=key, value=value):
                 report = completed_report()
                 report['provenance']['route_recovery']['uplink_reconnect'][key] = value
+                self.assert_rejected(report)
+
+    def test_uplink_requires_one_observed_ethernet_default_interface(self):
+        for value in (None, [], ['wlan0'], ['eth0', 'wlan0'], ['eth0', 'eth0'], 'eth0'):
+            with self.subTest(value=value):
+                report = completed_report()
+                report['provenance']['route_recovery']['uplink_reconnect']['default_interfaces'] = value
                 self.assert_rejected(report)
 
     def test_uplink_requires_present_production_observation_with_preserved_budget(self):
@@ -930,11 +1030,11 @@ class AndroidReportGateTests(unittest.TestCase):
 
     def test_uplink_recomputes_original_interface_default_in_both_observations(self):
         for name in ('baseline', 'last_observation'):
-            for routes in (None, [], ['default via 10.0.2.2 dev eth0'],
-                           ['192.168.1.0/24 dev wlan0 scope link'],
-                           ['default via 192.168.1.1 dev wlan0 linkdown'],
-                           ['default via 192.168.1.1 dev wlan01'],
-                           ['default via 192.168.1.1 dev wlan0\n']):
+            for routes in (None, [], ['default via 192.168.1.1 dev wlan0'],
+                           ['10.0.2.0/24 dev eth0 scope link'],
+                           ['default via 10.0.2.2 dev eth0 linkdown'],
+                           ['default via 10.0.2.2 dev eth01'],
+                           ['default via 10.0.2.2 dev eth0\n']):
                 with self.subTest(name=name, routes=routes):
                     report = completed_report()
                     report['provenance']['route_recovery']['uplink_reconnect'][name]['routes'] = routes

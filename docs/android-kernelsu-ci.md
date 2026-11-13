@@ -36,6 +36,18 @@ route configurations.
 
 ## Required route-loss recovery
 
+The whole route proof uses a single virtual Ethernet uplink so Android cannot
+switch between competing Wi-Fi and Ethernet defaults during the offline test.
+Before changing Wi-Fi, the harness requires the explicit disposable-AVD opt-in,
+an emulator serial, `ro.kernel.qemu=1`, `x86_64`, and an observed ADB control path
+that does not use Wi-Fi. It records the enabled state from the pinned Android
+[Wi-Fi status command](https://android.googlesource.com/platform/packages/modules/Wifi/+/refs/tags/android-15.0.0_r23/service/java/com/android/server/wifi/WifiShellCommand.java),
+temporarily disables Wi-Fi, then requires two identical network/rule observations
+five seconds apart within a bounded deadline. Both must show exactly one physical
+network on `eth0`, no `wlan0` network, complete netd-bound selectors and `eth0`
+egress. The `network_fixture` evidence retains both observations and the original
+Wi-Fi boolean, without retaining SSIDs.
+
 The `tun-route-recovery` phase keeps the application-UID TCP controls and uses
 a non-DNS UDP marker for RPDB loss: the fixed Android TCP REDIRECT path can still
 work without these rules. A temporary receiver lives inside the test app; the
@@ -46,7 +58,7 @@ The harness deletes only live IPv4
 the core generation, `magicnet0` and TUN forwarding table. The test requires
 readiness to become false and a new application connection to fail, then waits
 for the normal `connectivity tick` recovery path to restore both rules and flow.
-It also exercises a controlled virtual uplink down/up transition, requiring a
+It also exercises a controlled `eth0` down/up transition, requiring a
 fresh TCP positive control before interruption and retaining the final route,
 readiness and app observation if recovery times out. Production
 grace, confirmation and cooldown periods remain active; the fixture does not
@@ -69,7 +81,14 @@ The producer and independent release validator each enforce these constraints.
 Rejected network observations retain their failure stage.
 
 The report retains the fault observations, recovery action, app controls and
-configuration/resource restoration. A separate bounded JSON validator requires
+configuration/resource restoration. The enclosing fixture restores and reads back
+the original Wi-Fi enabled state in `finally`, including after a failed proof;
+failed restoration prevents a verified result. This checks the enabled state,
+not Wi-Fi association or Wi-Fi handover. If an RPDB or uplink control fails, the
+simulation requests a bounded, redacted support export before restoring the TUN
+configuration. Capture failure preserves the original test failure. An unexplained
+UDP timeout remains a failure; diagnostics do not replace a fresh app control.
+A separate bounded JSON validator requires
 the exact source SHA and every mandatory lifecycle phase, rejects malformed,
 missing, skipped or inconsistent evidence, and runs even after lifecycle failure.
 Host parser tests validate this gate; the actual emulator run establishes the

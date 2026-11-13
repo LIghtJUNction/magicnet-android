@@ -237,6 +237,43 @@ def route_helper(snapshot, rules):
     return {'rule': rule, 'table': helper['table'], 'fib': fib}
 
 
+def single_ethernet(snapshot):
+    netd_observation(snapshot)
+    networks = snapshot['netd']['networks']
+    physical = [network for network in networks if network['type'] == 'PHYSICAL']
+    require(len(physical) == 1 and physical[0]['interfaces'] == ['eth0']
+            and not any('wlan0' in network['interfaces'] for network in networks),
+            'Route recovery was not isolated to the physical eth0 uplink')
+
+
+def validate_network_fixture(evidence, loss):
+    fixture = evidence.get('network_fixture')
+    require(matches(fixture, {'scope': 'disposable-single-eth0', 'qemu': True,
+                              'abi': 'x86_64', 'control_transport_verified': True,
+                              'wifi_disabled': True, 'prepared': True, 'restored': True})
+            and type(fixture.get('wifi_initial_enabled')) is bool
+            and type(fixture.get('wifi_final_enabled')) is bool
+            and fixture['wifi_initial_enabled'] == fixture['wifi_final_enabled'],
+            'Route recovery lacks disposable network preparation and Wi-Fi restoration')
+    observations = fixture.get('stable_observations')
+    require(isinstance(observations, list) and len(observations) == 2
+            and observations[0] == observations[1],
+            'Route recovery lacks two matching network baseline observations')
+    for snapshot in observations:
+        require(isinstance(snapshot, dict) and snapshot.keys() == {'netd', 'rules', 'egress'}
+                and matches(snapshot, {'egress': 'eth0'}),
+                'Route recovery network baseline lacks observed eth0 egress')
+        single_ethernet(snapshot)
+        rules = text_rows(snapshot.get('rules'), 'network baseline rules')
+        require(rules['0: from all lookup local'] == 1
+                and all(rules[row] == count for row, count in netd_selectors(snapshot).items()),
+                'Route recovery network baseline lacks exact netd selectors')
+    lifecycle = loss['helper_lifecycle']
+    for snapshot in (loss['before'], loss['fault'], loss['after'],
+                     lifecycle['before_stop'], lifecycle['after_start']):
+        single_ethernet(snapshot)
+
+
 def validate_helper_lifecycle(loss, before, before_helper):
     lifecycle = loss.get('helper_lifecycle')
     require(isinstance(lifecycle, dict), 'Route helper lacks a stop/start ownership observation')
@@ -325,6 +362,7 @@ def validate_route_recovery(evidence):
     fault_helper = route_helper(fault, fault_rules)
     after_helper = route_helper(after, after_rules)
     validate_helper_lifecycle(loss, before, before_helper)
+    validate_network_fixture(evidence, loss)
     require(before_helper == fault_helper and before['netd'] == fault['netd'],
             'RPDB fault changed the core route helper or netd ownership evidence')
     previous_helper_fib = text_rows(after.get('previous_helper_fib'), 'previous helper FIB')
@@ -373,8 +411,9 @@ def validate_route_recovery(evidence):
     require(matches(reconnect, {'status': 'verified', 'down_observed': True,
                                'up_observed': True, 'ready_after_recovery': True,
                                'app_after_recovery': True, 'control_transport_verified': True,
-                               'control_channel_survived': True, 'restore_guard_finished': True})
-            and reconnect.get('interface') in ('wlan0', 'eth0')
+                               'control_channel_survived': True, 'restore_guard_finished': True,
+                               'default_interfaces': ['eth0']})
+            and reconnect.get('interface') == 'eth0'
             and all(type(reconnect.get(key)) is int and reconnect[key] >= 0
                     for key in ('down_flags', 'up_flags'))
             and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
