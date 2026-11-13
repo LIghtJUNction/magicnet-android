@@ -45,6 +45,10 @@ if grep -Eq '(^|/)(tests?|__tests__|fixtures?|__fixtures__|__snapshots__|bench|b
     fail "zip contains tests, fixtures or development dependencies"
 fi
 
+if grep -Eq '^\.config/sing-box/subscription-trust\.list($|/)' "$entries_file"; then
+    fail "zip contains device subscription trust policy"
+fi
+
 require_entry module.prop
 require_entry customize.sh
 require_entry cli
