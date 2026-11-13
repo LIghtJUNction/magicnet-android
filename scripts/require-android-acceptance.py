@@ -307,36 +307,65 @@ def validate_helper_lifecycle(loss, before, before_helper):
             'Route helper calibration changed other rules or does not describe the fault core')
 
 
-def validate_ethernet_lifecycle(reconnect):
-    lifecycle = reconnect.get('ethernet_lifecycle')
+def validate_cellular_lifecycle(reconnect):
+    lifecycle = reconnect.get('cellular_lifecycle')
     require(matches(lifecycle, {'acknowledged': True})
-            and lifecycle.keys() == {'before', 'down', 'acknowledged'},
-            'Ethernet reconnect lacks an acknowledged owner teardown')
-    for stage, running in (('before', True), ('down', False)):
+            and lifecycle.keys() == {'before', 'down', 'after', 'acknowledged'},
+            'Cellular reconnect lacks an acknowledged owner lifecycle')
+    for stage, running in (('before', True), ('down', False), ('after', True)):
         snapshot = lifecycle[stage]
         expected_fields = {'owner', 'networks'} | ({'flags'} if stage == 'down' else set())
         require(isinstance(snapshot, dict) and snapshot.keys() == expected_fields,
-                'Ethernet lifecycle lacks a complete ' + stage + ' observation')
-        expected_owner = {'enabled': True, 'interface': 'eth0', 'link_up': running,
-                          'network_agent_present': running, 'ip_client_present': running}
+                'Cellular lifecycle lacks a complete ' + stage + ' observation')
         owner = snapshot['owner']
-        require(matches(owner, expected_owner) and owner.keys() == expected_owner.keys(),
-                'Ethernet owner did not confirm its ' + stage + ' lifecycle state')
+        require(matches(owner, {'phone_id': 0, 'user_data_enabled': running,
+                                'data_enabled': running, 'data_state': 2 if running else 0})
+                and owner.keys() == {'phone_id', 'sub_id', 'user_data_enabled',
+                                     'data_enabled', 'data_state', 'connections'}
+                and type(owner['sub_id']) is int and 1 <= owner['sub_id'] <= 0x7fffffff
+                and isinstance(owner['connections'], list)
+                and len(owner['connections']) == int(running),
+                'Cellular owner did not confirm its ' + stage + ' lifecycle state')
         netd_networks(snapshot['networks'])
+        if running:
+            connection = owner['connections'][0]
+            require(matches(connection, {'state': 'CONNECTED', 'transport': 'WWAN',
+                                         'interface': 'eth0'})
+                    and connection.keys() == {'state', 'transport', 'net_id', 'interface'}
+                    and type(connection['net_id']) is int and 100 <= connection['net_id'] <= 65535,
+                    'Cellular owner lacks one connected WWAN eth0 network')
+            ethernet = netd_ethernet(snapshot['networks'])
+            require(connection['net_id'] == ethernet['net_id']
+                    and sum(network['type'] == 'PHYSICAL' for network in snapshot['networks']) == 1
+                    and not any('wlan0' in network['interfaces'] for network in snapshot['networks']),
+                    'Cellular owner does not match an isolated netd eth0 network')
 
-    before, down = lifecycle['before'], lifecycle['down']
+    before, down, after = (lifecycle[stage] for stage in ('before', 'down', 'after'))
+    require(all(snapshot['owner']['sub_id'] == before['owner']['sub_id']
+                for snapshot in (down, after)),
+            'Cellular lifecycle changed the active subscription')
     ethernet = netd_ethernet(before['networks'])
-    require(sum(network['type'] == 'PHYSICAL' for network in before['networks']) == 1
-            and not any('wlan0' in network['interfaces'] for network in before['networks']),
-            'Ethernet lifecycle was not isolated to the physical eth0 uplink')
     previous_id = ethernet['net_id']
-    require(all(network['net_id'] != previous_id for network in down['networks'])
-            and down['networks'] == [network for network in before['networks']
-                                     if network['net_id'] != previous_id],
-            'Ethernet teardown did not remove exactly its previous netd network')
+    unreachable = [network for network in before['networks'] if network['type'] == 'UNREACHABLE']
+    require(unreachable == [{'net_id': 52, 'type': 'UNREACHABLE', 'interfaces': [],
+                              'details': ['Allowed UID ranges: unrestricted']}],
+            'Cellular lifecycle lacks the supported empty unreachable UID network')
+    # This single-modem fixture moves exactly the disconnected network's UID
+    # preferences to netd's unreachable network. No other metadata is ignored.
+    per_app = [line for line in ethernet['details'] if line.startswith('Per-app UID ranges: ')]
+    expected_down = [network | {'details': sorted(network['details'] + per_app)}
+                     if network['net_id'] == 52 else network
+                     for network in before['networks'] if network['net_id'] != previous_id]
+    require(down['networks'] == expected_down,
+            'Cellular teardown changed more than its network and exact unreachable UID transfer')
     require(type(down['flags']) is int and 0 <= down['flags'] <= 0xffffffff
             and down['flags'] & 1 == 0 and down['flags'] == reconnect['down_flags'],
-            'Ethernet teardown lacks matching observed down flags')
+            'Cellular teardown lacks matching observed down flags')
+    restored_id = netd_ethernet(after['networks'])['net_id']
+    expected_after = [network | {'net_id': restored_id} if network['net_id'] == previous_id else network
+                      for network in before['networks']]
+    require(after['networks'] == sorted(expected_after, key=lambda network: network['net_id']),
+            'Cellular reconnect did not restore all network metadata and UID ownership')
 
 
 def uplink_observation(value, interface, uid, minimum_attempts):
@@ -454,13 +483,12 @@ def validate_route_recovery(evidence):
                                'control_channel_survived': True, 'restore_guard_finished': True,
                                'default_interfaces': ['eth0']})
             and reconnect.get('interface') == 'eth0'
-            and all(type(reconnect.get(key)) is int and reconnect[key] >= 0
+            and all(type(reconnect.get(key)) is int and 0 <= reconnect[key] <= 0xffffffff
                     for key in ('down_flags', 'up_flags'))
             and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
             'Local uplink reconnect was not verified')
-    validate_ethernet_lifecycle(reconnect)
-    require(reconnect.get('restore_method') == ('android_wifi_toggle'
-            if reconnect['interface'] == 'wlan0' else 'link_up'),
+    validate_cellular_lifecycle(reconnect)
+    require(reconnect.get('restore_method') == 'android_mobile_data_toggle',
             'Local uplink restore method is missing or inconsistent')
     baseline = uplink_observation(reconnect.get('baseline'), reconnect['interface'],
                                   evidence['app_uid'], recovered['recovery_attempts'])

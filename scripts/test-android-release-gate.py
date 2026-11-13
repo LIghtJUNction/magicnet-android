@@ -98,6 +98,40 @@ def eth0_uid_metadata(snapshot, allowed, per_app=None):
     network['details'] = sorted(details)
 
 
+def cellular_lifecycle(*, net_id=101, restored_id=102, permission='NONE',
+                       per_app='prio 40 uids{ 10134 }'):
+    # The real AVD diagnostic 43404505529 used a WWAN-owned eth0: its UID
+    # preference moved to unreachable network 52 while mobile data was off.
+    unreachable = {'net_id': 52, 'type': 'UNREACHABLE', 'interfaces': [],
+                   'details': ['Allowed UID ranges: unrestricted']}
+    local = {'net_id': 99, 'type': 'LOCAL', 'interfaces': [],
+             'details': ['Allowed UID ranges: unrestricted']}
+    ethernet = {'net_id': net_id, 'type': 'PHYSICAL', 'interfaces': ['eth0'],
+                'details': ['Allowed UID ranges: uids{ 0-99999 }',
+                            'Required permission: ' + permission]}
+    disconnected = copy.deepcopy(unreachable)
+    if per_app is not None:
+        ethernet['details'].insert(1, 'Per-app UID ranges: ' + per_app)
+        disconnected['details'].append('Per-app UID ranges: ' + per_app)
+    owner = {'phone_id': 0, 'sub_id': 1, 'user_data_enabled': True,
+             'data_enabled': True, 'data_state': 2, 'connections': [
+                 {'state': 'CONNECTED', 'transport': 'WWAN',
+                  'net_id': net_id, 'interface': 'eth0'}]}
+    restored = copy.deepcopy(owner)
+    restored['connections'][0]['net_id'] = restored_id
+    return {
+        'before': {'owner': owner, 'networks': [copy.deepcopy(unreachable),
+                                               copy.deepcopy(local), ethernet]},
+        'down': {'owner': {'phone_id': 0, 'sub_id': 1, 'user_data_enabled': False,
+                           'data_enabled': False, 'data_state': 0, 'connections': []},
+                 'networks': [disconnected, copy.deepcopy(local)], 'flags': 4098},
+        'after': {'owner': restored, 'networks': [copy.deepcopy(unreachable),
+                                                 copy.deepcopy(local),
+                                                 copy.deepcopy(ethernet) | {'net_id': restored_id}]},
+        'acknowledged': True,
+    }
+
+
 def completed_report():
     phases = (
         'environment', 'kernelsu-bootstrap', 'install-before-first-boot', 'cold-boot',
@@ -162,18 +196,9 @@ def completed_report():
                              'default_interfaces': ['eth0'],
                              'up_observed': True, 'ready_after_recovery': True, 'app_after_recovery': True,
                              'control_transport_verified': True, 'control_channel_survived': True,
-                             'restore_guard_finished': True, 'restore_method': 'link_up',
-                             'down_flags': 4098, 'up_flags': 4163,
-                             'ethernet_lifecycle': {
-                                 'before': {
-                                     'owner': {'enabled': True, 'interface': 'eth0', 'link_up': True,
-                                               'network_agent_present': True, 'ip_client_present': True},
-                                     'networks': netd_state()['networks']},
-                                 'down': {
-                                     'owner': {'enabled': True, 'interface': 'eth0', 'link_up': False,
-                                               'network_agent_present': False, 'ip_client_present': False},
-                                     'networks': netd_state()['networks'][:1], 'flags': 4098},
-                                 'acknowledged': True},
+                             'restore_guard_finished': True, 'restore_method': 'android_mobile_data_toggle',
+                             'down_flags': 4098, 'up_flags': 4099,
+                             'cellular_lifecycle': cellular_lifecycle(),
                              'baseline': uplink_observation(recovered),
                              'last_observation': uplink_observation(recovered | {'checked_at': 102}),
                              'recovery_after': recovered | {'checked_at': 102}},
@@ -980,6 +1005,8 @@ class AndroidReportGateTests(unittest.TestCase):
                            ('up_flags', None), ('up_flags', True), ('up_flags', 0),
                            ('down_flags', -2), ('up_flags', -1), ('interface', 'lo'),
                            ('restore_method', None), ('restore_method', 'android_wifi_toggle'),
+                           ('restore_method', 'link_up'), ('down_flags', 0x100000000),
+                           ('up_flags', 0x100000001),
                            ('interface', 'wlan0')):
             with self.subTest(key=key, value=value):
                 report = completed_report()
@@ -993,46 +1020,55 @@ class AndroidReportGateTests(unittest.TestCase):
                 report['provenance']['route_recovery']['uplink_reconnect']['default_interfaces'] = value
                 self.assert_rejected(report)
 
-    def test_ethernet_teardown_preserves_other_networks_and_observed_down_flags(self):
-        for permission, net_id in (('NONE', 100), ('NETWORK', 102), ('SYSTEM', 65535)):
-            for flags in (0, 4098, 0xfffffffe):
-                with self.subTest(permission=permission, net_id=net_id, flags=flags):
-                    report = completed_report()
-                    reconnect = report['provenance']['route_recovery']['uplink_reconnect']
-                    lifecycle = reconnect['ethernet_lifecycle']
-                    extra = {'net_id': 51, 'type': 'DUMMY', 'interfaces': ['dummy0'],
-                             'details': ['Allowed UID ranges: unrestricted']}
-                    for stage in ('before', 'down'):
-                        lifecycle[stage]['networks'].insert(0, copy.deepcopy(extra))
-                    ethernet = lifecycle['before']['networks'][-1]
-                    ethernet['net_id'] = net_id
-                    ethernet['details'] = ['Allowed UID ranges: uids{ 0-99999 }',
-                                           'Per-app UID ranges: prio 40 uids{ 10137 }',
-                                           'Required permission: ' + permission]
-                    reconnect['down_flags'] = lifecycle['down']['flags'] = flags
-                    GATE.validate_report(report, SHA)
+    def test_cellular_teardown_preserves_other_networks_permissions_and_observed_flags(self):
+        for permission in ('NONE', 'NETWORK', 'SYSTEM'):
+            for old_id, new_id in ((101, 102), (101, 101), (65535, 100)):
+                for flags in (0, 4098, 0xfffffffe):
+                    with self.subTest(permission=permission, ids=(old_id, new_id), flags=flags):
+                        report = completed_report()
+                        reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+                        lifecycle = cellular_lifecycle(net_id=old_id, restored_id=new_id,
+                                                       permission=permission)
+                        extra = {'net_id': 51, 'type': 'DUMMY', 'interfaces': ['dummy0'],
+                                 'details': ['Allowed UID ranges: unrestricted']}
+                        for stage in ('before', 'down', 'after'):
+                            lifecycle[stage]['networks'].insert(0, copy.deepcopy(extra))
+                            lifecycle[stage]['owner']['sub_id'] = 0x7fffffff
+                        reconnect['cellular_lifecycle'] = lifecycle
+                        reconnect['down_flags'] = lifecycle['down']['flags'] = flags
+                        GATE.validate_report(report, SHA)
 
-    def test_ethernet_teardown_requires_complete_acknowledged_evidence(self):
-        changes = (((), None), ((), {}), ((), []), ((), True),
-                   (('acknowledged',), False), (('acknowledged',), 1),
-                   (('before',), None), (('before',), True), (('before',), []),
-                   (('down',), None), (('down',), True), (('down',), []),
-                   (('before', 'extra'), True), (('down', 'extra'), True))
+    def test_cellular_uid_transfer_preserves_absence_empty_ranges_and_multiplicity(self):
+        for per_app in (None, 'prio 40 uids{ }', 'prio 40 uids{ 10134 }',
+                        'prio 40 uids{ 10134 10134 10134-10136 }; prio 41 uids{ 10135-10140 }'):
+            with self.subTest(per_app=per_app):
+                report = completed_report()
+                report['provenance']['route_recovery']['uplink_reconnect'][
+                    'cellular_lifecycle'] = cellular_lifecycle(per_app=per_app)
+                GATE.validate_report(report, SHA)
+
+    def test_cellular_lifecycle_requires_complete_acknowledged_evidence(self):
+        changes = [((), value) for value in (None, {}, [], True)]
+        changes += [(('acknowledged',), value) for value in (False, 1, None, 'true')]
+        changes += [(('extra',), True)]
+        for stage in ('before', 'down', 'after'):
+            changes += [((stage,), value) for value in (None, True, [])]
+            changes += [((stage, 'extra'), True)]
         for path, value in changes:
             with self.subTest(path=path, value=value):
                 report = completed_report()
                 target = report['provenance']['route_recovery']['uplink_reconnect']
-                for key in ('ethernet_lifecycle', *path)[:-1]:
+                for key in ('cellular_lifecycle', *path)[:-1]:
                     target = target[key]
-                target[('ethernet_lifecycle', *path)[-1]] = value
+                target[('cellular_lifecycle', *path)[-1]] = value
                 self.assert_rejected(report)
-        for path in (('ethernet_lifecycle',), ('ethernet_lifecycle', 'before'),
-                     ('ethernet_lifecycle', 'down'), ('ethernet_lifecycle', 'acknowledged'),
-                     ('ethernet_lifecycle', 'before', 'owner'),
-                     ('ethernet_lifecycle', 'before', 'networks'),
-                     ('ethernet_lifecycle', 'down', 'owner'),
-                     ('ethernet_lifecycle', 'down', 'networks'),
-                     ('ethernet_lifecycle', 'down', 'flags')):
+        missing_paths = [('cellular_lifecycle',), ('cellular_lifecycle', 'acknowledged'),
+                         ('cellular_lifecycle', 'down', 'flags')]
+        for stage in ('before', 'down', 'after'):
+            missing_paths += [('cellular_lifecycle', stage),
+                              ('cellular_lifecycle', stage, 'owner'),
+                              ('cellular_lifecycle', stage, 'networks')]
+        for path in missing_paths:
             with self.subTest(missing=path):
                 report = completed_report()
                 target = report['provenance']['route_recovery']['uplink_reconnect']
@@ -1040,42 +1076,81 @@ class AndroidReportGateTests(unittest.TestCase):
                     target = target[key]
                 target.pop(path[-1])
                 self.assert_rejected(report)
+        report = completed_report()
+        reconnect = report['provenance']['route_recovery']['uplink_reconnect']
+        reconnect['ethernet_lifecycle'] = reconnect.pop('cellular_lifecycle')
+        self.assert_rejected(report)
 
-    def test_ethernet_owner_states_require_exact_fields_and_real_booleans(self):
-        for stage in ('before', 'down'):
-            for key in ('enabled', 'link_up', 'network_agent_present', 'ip_client_present'):
-                expected = stage == 'before' or key == 'enabled'
-                for value in (not expected, int(expected), None, str(expected).lower()):
-                    with self.subTest(stage=stage, key=key, value=value):
-                        report = completed_report()
-                        owner = report['provenance']['route_recovery']['uplink_reconnect'][
-                            'ethernet_lifecycle'][stage]['owner']
-                        owner[key] = value
-                        self.assert_rejected(report)
-            for key, value in (('interface', None), ('interface', 'wlan0'),
-                               ('interface', 'eth01'), ('interface', True), ('extra', True)):
+    def test_cellular_owner_states_require_exact_fields_and_real_booleans(self):
+        for stage in ('before', 'down', 'after'):
+            enabled = stage != 'down'
+            changes = [(key, value) for key in ('user_data_enabled', 'data_enabled')
+                       for value in (not enabled, int(enabled), None, str(enabled).lower())]
+            changes += [('data_state', value) for value in
+                        (0 if enabled else 2, False, True, 2.0 if enabled else 0.0, None, '2')]
+            changes += [('phone_id', value) for value in (False, True, 1, -1, 0.0, None, '0')]
+            changes += [('sub_id', value) for value in (False, True, 0, -1, 0x80000000, 1.0, None, '1')]
+            changes += [('connections', value) for value in (None, True, {}, 'CONNECTED')]
+            changes += [('extra', True)]
+            for key, value in changes:
+                with self.subTest(stage=stage, key=key, value=value):
+                    report = completed_report()
+                    owner = report['provenance']['route_recovery']['uplink_reconnect'][
+                        'cellular_lifecycle'][stage]['owner']
+                    owner[key] = value
+                    self.assert_rejected(report)
+            for missing in ('phone_id', 'sub_id', 'user_data_enabled', 'data_enabled',
+                            'data_state', 'connections'):
+                with self.subTest(stage=stage, missing=missing):
+                    report = completed_report()
+                    report['provenance']['route_recovery']['uplink_reconnect'][
+                        'cellular_lifecycle'][stage]['owner'].pop(missing)
+                    self.assert_rejected(report)
+
+    def test_cellular_connection_requires_one_exact_connected_wwan_eth0_identity(self):
+        changes = [('state', value) for value in (None, True, 2, 'CONNECTING', 'DISCONNECTED', 'UNKNOWN')]
+        changes += [('transport', value) for value in (None, True, 'WLAN', 'CELLULAR', 'WWAN ')]
+        changes += [('interface', value) for value in (None, True, 'wlan0', 'eth01', 'eth0 ')]
+        changes += [('net_id', value) for value in (None, True, False, 99, 65536, 101.0, '101', 103)]
+        changes += [('extra', True)]
+        for stage in ('before', 'after'):
+            for key, value in changes:
                 with self.subTest(stage=stage, key=key, value=value):
                     report = completed_report()
                     report['provenance']['route_recovery']['uplink_reconnect'][
-                        'ethernet_lifecycle'][stage]['owner'][key] = value
+                        'cellular_lifecycle'][stage]['owner']['connections'][0][key] = value
                     self.assert_rejected(report)
-            for missing in ('enabled', 'interface', 'link_up',
-                            'network_agent_present', 'ip_client_present'):
+            for missing in ('state', 'transport', 'interface', 'net_id'):
+                with self.subTest(stage=stage, missing=missing):
+                    report = completed_report()
+                    report['provenance']['route_recovery']['uplink_reconnect'][
+                        'cellular_lifecycle'][stage]['owner']['connections'][0].pop(missing)
+                    self.assert_rejected(report)
+            for value in ([], [None], [True], [{}, {}]):
+                with self.subTest(stage=stage, connections=value):
+                    report = completed_report()
+                    report['provenance']['route_recovery']['uplink_reconnect'][
+                        'cellular_lifecycle'][stage]['owner']['connections'] = value
+                    self.assert_rejected(report)
+        report = completed_report()
+        lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
+        lifecycle['down']['owner']['connections'] = copy.deepcopy(lifecycle['before']['owner']['connections'])
+        self.assert_rejected(report)
+
+    def test_cellular_lifecycle_requires_the_same_subscription_in_every_stage(self):
+        for stage in ('before', 'down', 'after'):
+            with self.subTest(stage=stage):
                 report = completed_report()
                 report['provenance']['route_recovery']['uplink_reconnect'][
-                    'ethernet_lifecycle'][stage]['owner'].pop(missing)
+                    'cellular_lifecycle'][stage]['owner']['sub_id'] = 2
                 self.assert_rejected(report)
 
-    def test_ethernet_lifecycle_requires_nonempty_unique_bounded_network_lists(self):
-        for stage in ('before', 'down'):
+    def test_cellular_lifecycle_requires_nonempty_unique_bounded_network_lists(self):
+        for stage in ('before', 'down', 'after'):
             for change in ('missing', 'empty', 'scalar', 'duplicate', 'oversized', 'reordered'):
                 with self.subTest(stage=stage, change=change):
                     report = completed_report()
-                    lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['ethernet_lifecycle']
-                    extra = {'net_id': 51, 'type': 'DUMMY', 'interfaces': ['dummy0'],
-                             'details': ['Allowed UID ranges: unrestricted']}
-                    for item in ('before', 'down'):
-                        lifecycle[item]['networks'].insert(0, copy.deepcopy(extra))
+                    lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
                     networks = lifecycle[stage]['networks']
                     if change in ('missing', 'empty', 'scalar'):
                         lifecycle[stage]['networks'] = {'missing': None, 'empty': [], 'scalar': True}[change]
@@ -1087,7 +1162,7 @@ class AndroidReportGateTests(unittest.TestCase):
                         networks.reverse()
                     self.assert_rejected(report)
 
-    def test_ethernet_network_records_are_checked_even_when_other_records_match(self):
+    def test_cellular_network_records_are_checked_even_when_other_records_match(self):
         changes = (('net_id', True), ('net_id', '99'), ('net_id', 0), ('net_id', 65536),
                    ('type', None), ('type', ''), ('type', 'LOCAL\n'),
                    ('interfaces', None), ('interfaces', ['dummy0', 'dummy0']),
@@ -1101,81 +1176,159 @@ class AndroidReportGateTests(unittest.TestCase):
         for key, value in changes:
             with self.subTest(key=key, value=value):
                 report = completed_report()
-                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['ethernet_lifecycle']
-                for stage in ('before', 'down'):
-                    lifecycle[stage]['networks'][0][key] = copy.deepcopy(value)
+                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
+                for stage in ('before', 'down', 'after'):
+                    lifecycle[stage]['networks'][1][key] = copy.deepcopy(value)
                 self.assert_rejected(report)
         for missing in ('net_id', 'type', 'interfaces', 'details'):
             report = completed_report()
-            lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['ethernet_lifecycle']
-            for stage in ('before', 'down'):
-                lifecycle[stage]['networks'][0].pop(missing)
+            lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
+            for stage in ('before', 'down', 'after'):
+                lifecycle[stage]['networks'][1].pop(missing)
             self.assert_rejected(report)
 
-    def test_ethernet_teardown_requires_one_known_physical_eth0_before_down(self):
-        for change in ('second-physical', 'wifi-on-local', 'missing-eth0', 'virtual-eth0',
-                       'ambiguous-eth0', 'reserved-id', 'unknown-permission', 'invalid-uids'):
+    def test_cellular_running_network_requires_one_known_physical_eth0(self):
+        for stage in ('before', 'after'):
+            for change in ('second-physical', 'wifi-on-local', 'missing-eth0', 'virtual-eth0',
+                           'ambiguous-eth0', 'reserved-id', 'unknown-permission', 'invalid-uids',
+                           'invalid-per-app'):
+                with self.subTest(stage=stage, change=change):
+                    report = completed_report()
+                    lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
+                    networks = lifecycle[stage]['networks']
+                    ethernet = networks[-1]
+                    if change == 'second-physical':
+                        networks.append({'net_id': 103, 'type': 'PHYSICAL', 'interfaces': ['eth1'],
+                                         'details': ['Allowed UID ranges: unrestricted',
+                                                     'Required permission: NONE']})
+                    elif change == 'wifi-on-local':
+                        networks[1]['interfaces'] = ['wlan0']
+                    elif change == 'missing-eth0':
+                        networks.pop()
+                    elif change == 'virtual-eth0':
+                        ethernet['type'] = 'VIRTUAL'
+                        ethernet['details'].pop()
+                    elif change == 'ambiguous-eth0':
+                        ethernet['interfaces'].append('eth1')
+                    elif change == 'reserved-id':
+                        ethernet['net_id'] = 98
+                        lifecycle[stage]['owner']['connections'][0]['net_id'] = 98
+                        networks.sort(key=lambda network: network['net_id'])
+                    elif change == 'unknown-permission':
+                        ethernet['details'][-1] = 'Required permission: UNKNOWN'
+                    elif change == 'invalid-uids':
+                        ethernet['details'][0] = 'Allowed UID ranges: uids{ 2-1 }'
+                    else:
+                        ethernet['details'][1] = 'Per-app UID ranges: prio 40 uids{ 2-1 }'
+                    self.assert_rejected(report)
+
+    def test_cellular_teardown_requires_the_empty_reserved_unreachable_network(self):
+        for change in ('missing', 'wrong-id', 'wrong-type', 'interface', 'other-allowed-uids',
+                       'existing-per-app', 'existing-empty-per-app', 'second-unreachable'):
             with self.subTest(change=change):
                 report = completed_report()
-                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['ethernet_lifecycle']
-                before, down = lifecycle['before']['networks'], lifecycle['down']['networks']
-                if change == 'second-physical':
-                    extra = {'net_id': 101, 'type': 'PHYSICAL', 'interfaces': ['eth1'],
-                             'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE']}
-                    before.append(extra)
-                    down.append(copy.deepcopy(extra))
-                elif change == 'wifi-on-local':
-                    before[0]['interfaces'] = down[0]['interfaces'] = ['wlan0']
-                elif change == 'missing-eth0':
-                    before.pop()
-                elif change == 'virtual-eth0':
-                    before[1]['type'] = 'VIRTUAL'
-                    before[1]['details'].pop()
-                elif change == 'ambiguous-eth0':
-                    before[1]['interfaces'].append('eth1')
-                elif change == 'reserved-id':
-                    before[1]['net_id'] = 98
-                    before.sort(key=lambda network: network['net_id'])
-                elif change == 'unknown-permission':
-                    before[1]['details'][-1] = 'Required permission: UNKNOWN'
+                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
+                before = lifecycle['before']['networks']
+                unreachable = before[0]
+                if change == 'missing':
+                    before.pop(0)
+                elif change == 'wrong-id':
+                    unreachable['net_id'] = 53
+                elif change == 'wrong-type':
+                    unreachable['type'] = 'LOCAL'
+                elif change == 'interface':
+                    unreachable['interfaces'] = ['dummy0']
+                elif change == 'other-allowed-uids':
+                    unreachable['details'] = ['Allowed UID ranges: uids{ }']
+                elif change in ('existing-per-app', 'existing-empty-per-app'):
+                    unreachable['details'].append('Per-app UID ranges: prio 40 uids{ '
+                                                  + ('10134 ' if change == 'existing-per-app' else '') + '}')
                 else:
-                    before[1]['details'][0] = 'Allowed UID ranges: uids{ 2-1 }'
+                    before.insert(1, copy.deepcopy(unreachable) | {'net_id': 53})
                 self.assert_rejected(report)
 
-    def test_ethernet_teardown_removes_only_the_original_physical_network(self):
-        for change in ('old-network-remains', 'old-id-reused', 'replacement-network', 'other-removed',
-                       'other-id', 'other-interface', 'other-metadata', 'extra-network'):
+    def test_cellular_teardown_requires_exact_uid_transfer_and_preserves_other_records(self):
+        changes = ('old-network-remains', 'old-id-reused', 'replacement-network', 'other-removed',
+                   'other-id', 'other-interface', 'other-metadata', 'extra-network', 'missing-uid',
+                   'wrong-uid', 'extra-uid', 'wrong-priority', 'wrong-target', 'changed-unreachable')
+        for change in changes:
             with self.subTest(change=change):
                 report = completed_report()
-                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['ethernet_lifecycle']
-                extra = {'net_id': 51, 'type': 'DUMMY', 'interfaces': ['dummy0'],
-                         'details': ['Allowed UID ranges: unrestricted']}
-                for stage in ('before', 'down'):
-                    lifecycle[stage]['networks'].insert(0, copy.deepcopy(extra))
+                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
                 before, down = lifecycle['before']['networks'], lifecycle['down']['networks']
                 if change == 'old-network-remains':
                     down.append(copy.deepcopy(before[-1]))
                 elif change == 'old-id-reused':
-                    down.append(copy.deepcopy(extra) | {'net_id': 100})
+                    down.append(copy.deepcopy(before[1]) | {'net_id': 101})
                 elif change == 'replacement-network':
-                    down.append(copy.deepcopy(before[-1]) | {'net_id': 101})
+                    down.append(copy.deepcopy(before[-1]) | {'net_id': 102})
                 elif change == 'other-removed':
-                    down.pop(0)
+                    down.pop(1)
                 elif change == 'other-id':
-                    down[0]['net_id'] = 52
+                    down[1]['net_id'] = 98
                 elif change == 'other-interface':
-                    down[0]['interfaces'] = ['dummy1']
+                    down[1]['interfaces'] = ['dummy1']
                 elif change == 'other-metadata':
-                    down[0]['details'] = ['Allowed UID ranges: uids{ }']
+                    down[1]['details'] = ['Allowed UID ranges: uids{ }']
+                elif change == 'extra-network':
+                    down.append(copy.deepcopy(before[1]) | {'net_id': 103})
+                elif change == 'missing-uid':
+                    down[0]['details'].pop()
+                elif change == 'wrong-uid':
+                    down[0]['details'][-1] = 'Per-app UID ranges: prio 40 uids{ 10135 }'
+                elif change == 'extra-uid':
+                    down[0]['details'][-1] = 'Per-app UID ranges: prio 40 uids{ 10134 10135 }'
+                elif change == 'wrong-priority':
+                    down[0]['details'][-1] = 'Per-app UID ranges: prio 41 uids{ 10134 }'
+                elif change == 'wrong-target':
+                    down[1]['details'].append(down[0]['details'].pop())
                 else:
-                    down.append(copy.deepcopy(extra) | {'net_id': 101})
+                    down[0]['details'][0] = 'Allowed UID ranges: uids{ 0-99999 }'
+                self.assert_rejected(report)
+        report = completed_report()
+        lifecycle = cellular_lifecycle(per_app=None)
+        lifecycle['down']['networks'][0]['details'].append('Per-app UID ranges: prio 40 uids{ 10134 }')
+        report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle'] = lifecycle
+        self.assert_rejected(report)
+
+    def test_cellular_reconnect_restores_metadata_and_rejects_reused_foreign_identity(self):
+        for change in ('permission', 'allowed-uids', 'per-app-uids', 'unreachable-keeps-uids',
+                       'other-missing', 'other-id', 'other-interface', 'other-metadata',
+                       'old-id-reused', 'foreign-id-reused', 'extra-network'):
+            with self.subTest(change=change):
+                report = completed_report()
+                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
+                after = lifecycle['after']['networks']
+                if change == 'permission':
+                    after[-1]['details'][-1] = 'Required permission: NETWORK'
+                elif change == 'allowed-uids':
+                    after[-1]['details'][0] = 'Allowed UID ranges: unrestricted'
+                elif change == 'per-app-uids':
+                    after[-1]['details'][1] = 'Per-app UID ranges: prio 40 uids{ 10135 }'
+                elif change == 'unreachable-keeps-uids':
+                    after[0]['details'].append(after[-1]['details'][1])
+                elif change == 'other-missing':
+                    after.pop(1)
+                elif change == 'other-id':
+                    after[1]['net_id'] = 98
+                elif change == 'other-interface':
+                    after[1]['interfaces'] = ['dummy1']
+                elif change == 'other-metadata':
+                    after[1]['details'] = ['Allowed UID ranges: uids{ }']
+                elif change == 'old-id-reused':
+                    after.insert(2, copy.deepcopy(after[1]) | {'net_id': 101})
+                elif change == 'foreign-id-reused':
+                    for stage in ('before', 'down'):
+                        lifecycle[stage]['networks'].append(copy.deepcopy(after[1]) | {'net_id': 102})
+                else:
+                    after.append(copy.deepcopy(after[1]) | {'net_id': 103})
                 self.assert_rejected(report)
 
-    def test_ethernet_down_flags_are_uint32_down_and_match_the_final_observation(self):
+    def test_cellular_down_flags_are_uint32_down_and_match_the_final_observation(self):
         for value in (None, False, True, '4098', 4098.0, -2, 0x100000000, 1, 4099, 4096):
             with self.subTest(value=value):
                 report = completed_report()
-                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['ethernet_lifecycle']
+                lifecycle = report['provenance']['route_recovery']['uplink_reconnect']['cellular_lifecycle']
                 lifecycle['down']['flags'] = value
                 self.assert_rejected(report)
 
@@ -1241,7 +1394,7 @@ class AndroidReportGateTests(unittest.TestCase):
                 self.assert_rejected(report)
         report = completed_report()
         report['provenance']['route_recovery']['uplink_reconnect']['interface'] = 'eth0'
-        report['provenance']['route_recovery']['uplink_reconnect']['restore_method'] = 'link_up'
+        report['provenance']['route_recovery']['uplink_reconnect']['restore_method'] = 'android_mobile_data_toggle'
         GATE.validate_report(report, SHA)
 
     def test_uplink_requires_actual_same_uid_tcp_success_before_and_after(self):

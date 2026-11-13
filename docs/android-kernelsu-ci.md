@@ -36,8 +36,12 @@ route configurations.
 
 ## Required route-loss recovery
 
-The whole route proof uses a single virtual Ethernet uplink so Android cannot
-switch between competing Wi-Fi and Ethernet defaults during the offline test.
+The whole route proof uses a single virtual cellular uplink so Android cannot
+switch between competing Wi-Fi and cellular defaults during the offline test.
+On this pinned Google API 35 image, `eth0` is the emulator radio data interface,
+not an Android Ethernet service interface. A dedicated
+[device diagnostic](https://github.com/LIghtJUNction/magicnet-android/actions/runs/43404505529)
+observed its CELLULAR/WWAN ownership and its complete mobile-data off/on cycle.
 Before changing Wi-Fi, the harness requires the explicit disposable-AVD opt-in,
 an emulator serial, `ro.kernel.qemu=1`, `x86_64`, and an observed ADB control path
 that does not use Wi-Fi. It records the enabled state from the pinned Android
@@ -58,28 +62,43 @@ The harness deletes only live IPv4
 the core generation, `magicnet0` and TUN forwarding table. The test requires
 readiness to become false and a new application connection to fail, then waits
 for the normal `connectivity tick` recovery path to restore both rules and flow.
-It also exercises a controlled `eth0` down/up transition, requiring a
+It also exercises a controlled mobile-data off/on transition on `eth0`, requiring a
 fresh TCP positive control before interruption and retaining the final route,
 readiness and app observation if recovery times out. Production
 grace, confirmation and cooldown periods remain active; the fixture does not
 fabricate canonical state or require Google or a subscription provider.
 
-The Ethernet interruption waits for Android to finish stopping the old network
-before raising the link. Before `down`, the report records an enabled Ethernet
-owner with a live NetworkAgent and IpClient, together with the complete netd
-inventory. Within 15 seconds after `down`, the interface must remain down, the
-owner must report link-down and both objects absent, and netd must have removed
-exactly the old `eth0` network while preserving every other record. The
-`ethernet_lifecycle` evidence retains these parsed observations and an explicit
-acknowledgment; missing, malformed or timed-out dumps remain failures. This
-ordering addresses the teardown race described in the pinned Android
-[EthernetNetworkFactory](https://android.googlesource.com/platform/packages/modules/Connectivity/+/refs/tags/android-15.0.0_r23/service-t/src/com/android/server/ethernet/EthernetNetworkFactory.java),
-where destroying the old network can otherwise remove newly created routes.
-Every failure still executes link restoration. An independent 30-second restore
-guard survives a host interruption. Cleanup observes its completion with a
-35-second polling deadline and a 10-second limit on each device read. The
-subsequent 600-second route/readiness/app recovery
-budget is unchanged; the harness never recreates Android's routes itself.
+The interruption uses Android's
+[`cmd phone data disable` / `enable`](https://android.googlesource.com/platform/packages/services/Telephony/+/refs/tags/android-15.0.0_r23/src/com/android/phone/TelephonyShellCommand.java).
+Before changing data state, the report binds the unique default phone and data
+subscription to the current registry observation, one CONNECTED/WWAN/eth0
+connection, and the same netId in netd. User and effective data must both be
+enabled. The phone and registry parsers read explicitly bounded current sections;
+historical log entries cannot supply current state. Only normalized identifiers,
+booleans and connection metadata enter the report, not APNs or raw dumps.
+
+The disable command and shutdown observations share a 15-second deadline. An
+acknowledged shutdown requires user and effective data disabled, disconnected
+data state, no current precise data connections, an actual DOWN interface and
+destruction of the old eth0 network in netd. Android transfers the old network's
+exact per-app UID metadata to UNREACHABLE while the default network is absent;
+only that derived transfer is accepted. Other netd records must remain unchanged,
+and a baseline with pre-existing UNREACHABLE per-app metadata is unsupported.
+The `cellular_lifecycle` evidence retains before/down/after observations. After
+enable, the same phone and subscription must have one connected WWAN/eth0 network;
+the original netd metadata must return, with only its netId allowed to change.
+The independent validator checks this evidence again.
+
+This control follows the actual
+[emulator radio lifecycle](https://android.googlesource.com/device/google/cuttlefish/+/refs/tags/android-15.0.0_r23/guest/hals/ril/reference-ril/reference-ril.c)
+and [Telephony data network teardown](https://android.googlesource.com/platform/frameworks/opt/telephony/+/refs/tags/android-15.0.0_r23/src/java/com/android/internal/telephony/data/DataNetwork.java).
+An interface UP flag alone cannot request a fresh radio data call. Every failure
+still executes mobile-data restoration. An independent 30-second enable guard
+survives a host interruption; cleanup observes its completion with a 35-second
+polling deadline and a 10-second limit on each device read. The subsequent
+600-second route/readiness/app recovery budget is unchanged. The harness never
+recreates Android's routes itself. Missing, malformed or timed-out observations
+remain failures, including a nonexistent service returning empty stdout with rc0.
 
 The first fixture activation observes the normal stop/start boundary to prove
 ownership of the core's random redirect table. Recovery may replace that proven

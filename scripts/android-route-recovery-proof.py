@@ -28,7 +28,9 @@ TUN = 'magicnet0'
 LIMIT = 65536
 NETD_LIMIT = 1024 * 1024
 NETD = '/system/bin/dumpsys -t 5 netd --short'
-ETHERNET = '/system/bin/dumpsys -t 2 ethernet'
+REGISTRY = '/system/bin/dumpsys -t 2 telephony.registry 2>&1'
+PHONE = '/system/bin/dumpsys -t 2 phone 2>&1'
+MOBILE_DATA = '/system/bin/cmd phone data'
 WIFI = '/system/bin/cmd wifi'
 NETD_PERMISSIONS = {'NONE': 0, 'NETWORK': 0x40000, 'SYSTEM': 0xc0000}
 TICK_INTERVAL = 60
@@ -629,51 +631,100 @@ def wifi_enabled(control):
     return status[0] == 'Wifi is enabled'
 
 
-def ethernet_owner(text):
-    # Android 15 r23 EthernetTracker/NetworkFactory dump on the service handler.
-    # Object identities and network details are parsed, never retained.
-    require(isinstance(text, str) and len(text.encode()) <= LIMIT and '\x00' not in text
-            and not re.search(r'DUMP TIMEOUT|DUMP ERROR|DUMP FAILED|EXPIRED', text),
-            'invalid_ethernet_dump')
-    rows = [row.rstrip() for row in text.splitlines() if row.strip()]
-    stripped = [row.strip() for row in rows]
-    headings = ('Current Ethernet state:', 'EthernetTracker', 'EthernetNetworkFactory',
-                'Tracking interfaces:', 'Handler:')
-    require(all(stripped.count(heading) == 1 for heading in headings), 'incomplete_ethernet_dump')
-    positions = [stripped.index(heading) for heading in headings]
-    require(positions == sorted(positions) and positions[0] == 0, 'invalid_ethernet_dump_order')
-    states = [row for row in stripped if row.startswith('Ethernet State:')]
-    require(len(states) == 1 and states[0] in ('Ethernet State: enabled', 'Ethernet State: disabled')
-            and positions[1] < stripped.index(states[0]) < positions[2], 'invalid_ethernet_state')
-    records = rows[positions[3] + 1:positions[4]]
-    pattern = re.compile(
-        r'( *)([a-zA-Z0-9_.-]{1,15}):NetworkInterfaceState\{ iface: ([a-zA-Z0-9_.-]{1,15}), '
-        r'up: (true|false), hwAddress: (?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}, '
-        r'networkCapabilities: \[[^\n]*\], '
-        r'networkAgent: (null|(?:[a-zA-Z_$][a-zA-Z0-9_$]*\.)+EthernetNetworkAgent@[0-9a-f]{1,8}), '
-        r'ipClient: (null|(?:[a-zA-Z_$][a-zA-Z0-9_$]*\.)+IpClientManager@[0-9a-f]{1,8}),'
-        r'linkProperties: \{[^\n]*\}\}')
-    interfaces, result, index = set(), None, 0
-    while index < len(records):
-        row = records[index]
-        match = pattern.fullmatch(row)
-        require(match and match[2] == match[3] and match[2] not in interfaces
-                and all(row.count(field + ': ') == 1 for field in
-                        ('iface', 'up', 'hwAddress', 'networkCapabilities', 'networkAgent',
-                         'ipClient', 'linkProperties')), 'invalid_ethernet_interface')
-        interfaces.add(match[2])
-        index += 1
-        client_present = match[6] != 'null'
-        if not client_present:
-            require(index < len(records) and records[index] == match[1] + '  IpClient is null',
-                    'ethernet_ip_client_null_not_confirmed')
-            index += 1
-        if match[2] == 'eth0':
-            result = {'enabled': states[0] == 'Ethernet State: enabled', 'interface': 'eth0',
-                      'link_up': match[4] == 'true', 'network_agent_present': match[5] != 'null',
-                      'ip_client_present': client_present}
-    require(result is not None, 'ethernet_interface_unavailable')
-    return result
+def cellular_owner(registry, phone):
+    # The pinned Google AVD uses eth0 for its radio data call, not EthernetService.
+    # Read only the current registry/PhoneGlobals sections; historical logs and
+    # APN/address payloads never become evidence or substitutes for missing fields.
+    for text in (registry, phone):
+        require(isinstance(text, str) and len(text.encode()) <= NETD_LIMIT
+                and not re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|'
+                                  r'DUMP TIMEOUT|DUMP ERROR|DUMP FAILED|DUMP TRUNCATED|EXPIRED',
+                                  text, re.IGNORECASE), 'invalid_cellular_dump')
+    rows = [row.rstrip() for row in registry.splitlines() if row.strip()]
+    require(rows and rows[0] == 'last known state:' and rows.count('last known state:') == 1
+            and rows.count('local logs:') == 1, 'incomplete_cellular_registry')
+    current = rows[1:rows.index('local logs:')]
+    require(current and current[0] == '  Phone Id=0'
+            and [row for row in current if row.lstrip().startswith('Phone Id=')]
+            == ['  Phone Id=0'], 'ambiguous_cellular_phone')
+    boundaries = [index for index, row in enumerate(current) if row.startswith('  mPhoneCapability=')]
+    require(len(boundaries) == 1, 'incomplete_cellular_registry')
+    specific, common = current[1:boundaries[0]], current[boundaries[0]:]
+
+    def field(section, name, pattern, indent):
+        found = [row for row in section if re.match(r'\s*' + re.escape(name) + r'\s*=', row)]
+        match = re.fullmatch(' ' * indent + re.escape(name) + '=' + pattern, found[0]) if len(found) == 1 else None
+        require(match, 'invalid_cellular_field')
+        return match[1]
+
+    phone_rows = [row.rstrip() for row in phone.splitlines() if row.strip()]
+    first, last = '------- PhoneGlobals -------', '------- End PhoneGlobals -------'
+    require(phone_rows and phone_rows[0] == first and phone_rows.count(first) == 1
+            and phone_rows.count(last) == 1, 'incomplete_cellular_phone_globals')
+    globals_rows = phone_rows[1:phone_rows.index(last)]
+    integer = r'([1-9][0-9]{0,9})'
+    sub_id = int(field(common, 'mActiveDataSubId', integer, 2))
+    require(sub_id <= 2147483647
+            and int(field(common, 'mDefaultSubId', integer, 2)) == sub_id
+            and field(common, 'mDefaultPhoneId', r'(0)', 2) == '0'
+            and int(field(globals_rows, 'mDefaultDataSubId', integer, 2)) == sub_id,
+            'cellular_subscription_mismatch')
+    owner = {'phone_id': 0, 'sub_id': sub_id,
+             'user_data_enabled': field(specific, 'mUserMobileDataState', r' (true|false)', 4) == 'true',
+             'data_enabled': field(specific, 'mIsDataEnabled', r'(true|false)', 4) == 'true',
+             'data_state': int(field(specific, 'mDataConnectionState', r'(-1|[0-5])', 4)),
+             'connections': []}
+    value = field(specific, 'mPreciseDataConnectionStates', r'(\{[^\n]*\})', 4)
+    if value != '{}':
+        # A single current WWAN data call is the supported fixture. Pair's 1 is
+        # a transport and id is a call ID; neither is the subscription ID.
+        match = re.fullmatch(
+            r'\{Pair\{1 \[ApnSetting\] ([^{}\n]{1,4096})\}= state: '
+            r'(DISCONNECTED|CONNECTING|CONNECTED|SUSPENDED|DISCONNECTING|HANDOVER_IN_PROGRESS), '
+            r'transport: WWAN, id: ([1-9][0-9]{0,9}), netId: ([1-9][0-9]{0,4}), '
+            r'network type: [A-Za-z0-9_+]{1,32}, APN Setting: \[ApnSetting\] ([^{}\n]{1,4096}), '
+            r'link properties: \{InterfaceName: eth0 [^{}\n]{1,8192}\}, '
+            r'default QoS: null, fail cause: NONE\(0x0\), network validation status: unsupported\}', value)
+        require(match and match[1] == match[5] and int(match[3]) <= 2147483647
+                and 100 <= int(match[4]) <= 65535
+                and all(value.count(marker) == 1 for marker in
+                        ('}= state: ', ', transport: ', ', id: ', ', netId: ', ', network type: ',
+                         ', APN Setting: ', ', link properties: ', 'InterfaceName: ',
+                         ', default QoS: ', ', fail cause: ', ', network validation status: ')),
+                'invalid_cellular_connection')
+        owner['connections'] = [{'state': match[2], 'transport': 'WWAN',
+                                 'net_id': int(match[4]), 'interface': 'eth0'}]
+    return owner
+
+
+def cellular_online(owner, networks):
+    if not single_ethernet({'networks': networks}):
+        return False
+    network = ethernet_network({'networks': networks})
+    return (owner['user_data_enabled'] and owner['data_enabled'] and owner['data_state'] == 2
+            and owner['connections'] == [{'state': 'CONNECTED', 'transport': 'WWAN',
+                                         'net_id': network['net_id'], 'interface': 'eth0'}])
+
+
+def cellular_stopped_networks(networks):
+    network = ethernet_network({'networks': networks})
+    unreachable = [item for item in networks if item['type'] == 'UNREACHABLE']
+    require(unreachable == [{'net_id': 52, 'type': 'UNREACHABLE', 'interfaces': [],
+                             'details': ['Allowed UID ranges: unrestricted']}],
+            'unsupported_cellular_unreachable_baseline')
+    per_app = [row for row in network['details'] if row.startswith('Per-app UID ranges: ')]
+    return [item | {'details': sorted(item['details'] + per_app)} if item['net_id'] == 52 else item
+            for item in networks if item['net_id'] != network['net_id']]
+
+
+def cellular_networks_restored(before, after):
+    old, new = (ethernet_network({'networks': networks}) for networks in (before, after))
+    if (old['net_id'] != new['net_id']
+            and (any(item['net_id'] == old['net_id'] for item in after)
+                 or any(item['net_id'] == new['net_id'] for item in before))):
+        return False
+    restored = [item | {'net_id': old['net_id']} if item is new else item for item in after]
+    return sorted(restored, key=lambda item: item['net_id']) == before
 
 
 @contextmanager
@@ -759,6 +810,16 @@ def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=Non
 
     def recovered(state, key='last_observation'):
         observed = begin_observation(key, state)
+        if interface == 'eth0' and key == 'last_observation':
+            after = lifecycle['after'] = {'owner': None, 'networks': None}
+            observe_cellular(after)
+            require(all(after['owner'][field] == before['owner'][field]
+                        for field in ('phone_id', 'sub_id')), 'cellular_identity_changed')
+            if not cellular_online(after['owner'], after['networks']):
+                observed['tcp']['reason'] = 'cellular_not_connected'
+                return False
+            require(cellular_networks_restored(before['networks'], after['networks']),
+                    'cellular_foreign_network_changed')
         routes = observed['routes'] = lines(control.command(IP + ' -4 route show table all'))
         routed = observed['selected_default'] = any(
             row.startswith('default ') and 'linkdown' not in row
@@ -799,18 +860,22 @@ def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=Non
 
     require(flags() & 1, 'uplink_not_initially_up')
     if interface == 'eth0':
-        lifecycle = evidence['ethernet_lifecycle'] = {'acknowledged': False, 'before': {}}
+        def observe_cellular(observed, timeout=lambda: 3):
+            registry = control.command(REGISTRY, timeout=timeout(), limit=NETD_LIMIT)
+            phone = control.command(PHONE, timeout=timeout(), limit=NETD_LIMIT)
+            observed['owner'] = cellular_owner(registry, phone)
+            observed['networks'] = parse_netd_networks(control.command(NETD, timeout=timeout(), limit=NETD_LIMIT))
+
+        lifecycle = evidence['cellular_lifecycle'] = {'acknowledged': False, 'before': {}}
         before = lifecycle['before']
-        before['owner'] = ethernet_owner(control.command(ETHERNET, timeout=3))
-        before['networks'] = parse_netd_networks(control.command(NETD, timeout=3, limit=NETD_LIMIT))
-        require(before['owner'] == {'enabled': True, 'interface': 'eth0', 'link_up': True,
-                                   'network_agent_present': True, 'ip_client_present': True}
-                and single_ethernet({'networks': before['networks']}), 'ethernet_baseline_not_ready')
+        observe_cellular(before)
+        require(cellular_online(before['owner'], before['networks']), 'cellular_baseline_not_ready')
         network = ethernet_network({'networks': before['networks']})
-        stopped_networks = [item for item in before['networks'] if item['net_id'] != network['net_id']]
+        stopped_networks = cellular_stopped_networks(before['networks'])
+        remaining_networks = [item for item in before['networks'] if item['net_id'] != network['net_id']]
     up = shlex.join([IP, 'link', 'set', 'dev', interface, 'up'])
-    restore = up
-    evidence['restore_method'] = 'link_up'
+    restore = MOBILE_DATA + ' enable' if interface == 'eth0' else up
+    evidence['restore_method'] = 'android_mobile_data_toggle' if interface == 'eth0' else 'link_up'
     if interface == 'wlan0':
         # A raw link down tears down the emulator supplicant. Let Android
         # recreate it and reacquire the network before observing recovery.
@@ -830,9 +895,11 @@ def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=Non
         deadline = time.monotonic() + 15
         def remaining_timeout():
             remaining = deadline - time.monotonic()
-            require(remaining > 0, 'ethernet_shutdown_deadline')
+            require(remaining > 0, 'cellular_shutdown_deadline')
             return min(3, remaining)
-        control.command(shlex.join([IP, 'link', 'set', 'dev', interface, 'down']),
+        down_command = (MOBILE_DATA + ' disable' if interface == 'eth0' else
+                        shlex.join([IP, 'link', 'set', 'dev', interface, 'down']))
+        control.command(down_command,
                         timeout=remaining_timeout() if interface == 'eth0' else 10)
         while True:
             timeout = remaining_timeout() if interface == 'eth0' else 10
@@ -841,21 +908,21 @@ def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=Non
                 lifecycle['down'] = down
             down['flags'] = evidence['down_flags'] = flags(timeout)
             evidence['down_observed'] = down['flags'] & 1 == 0
-            require(evidence['down_observed'], 'uplink_down_not_observed')
             evidence['control_channel_survived'] = True
             if interface != 'eth0':
+                require(evidence['down_observed'], 'uplink_down_not_observed')
                 break
-            down['owner'] = ethernet_owner(control.command(ETHERNET, timeout=remaining_timeout()))
-            down['networks'] = parse_netd_networks(control.command(
-                NETD, timeout=remaining_timeout(), limit=NETD_LIMIT))
-            require(down['owner']['enabled'], 'ethernet_disabled_during_fault')
+            observe_cellular(down, remaining_timeout)
+            require(all(down['owner'][field] == before['owner'][field]
+                        for field in ('phone_id', 'sub_id')), 'cellular_identity_changed')
             require([item for item in down['networks'] if item['net_id'] != network['net_id']]
-                    == stopped_networks, 'ethernet_foreign_network_changed')
-            if (down['owner'] == {'enabled': True, 'interface': 'eth0', 'link_up': False,
-                                 'network_agent_present': False, 'ip_client_present': False}
+                    in (remaining_networks, stopped_networks), 'cellular_foreign_network_changed')
+            if (not down['owner']['user_data_enabled'] and not down['owner']['data_enabled']
+                    and down['owner']['data_state'] == 0 and down['owner']['connections'] == []
+                    and evidence['down_observed']
                     and down['networks'] == stopped_networks and time.monotonic() < deadline):
-                # Factory.stop() warns that old destroyNativeNetwork can delete
-                # a new IpClient's routes. Observe both owners before link up.
+                # A raw link up does not ask the radio/Telephony owner to rebuild
+                # routes. Await its completed teardown before enabling data.
                 lifecycle['acknowledged'] = True
                 break
             time.sleep(min(1, max(0, deadline - time.monotonic())))
