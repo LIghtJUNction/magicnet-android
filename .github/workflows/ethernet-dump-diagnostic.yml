@@ -51,7 +51,7 @@ jobs:
           test -e /dev/kvm
           sudo chmod 0666 /dev/kvm
           nohup emulator @MagicNet_API_35 -port 5554 -accel on -no-window -noaudio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -memory 2048 >artifacts/ethernet-diagnostic/emulator.log 2>&1 &
-      - name: Capture bounded read-only Ethernet observations
+      - name: Capture disposable cellular lifecycle observations
         run: |
           python3 - <<'PY'
           import json, os, subprocess, time
@@ -81,21 +81,39 @@ jobs:
           time.sleep(5)
           props = {key: adb('shell', 'getprop', key).decode().strip() for key in ['ro.build.fingerprint', 'ro.build.version.release', 'ro.build.version.sdk', 'ro.product.cpu.abi', 'ro.kernel.qemu']}
           assert props['ro.product.cpu.abi'] == 'x86_64' and props['ro.kernel.qemu'] == '1'
-          (out / 'provenance.json').write_text(json.dumps({'scope': 'read-only-stock-kernel-parser-diagnostic', 'source_sha': os.environ['GITHUB_SHA'], 'device': props}, indent=2) + '\n')
+          (out / 'provenance.json').write_text(json.dumps({'scope': 'disposable-stock-kernel-cellular-diagnostic', 'source_sha': os.environ['GITHUB_SHA'], 'device': props}, indent=2) + '\n')
           adb('shell', '/system/bin/dumpsys', '-l', record='services')
           adb('shell', 'service', 'list', record='binder-services')
           adb('shell', 'pm', 'list', 'features', record='features')
-          deadline = time.monotonic() + 90
-          while time.monotonic() < deadline:
-              netd = adb('shell', '/system/bin/dumpsys', '-t', '5', 'netd', record='netd')
-              if b'PHYSICAL eth0' in netd:
-                  break
-              time.sleep(3)
           for seconds in (2, 5):
               adb('shell', '/system/bin/dumpsys', '-t', str(seconds), 'ethernet', record=f'ethernet-{seconds}s')
-          adb('shell', '/system/bin/dumpsys', '-t', '5', 'connectivity', record='connectivity')
-          adb('shell', '/system/bin/dumpsys', '-t', '5', 'network_stack', record='network-stack')
-          adb('shell', 'ip', '-4', 'address', record='ipv4-address')
+          def snapshot(stage):
+              for service in ('phone', 'telephony.registry', 'connectivity', 'netd'):
+                  adb('shell', '/system/bin/dumpsys', '-t', '5', service, record=stage + '-' + service)
+              adb('shell', 'cat', '/sys/class/net/eth0/flags', record=stage + '-eth0-flags')
+              adb('shell', 'ip', '-4', 'route', 'show', 'table', 'all', record=stage + '-ipv4-routes')
+          def wait_eth0(present, seconds):
+              deadline = time.monotonic() + seconds
+              while time.monotonic() < deadline:
+                  netd = adb('shell', '/system/bin/dumpsys', '-t', '5', 'netd', record='netd-last')
+                  if (b'PHYSICAL eth0' in netd) == present:
+                      return
+                  time.sleep(1)
+              raise RuntimeError('eth0 network lifecycle deadline')
+          try:
+              adb('shell', '/system/bin/cmd', 'wifi', 'set-wifi-enabled', 'disabled')
+              wait_eth0(True, 120)
+              snapshot('before')
+              adb('shell', '/system/bin/toybox nohup /system/bin/sh -c "sleep 30; /system/bin/cmd phone data enable" </dev/null >/dev/null 2>&1 &')
+              adb('shell', '/system/bin/cmd', 'phone', 'data', 'disable', record='disable-command')
+              wait_eth0(False, 15)
+              snapshot('down')
+              adb('shell', '/system/bin/cmd', 'phone', 'data', 'enable', record='enable-command')
+              wait_eth0(True, 90)
+              snapshot('up')
+          finally:
+              adb('shell', '/system/bin/cmd', 'phone', 'data', 'enable')
+              adb('shell', '/system/bin/cmd', 'wifi', 'set-wifi-enabled', 'enabled')
           PY
       - name: Stop disposable emulator
         if: always()
