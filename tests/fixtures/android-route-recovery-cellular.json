@@ -1,0 +1,26 @@
+{
+  "provenance": {
+    "run_id": 43404505529,
+    "artifact_sha256": "ecd0f944c21b59b21a2fc375ac645b9a1bc3081077ecec062e4dc50474c16f26",
+    "scope": "Captured stock API35/r9 cellular control; not MagicNet acceptance evidence.",
+    "redaction": "Only current owner fields and netd inventory are retained. APN and address payloads are replaced; state, subscription, netId, UID and flag values are unchanged."
+  },
+  "before": {
+    "registry": "last known state:\n  Phone Id=0\n    mUserMobileDataState= true\n    mDataConnectionState=2\n    mPreciseDataConnectionStates={Pair{1 [ApnSetting] <redacted>}= state: CONNECTED, transport: WWAN, id: 1, netId: 101, network type: HSPA, APN Setting: [ApnSetting] <redacted>, link properties: {InterfaceName: eth0 <redacted>}, default QoS: null, fail cause: NONE(0x0), network validation status: unsupported}\n    mIsDataEnabled=true\n    mDataEnabledReason=0\n  mPhoneCapability=<redacted>\n  mActiveDataSubId=1\n  mDefaultPhoneId=0\n  mDefaultSubId=1\nlocal logs:\n",
+    "phone": "------- PhoneGlobals -------\n  mDefaultDataSubId=1\n------- End PhoneGlobals -------\n",
+    "netd": "  NetworkController\n    Default network: 101\n\n    Networks:\n      51 DUMMY dummy0\n        Allowed UID ranges: unrestricted\n\n      52 UNREACHABLE\n        Allowed UID ranges: unrestricted\n\n      99 LOCAL\n        Allowed UID ranges: unrestricted\n\n      101 PHYSICAL eth0\n        Required permission: NONE\n        Per-app UID ranges: prio 40 uids{ 10134 }\n        Allowed UID ranges: uids{ 0-99999 }\n\n\n    Interface <-> last network map:\n",
+    "flags": "0x1003"
+  },
+  "down": {
+    "registry": "last known state:\n  Phone Id=0\n    mUserMobileDataState= false\n    mDataConnectionState=0\n    mPreciseDataConnectionStates={}\n    mIsDataEnabled=false\n    mDataEnabledReason=0\n  mPhoneCapability=<redacted>\n  mActiveDataSubId=1\n  mDefaultPhoneId=0\n  mDefaultSubId=1\nlocal logs:\n",
+    "phone": "------- PhoneGlobals -------\n  mDefaultDataSubId=1\n------- End PhoneGlobals -------\n",
+    "netd": "  NetworkController\n    Default network: 0\n\n    Networks:\n      51 DUMMY dummy0\n        Allowed UID ranges: unrestricted\n\n      52 UNREACHABLE\n        Per-app UID ranges: prio 40 uids{ 10134 }\n        Allowed UID ranges: unrestricted\n\n      99 LOCAL\n        Allowed UID ranges: unrestricted\n\n\n    Interface <-> last network map:\n",
+    "flags": "0x1002"
+  },
+  "up": {
+    "registry": "last known state:\n  Phone Id=0\n    mUserMobileDataState= true\n    mDataConnectionState=2\n    mPreciseDataConnectionStates={Pair{1 [ApnSetting] <redacted>}= state: CONNECTED, transport: WWAN, id: 1, netId: 102, network type: HSPA, APN Setting: [ApnSetting] <redacted>, link properties: {InterfaceName: eth0 <redacted>}, default QoS: null, fail cause: NONE(0x0), network validation status: unsupported}\n    mIsDataEnabled=true\n    mDataEnabledReason=0\n  mPhoneCapability=<redacted>\n  mActiveDataSubId=1\n  mDefaultPhoneId=0\n  mDefaultSubId=1\nlocal logs:\n",
+    "phone": "------- PhoneGlobals -------\n  mDefaultDataSubId=1\n------- End PhoneGlobals -------\n",
+    "netd": "  NetworkController\n    Default network: 102\n\n    Networks:\n      51 DUMMY dummy0\n        Allowed UID ranges: unrestricted\n\n      52 UNREACHABLE\n        Allowed UID ranges: unrestricted\n\n      99 LOCAL\n        Allowed UID ranges: unrestricted\n\n      102 PHYSICAL eth0\n        Required permission: NONE\n        Per-app UID ranges: prio 40 uids{ 10134 }\n        Allowed UID ranges: uids{ 0-99999 }\n\n\n    Interface <-> last network map:\n",
+    "flags": "0x1003"
+  }
+}

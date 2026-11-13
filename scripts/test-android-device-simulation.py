@@ -1234,6 +1234,17 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(device.stop_checks, [{'operation': 'service_stop', 'exit_code': 1,
                                               'error_kinds': ['core_identity']}])
 
+    def test_service_stop_marker_diagnostic_is_exact_and_sanitized(self):
+        for suffix, expected in (('', [{'target': 'fswatch', 'kind': 'replaced'}]),
+                                 (' private-canary', None)):
+            device = self.device()
+            message = '[error] supervisor PID file changed during stop: replaced [supervisor=fswatch]'
+            with patch.object(device, 'kshell', return_value=cp('private-canary', 1, message + suffix)), \
+                 self.assertRaisesRegex(RuntimeError, 'service stop command failed'):
+                device.stop_service()
+            self.assertEqual(device.stop_checks[0].get('marker_errors'), expected)
+            self.assertNotIn('private-canary', json.dumps(device.stop_checks))
+
     def test_stop_observation_waits_for_kernel_exit_without_replaying_stop(self):
         device = self.device()
         with patch.object(device, 'kshell', side_effect=[cp(rc=1), cp(), *[cp()] * 6]) as run, \
@@ -1458,6 +1469,72 @@ class ReadinessSupportTests(unittest.TestCase):
              patch.object(self.device, 'shell', return_value=cp()):
             SIM.diagnostics(self.device, self.out)
         return json.loads((self.out / 'readiness-support.json').read_text())
+
+    def route_failure(self):
+        def verify(_adb, _instrument, _component, evidence, *, failure_observer):
+            evidence.update(status='not_verified', reason='baseline_app_not_captured')
+            failure_observer()
+            return evidence
+
+        with patch.object(SIM, 'load_script', side_effect=[Mock(verify=verify), Mock()]):
+            with self.assertRaisesRegex(RuntimeError, '^app-UID TUN route recovery failed$'):
+                SIM.route_recovery(self.device, self.out, {})
+        evidence = json.loads((self.out / 'route-recovery.json').read_text())
+        self.assertEqual(evidence['status'], 'not_verified')
+        self.assertEqual(evidence['reason'], 'baseline_app_not_captured')
+        return evidence
+
+    def test_route_failure_uses_separate_redacted_artifacts_and_remaining_budget(self):
+        prior = {'readiness-support.json': 'earlier readiness metadata\n',
+                 'readiness-support.txt': 'earlier readiness support\n'}
+        for name, text in prior.items():
+            (self.out / name).write_text(text)
+        with patch.object(self.device, 'kshell', side_effect=self.kshell) as command, \
+             patch.object(SIM.time, 'monotonic', side_effect=[100, 100, 124]):
+            self.route_failure()
+        support = json.loads((self.out / 'route-recovery-support.json').read_text())
+        self.assertEqual(support['status'], 'captured')
+        self.assertEqual(support['trigger'], 'route_recovery_failed')
+        self.assertEqual(support['artifact'], 'route-recovery-support.txt')
+        self.assertEqual(support['budget_seconds'], 25)
+        self.assertEqual(support['bytes'], len(self.report.encode()))
+        self.assertEqual((self.out / support['artifact']).read_text(), self.report)
+        self.assertEqual(support['sha256'], SIM.digest(self.out / support['artifact']))
+        self.assertEqual([call.kwargs['timeout'] for call in command.call_args_list], [20, 1])
+        self.assertEqual(len(self.calls), 2)
+        for name, text in prior.items():
+            self.assertEqual((self.out / name).read_text(), text)
+
+    def test_route_support_export_failure_retains_original_failure_and_redacts_output(self):
+        self.export_result = cp('private-canary', 124, 'https://private.invalid/?token=private-canary')
+        (self.out / 'route-recovery-support.txt').write_text('stale route recovery support')
+        with patch.object(self.device, 'kshell', side_effect=self.kshell):
+            self.route_failure()
+        support = json.loads((self.out / 'route-recovery-support.json').read_text())
+        self.assertEqual(support['status'], 'failed')
+        self.assertEqual(support['trigger'], 'route_recovery_failed')
+        self.assertEqual(support['failure_code'], 'command_failed')
+        self.assertEqual(support['commands'], [{'operation': 'support_export', 'exit_code': 124}])
+        self.assertFalse((self.out / 'route-recovery-support.txt').exists())
+        self.assertNotIn('private', json.dumps(support))
+        self.assertFalse((self.out / 'readiness-support.json').exists())
+
+    def test_route_support_artifact_error_does_not_replace_proof_failure(self):
+        with patch.object(SIM, 'readiness_support', side_effect=OSError('private-canary')) as support:
+            evidence = self.route_failure()
+        support.assert_called_once()
+        self.assertNotIn('private', json.dumps(evidence))
+
+    def test_verified_route_proof_does_not_collect_failure_support(self):
+        def verify(_adb, _instrument, _component, evidence, *, failure_observer):
+            evidence['status'] = 'verified'
+            return evidence
+
+        with patch.object(SIM, 'load_script', side_effect=[Mock(verify=verify), Mock()]), \
+             patch.object(SIM, 'readiness_support') as support:
+            SIM.route_recovery(self.device, self.out, {})
+        support.assert_not_called()
+        self.assertEqual(json.loads((self.out / 'route-recovery.json').read_text())['status'], 'verified')
 
     def test_timeout_collects_existing_redacted_support_before_other_diagnostics(self):
         report = SIM.Report(self.out)

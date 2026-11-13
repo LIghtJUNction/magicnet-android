@@ -21,6 +21,7 @@ REQUIRED_PHASES = {
     'upgrade-preservation', 'disable-reboot', 'enable-reboot', 'uninstall-reboot',
 }
 REQUIRED_PAYLOADS = {'bin/magicnet-cli', 'bin/sing-box', 'bin/jq', 'bin/yq', 'bin/curl'}
+NETD_PERMISSIONS = {'NONE': 0, 'NETWORK': 0x40000, 'SYSTEM': 0xc0000}
 
 
 def require(condition, message):
@@ -96,15 +97,10 @@ def canonical_per_app_ranges(value):
     return True
 
 
-def netd_observation(snapshot):
-    observed = snapshot.get('netd')
-    require(isinstance(observed, dict)
-            and observed.keys() == {'networks', 'eth0_ifindex', 'eth0_fib'},
-            'Route snapshot lacks complete netd ownership evidence')
-    networks = observed['networks']
+def netd_networks(networks):
     require(isinstance(networks, list) and 1 <= len(networks) <= 256,
             'Invalid netd network inventory')
-    ids, ethernet = [], []
+    ids = []
     for network in networks:
         require(isinstance(network, dict)
                 and network.keys() == {'net_id', 'type', 'interfaces', 'details'}
@@ -129,17 +125,31 @@ def netd_observation(snapshot):
                 and ('Required permission' in fields) == (network['type'] == 'PHYSICAL'),
                 'Incomplete or repeated netd network metadata')
         ids.append(network['net_id'])
-        if 'eth0' in interfaces:
-            ethernet.append(network)
-    require(ids == sorted(set(ids)) and len(ethernet) == 1 and ethernet[0]['net_id'] >= 100
-            and ethernet[0]['type'] == 'PHYSICAL' and ethernet[0]['interfaces'] == ['eth0']
-            and 'Required permission: NONE' in ethernet[0]['details'],
-            'Netd does not prove one physical eth0 network with NONE permission')
+    require(ids == sorted(set(ids)), 'Unordered or repeated netd network identities')
+    return networks
+
+
+def netd_ethernet(networks):
+    ethernet = [network for network in networks if 'eth0' in network['interfaces']]
+    require(len(ethernet) == 1 and ethernet[0]['net_id'] >= 100
+            and ethernet[0]['type'] == 'PHYSICAL' and ethernet[0]['interfaces'] == ['eth0'],
+            'Netd does not prove one physical eth0 network')
     details = dict(item.split(': ', 1) for item in ethernet[0]['details'])
+    require(details.get('Required permission') in NETD_PERMISSIONS,
+            'Netd eth0 permission is not a known Android permission')
     allowed, per_app = details['Allowed UID ranges'], details.get('Per-app UID ranges')
     require((allowed == 'unrestricted' or canonical_uid_ranges(allowed))
             and (per_app is None or canonical_per_app_ranges(per_app)),
             'Netd eth0 UID metadata is not canonical')
+    return ethernet[0]
+
+
+def netd_observation(snapshot):
+    observed = snapshot.get('netd')
+    require(isinstance(observed, dict)
+            and observed.keys() == {'networks', 'eth0_ifindex', 'eth0_fib'},
+            'Route snapshot lacks complete netd ownership evidence')
+    ethernet = netd_ethernet(netd_networks(observed['networks']))
     fib = observed['eth0_fib']
     require(type(observed['eth0_ifindex']) is int and 1 <= observed['eth0_ifindex'] <= 0x7fffffff
             and isinstance(fib, list) and 1 <= len(fib) <= 256
@@ -148,20 +158,41 @@ def netd_observation(snapshot):
                     and re.search(r'(?:^| )dev eth0(?: |$)', row) for row in fib)
             and fib == sorted(set(fib)),
             'Netd eth0 identity or complete interface FIB is unavailable')
-    return ethernet[0]['net_id']
+    return ethernet['net_id']
 
 
-def netd_selectors(net_id):
-    return Counter((f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
-                    f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'))
+def netd_selectors(snapshot):
+    net_id = netd_observation(snapshot)
+    network = next(item for item in snapshot['netd']['networks'] if item['net_id'] == net_id)
+    details = dict(item.split(': ', 1) for item in network['details'])
+    permission = NETD_PERMISSIONS[details['Required permission']]
+    selectors = Counter({
+        f'16000: from all fwmark {permission | 0x10000 | net_id:#x}/'
+        f'{permission | 0x1ffff:#x} iif lo lookup eth0': 1,
+        # RouteController omits the global implicit rule for restricted networks.
+        f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0': int(permission == 0),
+    })
+    # Android 15 RouteController::modifyPhysicalNetwork installs explicit and
+    # implicit UID rules for every range at its subpriority. UidRanges retains
+    # duplicates and overlaps, so completeness includes their multiplicities.
+    for priority, ranges in re.findall(r'prio ([0-9]+) uids\{([^}]*)\}',
+                                       details.get('Per-app UID ranges', '')):
+        for interval in ranges.split():
+            start, _, end = interval.partition('-')
+            uid = f'{start}-{end or start}'
+            for base, mark in ((15000, 0x10000 | net_id), (22000, net_id)):
+                selectors[f'{base + int(priority)}: from all fwmark {mark:#x}/0x1ffff '
+                          f'iif lo uidrange {uid} lookup eth0'] += 1
+    return selectors
 
 
 def foreign_rules_preserved(before, after, before_rules, after_rules):
     old_id, new_id = netd_observation(before), netd_observation(after)
     old, new = before['netd'], after['netd']
-    selectors = [netd_selectors(old_id), netd_selectors(new_id)]
-    require(all(rules[row] == 1 for rules, expected in zip((before_rules, after_rules), selectors)
-                for row in expected), 'Netd identity lacks its two exact unique eth0 policy rules')
+    selectors = [netd_selectors(before), netd_selectors(after)]
+    require(all(rules[row] == count for rules, expected in zip((before_rules, after_rules), selectors)
+                for row, count in expected.items()),
+            'Netd identity lacks its exact complete eth0 policy rules')
     if old_id == new_id:
         require(old == new, 'Unchanged netd identity has changed network metadata')
         return before_rules == after_rules
@@ -174,7 +205,8 @@ def foreign_rules_preserved(before, after, before_rules, after_rules):
             and [item for item in old['networks'] if item['net_id'] != old_id]
             == [item for item in new['networks'] if item['net_id'] != new_id],
             'Netd change is not confined to a new eth0 network identity')
-    # Only independently observed NetIDs authorize these two complete selectors.
+    # Only unchanged netd metadata authorizes NetID changes in these complete
+    # selectors. UID default/local rules and all other rows remain protected.
     return before_rules - selectors[0] == after_rules - selectors[1]
 
 
@@ -187,7 +219,7 @@ def route_snapshot(value):
     fib = text_rows(value.get('fib'), 'FIB')
     require(any(re.search(r'\bdev magicnet0\b', row) for row in fib),
             'Route recovery lacks the live TUN FIB')
-    require(all(rules[row] == 1 for row in netd_selectors(netd_observation(value))),
+    require(all(rules[row] == count for row, count in netd_selectors(value).items()),
             'Route snapshot lacks the observed netd eth0 policy rules')
     return rules, fib
 
@@ -213,6 +245,43 @@ def route_helper(snapshot, rules):
     return {'rule': rule, 'table': helper['table'], 'fib': fib}
 
 
+def single_ethernet(snapshot):
+    netd_observation(snapshot)
+    networks = snapshot['netd']['networks']
+    physical = [network for network in networks if network['type'] == 'PHYSICAL']
+    require(len(physical) == 1 and physical[0]['interfaces'] == ['eth0']
+            and not any('wlan0' in network['interfaces'] for network in networks),
+            'Route recovery was not isolated to the physical eth0 uplink')
+
+
+def validate_network_fixture(evidence, loss):
+    fixture = evidence.get('network_fixture')
+    require(matches(fixture, {'scope': 'disposable-single-eth0', 'qemu': True,
+                              'abi': 'x86_64', 'control_transport_verified': True,
+                              'wifi_disabled': True, 'prepared': True, 'restored': True})
+            and type(fixture.get('wifi_initial_enabled')) is bool
+            and type(fixture.get('wifi_final_enabled')) is bool
+            and fixture['wifi_initial_enabled'] == fixture['wifi_final_enabled'],
+            'Route recovery lacks disposable network preparation and Wi-Fi restoration')
+    observations = fixture.get('stable_observations')
+    require(isinstance(observations, list) and len(observations) == 2
+            and observations[0] == observations[1],
+            'Route recovery lacks two matching network baseline observations')
+    for snapshot in observations:
+        require(isinstance(snapshot, dict) and snapshot.keys() == {'netd', 'rules', 'egress'}
+                and matches(snapshot, {'egress': 'eth0'}),
+                'Route recovery network baseline lacks observed eth0 egress')
+        single_ethernet(snapshot)
+        rules = text_rows(snapshot.get('rules'), 'network baseline rules')
+        require(rules['0: from all lookup local'] == 1
+                and all(rules[row] == count for row, count in netd_selectors(snapshot).items()),
+                'Route recovery network baseline lacks exact netd selectors')
+    lifecycle = loss['helper_lifecycle']
+    for snapshot in (loss['before'], loss['fault'], loss['after'],
+                     lifecycle['before_stop'], lifecycle['after_start']):
+        single_ethernet(snapshot)
+
+
 def validate_helper_lifecycle(loss, before, before_helper):
     lifecycle = loss.get('helper_lifecycle')
     require(isinstance(lifecycle, dict), 'Route helper lacks a stop/start ownership observation')
@@ -236,6 +305,67 @@ def validate_helper_lifecycle(loss, before, before_helper):
             and foreign_rules_preserved(prior, started, prior_rules - Counter([prior_helper['rule']]),
                                         started_rules - Counter([started_helper['rule']])),
             'Route helper calibration changed other rules or does not describe the fault core')
+
+
+def validate_cellular_lifecycle(reconnect):
+    lifecycle = reconnect.get('cellular_lifecycle')
+    require(matches(lifecycle, {'acknowledged': True})
+            and lifecycle.keys() == {'before', 'down', 'after', 'acknowledged'},
+            'Cellular reconnect lacks an acknowledged owner lifecycle')
+    for stage, running in (('before', True), ('down', False), ('after', True)):
+        snapshot = lifecycle[stage]
+        expected_fields = {'owner', 'networks'} | ({'flags'} if stage == 'down' else set())
+        require(isinstance(snapshot, dict) and snapshot.keys() == expected_fields,
+                'Cellular lifecycle lacks a complete ' + stage + ' observation')
+        owner = snapshot['owner']
+        require(matches(owner, {'phone_id': 0, 'user_data_enabled': running,
+                                'data_enabled': running, 'data_state': 2 if running else 0})
+                and owner.keys() == {'phone_id', 'sub_id', 'user_data_enabled',
+                                     'data_enabled', 'data_state', 'connections'}
+                and type(owner['sub_id']) is int and 1 <= owner['sub_id'] <= 0x7fffffff
+                and isinstance(owner['connections'], list)
+                and len(owner['connections']) == int(running),
+                'Cellular owner did not confirm its ' + stage + ' lifecycle state')
+        netd_networks(snapshot['networks'])
+        if running:
+            connection = owner['connections'][0]
+            require(matches(connection, {'state': 'CONNECTED', 'transport': 'WWAN',
+                                         'interface': 'eth0'})
+                    and connection.keys() == {'state', 'transport', 'net_id', 'interface'}
+                    and type(connection['net_id']) is int and 100 <= connection['net_id'] <= 65535,
+                    'Cellular owner lacks one connected WWAN eth0 network')
+            ethernet = netd_ethernet(snapshot['networks'])
+            require(connection['net_id'] == ethernet['net_id']
+                    and sum(network['type'] == 'PHYSICAL' for network in snapshot['networks']) == 1
+                    and not any('wlan0' in network['interfaces'] for network in snapshot['networks']),
+                    'Cellular owner does not match an isolated netd eth0 network')
+
+    before, down, after = (lifecycle[stage] for stage in ('before', 'down', 'after'))
+    require(all(snapshot['owner']['sub_id'] == before['owner']['sub_id']
+                for snapshot in (down, after)),
+            'Cellular lifecycle changed the active subscription')
+    ethernet = netd_ethernet(before['networks'])
+    previous_id = ethernet['net_id']
+    unreachable = [network for network in before['networks'] if network['type'] == 'UNREACHABLE']
+    require(unreachable == [{'net_id': 52, 'type': 'UNREACHABLE', 'interfaces': [],
+                              'details': ['Allowed UID ranges: unrestricted']}],
+            'Cellular lifecycle lacks the supported empty unreachable UID network')
+    # This single-modem fixture moves exactly the disconnected network's UID
+    # preferences to netd's unreachable network. No other metadata is ignored.
+    per_app = [line for line in ethernet['details'] if line.startswith('Per-app UID ranges: ')]
+    expected_down = [network | {'details': sorted(network['details'] + per_app)}
+                     if network['net_id'] == 52 else network
+                     for network in before['networks'] if network['net_id'] != previous_id]
+    require(down['networks'] == expected_down,
+            'Cellular teardown changed more than its network and exact unreachable UID transfer')
+    require(type(down['flags']) is int and 0 <= down['flags'] <= 0xffffffff
+            and down['flags'] & 1 == 0 and down['flags'] == reconnect['down_flags'],
+            'Cellular teardown lacks matching observed down flags')
+    restored_id = netd_ethernet(after['networks'])['net_id']
+    expected_after = [network | {'net_id': restored_id} if network['net_id'] == previous_id else network
+                      for network in before['networks']]
+    require(after['networks'] == sorted(expected_after, key=lambda network: network['net_id']),
+            'Cellular reconnect did not restore all network metadata and UID ownership')
 
 
 def uplink_observation(value, interface, uid, minimum_attempts):
@@ -301,6 +431,7 @@ def validate_route_recovery(evidence):
     fault_helper = route_helper(fault, fault_rules)
     after_helper = route_helper(after, after_rules)
     validate_helper_lifecycle(loss, before, before_helper)
+    validate_network_fixture(evidence, loss)
     require(before_helper == fault_helper and before['netd'] == fault['netd'],
             'RPDB fault changed the core route helper or netd ownership evidence')
     previous_helper_fib = text_rows(after.get('previous_helper_fib'), 'previous helper FIB')
@@ -349,14 +480,15 @@ def validate_route_recovery(evidence):
     require(matches(reconnect, {'status': 'verified', 'down_observed': True,
                                'up_observed': True, 'ready_after_recovery': True,
                                'app_after_recovery': True, 'control_transport_verified': True,
-                               'control_channel_survived': True, 'restore_guard_finished': True})
-            and reconnect.get('interface') in ('wlan0', 'eth0')
-            and all(type(reconnect.get(key)) is int and reconnect[key] >= 0
+                               'control_channel_survived': True, 'restore_guard_finished': True,
+                               'default_interfaces': ['eth0']})
+            and reconnect.get('interface') == 'eth0'
+            and all(type(reconnect.get(key)) is int and 0 <= reconnect[key] <= 0xffffffff
                     for key in ('down_flags', 'up_flags'))
             and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
             'Local uplink reconnect was not verified')
-    require(reconnect.get('restore_method') == ('android_wifi_toggle'
-            if reconnect['interface'] == 'wlan0' else 'link_up'),
+    validate_cellular_lifecycle(reconnect)
+    require(reconnect.get('restore_method') == 'android_mobile_data_toggle',
             'Local uplink restore method is missing or inconsistent')
     baseline = uplink_observation(reconnect.get('baseline'), reconnect['interface'],
                                   evidence['app_uid'], recovered['recovery_attempts'])

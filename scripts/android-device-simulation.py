@@ -1085,9 +1085,24 @@ class Device:
         kinds = sorted({kind for prefix, kind in error_kinds.items()
                         if any(line.startswith('[error] ' + prefix)
                                for line in result.stderr.splitlines())})
-        self.stop_checks.append({'operation': 'service_stop',
-                                 'exit_code': bounded_exit_code(result.returncode),
-                                 'error_kinds': kinds})
+        evidence = {'operation': 'service_stop',
+                    'exit_code': bounded_exit_code(result.returncode),
+                    'error_kinds': kinds}
+        # Accept only complete CLI-owned messages with fixed enums. Never copy
+        # stderr, path names, PIDs, or text appended by a child/helper.
+        marker_errors = {
+            'supervisor PID file changed during read': 'read_race',
+            'supervisor PID file changed during stop: missing': 'missing',
+            'supervisor PID file changed during stop: replaced': 'replaced',
+            'supervisor PID file changed during cleanup': 'cleanup_race',
+        }
+        details = [{'target': target, 'kind': kind}
+                   for message, kind in marker_errors.items()
+                   for target in ('watchdog', 'fswatch', 'hotspot', 'unknown')
+                   if result.stderr.strip() == f'[error] {message} [supervisor={target}]']
+        if details:
+            evidence['marker_errors'] = details
+        self.stop_checks.append(evidence)
         require(result.returncode == 0,
                 f'service stop command failed (exit {result.returncode}; kinds {kinds})')
 
@@ -1200,9 +1215,20 @@ def tun_controls(device: Device, out: Path, phase: str):
 def route_recovery(device: Device, out: Path, evidence: dict):
     proof = load_script('android-route-recovery-proof')
     benchmark = load_script('android-network-benchmark')
+
+    def capture_failure():
+        try:
+            readiness_support(device, out, time.monotonic() + 25,
+                              basename='route-recovery-support', trigger='route_recovery_failed')
+        except Exception:
+            # Even a local artifact write failure must preserve the proof's
+            # original failure and allow its fault-configuration cleanup.
+            pass
+
     try:
         proof.verify(lambda command, timeout=30: device.kshell(command, timeout=timeout, check=False),
-                     benchmark.instrument, benchmark.COMPONENT, evidence)
+                     benchmark.instrument, benchmark.COMPONENT, evidence,
+                     failure_observer=capture_failure)
         require(evidence.get('status') == 'verified', 'app-UID TUN route recovery failed')
     finally:
         (out / 'route-recovery.json').write_text(json.dumps(evidence, indent=2) + '\n')
@@ -1405,9 +1431,10 @@ def device_resources(device: Device) -> dict:
             'observed_memtotal_kib': int(matches[0]), 'memory_source': '/proc/meminfo'}
 
 
-def readiness_support(device: Device, out: Path, deadline: float):
+def readiness_support(device: Device, out: Path, deadline: float, *,
+                      basename='readiness-support', trigger='readiness_timeout'):
     """Retain the existing redacted support bundle without re-evaluating readiness."""
-    evidence = {'schema': 1, 'trigger': 'readiness_timeout', 'status': 'failed',
+    evidence = {'schema': 1, 'trigger': trigger, 'status': 'failed',
                 'stage': 'support_export', 'budget_seconds': 25, 'commands': []}
 
     def command(operation, text, timeout):
@@ -1422,7 +1449,7 @@ def readiness_support(device: Device, out: Path, deadline: float):
         return result.stdout
 
     try:
-        destination = out / 'readiness-support.txt'
+        destination = out / (basename + '.txt')
         destination.unlink(missing_ok=True)
         receipt = command('support_export', MOD + '/cli --json support export', 20)
         require(isinstance(receipt, str) and len(receipt.encode('utf-8')) <= 65536,
@@ -1457,7 +1484,7 @@ def readiness_support(device: Device, out: Path, deadline: float):
                    'export_size_invalid', 'export_content_invalid'}
         code = str(error) if isinstance(error, RuntimeError) else ''
         evidence['failure_code'] = code if code in allowed else 'collection_failed'
-    (out / 'readiness-support.json').write_text(json.dumps(evidence, indent=2) + '\n')
+    (out / (basename + '.json')).write_text(json.dumps(evidence, indent=2) + '\n')
 
 
 def diagnostics(device: Device, out: Path):

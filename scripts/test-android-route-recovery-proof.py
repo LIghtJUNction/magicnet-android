@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -21,6 +22,10 @@ OWNED = ['9000: from all to 172.19.0.0/30 lookup 2022',
          '9010: from all nop']
 ETH0_RULES = ['16000: from all fwmark 0x10064/0x1ffff iif lo lookup eth0',
               '23000: from all fwmark 0x64/0x1ffff iif lo lookup eth0']
+RESTRICTED_RULES = {
+    'NETWORK': '16000: from all fwmark 0x50064/0x5ffff iif lo lookup eth0',
+    'SYSTEM': '16000: from all fwmark 0xd0064/0xdffff iif lo lookup eth0',
+}
 FOREIGN = ['0: from all lookup local', '32766: from all lookup main',
            '18000: from all fwmark 0x64/0x1ffff lookup wlan0'] + ETH0_RULES
 LEDGER = ('schema=2\nphase=active\nboot=' + BOOT + '\ntable=2022\ninterface=magicnet0\n'
@@ -45,6 +50,7 @@ UID_DETAILS = [
 ]
 HEADER = 'sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode'
 TCP = '0: 0F02000A:15B3 0202000A:C012 01 00000000:00000000 00:00000000 00000000 0 0 77'
+CELLULAR = json.loads((ROOT / 'tests/fixtures/android-route-recovery-cellular.json').read_text())
 
 
 def state(status='present', failures=0, attempts=0):
@@ -53,6 +59,13 @@ def state(status='present', failures=0, attempts=0):
                 recovery_attempts=attempts, recovery_limit=3,
                 recovery_status='ok' if attempts else 'none',
                 last_recovery_at=90 if attempts else None)
+
+
+def app_rules(net_id, priority, intervals):
+    return [f'{base + priority}: from all fwmark {mark:#x}/0x1ffff '
+            f'iif lo uidrange {low}-{high} lookup eth0'
+            for low, high in intervals
+            for base, mark in ((15000, 0x10000 | net_id), (22000, net_id))]
 
 
 class Device:
@@ -82,6 +95,29 @@ class Device:
         self.uplinks = ['wlan0']
         self.selected_uplink = 'wlan0'
         self.peers = 'ADBD\n/dev/null\nsocket:[77]\nTCP\n' + HEADER + '\n' + HEADER + '\n'
+        self.qemu, self.abi, self.wifi_on = '1', 'x86_64', True
+        self.user_data_enabled = self.data_enabled = self.cellular_connected = True
+        self.data_state, self.sub_id, self.mobile_new_net_id = 2, 1, True
+        self.stopped_cellular = None
+
+    def registry_dump(self):
+        phase = 'before' if self.cellular_connected else 'down'
+        text = CELLULAR[phase]['registry']
+        if self.cellular_connected:
+            network = next((item for item in self.networks if item['interfaces'] == ['eth0']),
+                           self.stopped_cellular)
+            text = text.replace('netId: 101,', f'netId: {network["net_id"]},')
+        text = text.replace('mDataConnectionState=' + ('2' if self.cellular_connected else '0'),
+                            f'mDataConnectionState={self.data_state}')
+        for field, value in (('mUserMobileDataState= ', self.user_data_enabled),
+                             ('mIsDataEnabled=', self.data_enabled)):
+            text = text.replace(field + ('true' if self.cellular_connected else 'false'),
+                                field + str(value).lower())
+        return text.replace('mActiveDataSubId=1', f'mActiveDataSubId={self.sub_id}').replace(
+            'mDefaultSubId=1', f'mDefaultSubId={self.sub_id}')
+
+    def phone_dump(self):
+        return CELLULAR['before']['phone'].replace('mDefaultDataSubId=1', f'mDefaultDataSubId={self.sub_id}')
 
     def helper_rule(self):
         return '1: from all lookup ' + str(self.helper_table)
@@ -103,13 +139,13 @@ class Device:
             self.renumber_eth0()
         self.running = True
 
-    def renumber_eth0(self):
+    def renumber_eth0(self, step=2):
         network = next(item for item in self.networks if item['interfaces'] == ['eth0'])
         old_id = network['net_id']
-        network['net_id'] += 2
-        for prefix in (0x10000, 0):
+        network['net_id'] += step
+        for prefix in (0x10000, 0x50000, 0xd0000, 0):
             old, new = f'fwmark {prefix | old_id:#x}/', f'fwmark {prefix | network["net_id"]:#x}/'
-            self.rules = [row.replace(old, new) if row.endswith('iif lo lookup eth0') else row
+            self.rules = [row.replace(old, new) if row.endswith(' lookup eth0') else row
                           for row in self.rules]
 
     def netd_dump(self):
@@ -144,6 +180,10 @@ class Device:
             output = str(self.ifindex)
         elif command == proof.NETD:
             output = self.netd_dump()
+        elif command == proof.REGISTRY:
+            output = self.registry_dump()
+        elif command == proof.PHONE:
+            output = self.phone_dump()
         elif command == 'cat /sys/class/net/eth0/ifindex':
             output = str(self.eth0_ifindex)
         elif command == proof.IP + ' -4 route show table eth0':
@@ -199,11 +239,28 @@ class Device:
         elif command == proof.IP + ' -4 route get 192.0.2.1':
             output = (f'192.0.2.1 via 10.0.2.2 dev {self.selected_uplink} '
                       f'table {self.selected_uplink} src 10.0.2.15 uid 0\n') if self.selected_uplink else ''
+        elif command == 'getprop ro.kernel.qemu':
+            output = self.qemu
+        elif command == 'getprop ro.product.cpu.abi':
+            output = self.abi
+        elif command == proof.WIFI + ' status':
+            output = ('Wifi is enabled' if self.wifi_on else 'Wifi is disabled') + '\nWifiInfo: private-ssid\n'
+        elif command in (proof.WIFI + ' set-wifi-enabled enabled', proof.WIFI + ' set-wifi-enabled disabled'):
+            self.wifi_on = command.endswith(' enabled')
+            self.networks = [item for item in self.networks if 'wlan0' not in item['interfaces']]
+            if self.wifi_on:
+                self.networks.append(copy.deepcopy(NETWORKS[-1]))
+            self.rules = [row for row in self.rules if not row.endswith(' lookup wlan0')]
+            if self.wifi_on:
+                self.rules.append(FOREIGN[2])
+            self.uplinks = ['eth0', 'wlan0'] if self.wifi_on else ['eth0']
+            self.selected_uplink = 'wlan0' if self.wifi_on else 'eth0'
         elif command.startswith('p=$(' + proof.BB + ' pidof adbd)'):
             output = self.peers
         elif command == proof.IP + ' -4 route get 10.0.2.2':
             output = '10.0.2.2 dev wlan0 src 10.0.2.15'
-        elif command.startswith('if [ -r /sys/class/net/') and command.endswith('/flags; else echo 0x0; fi'):
+        elif (command == 'cat /sys/class/net/eth0/flags'
+              or command.startswith('if [ -r /sys/class/net/') and command.endswith('/flags; else echo 0x0; fi')):
             self.flag_reads += 1
             if self.fail_down_observation and self.flag_reads == 2:
                 rc = 1
@@ -212,13 +269,687 @@ class Device:
             output = '500 (sh) S ' + '0 ' * 18 + '850\n'
         elif command == 'if [ -r /proc/500/stat ]; then cat /proc/500/stat; else echo gone; fi':
             output = 'gone\n'
-        elif command in (proof.IP + ' link set dev wlan0 down', proof.IP + ' link set dev eth0 down'):
+        elif command == proof.MOBILE_DATA + ' disable':
+            self.user_data_enabled = self.data_enabled = self.cellular_connected = False
+            self.data_state = 0
             self.flags &= ~1
-        elif command.startswith(proof.IP + ' link set dev wlan0 up') or command == proof.IP + ' link set dev eth0 up':
+            self.stopped_cellular = next(item for item in self.networks if item['interfaces'] == ['eth0'])
+            self.networks.remove(self.stopped_cellular)
+            unreachable = next(item for item in self.networks if item['net_id'] == 52)
+            unreachable['details'] += [row for row in self.stopped_cellular['details']
+                                       if row.startswith('Per-app UID ranges: ')]
+            unreachable['details'].sort()
+            self.uplinks = [name for name in self.uplinks if name != 'eth0']
+        elif command == proof.MOBILE_DATA + ' enable':
+            self.user_data_enabled = self.data_enabled = self.cellular_connected = True
+            self.data_state = 2
+            self.flags |= 1
+            if self.stopped_cellular is not None:
+                self.networks.append(self.stopped_cellular)
+                if self.mobile_new_net_id:
+                    self.renumber_eth0(step=1)
+                self.stopped_cellular = None
+            unreachable = next(item for item in self.networks if item['net_id'] == 52)
+            unreachable['details'] = [row for row in unreachable['details']
+                                      if not row.startswith('Per-app UID ranges: ')]
+            if 'eth0' not in self.uplinks:
+                self.uplinks.append('eth0')
+        elif command == proof.IP + ' link set dev wlan0 down':
+            self.flags &= ~1
+        elif command.startswith(proof.IP + ' link set dev wlan0 up'):
             self.flags |= 1
         else:
             raise AssertionError('unexpected command: ' + command)
         return subprocess.CompletedProcess(['adb'], rc, output, '')
+
+
+class NetworkFixtureTests(unittest.TestCase):
+    def setUp(self):
+        self.device, self.evidence, self.clock = Device(), {}, 0
+        self.control = proof.Control(self.device.adb, {})
+
+    def sleep(self, seconds):
+        self.clock += seconds
+
+    def run_fixture(self, body=lambda: None):
+        with patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                patch.object(proof.time, 'sleep', self.sleep):
+            with proof.single_uplink_fixture(self.control, self.evidence):
+                body()
+
+    def run_report(self, *, evidence=None, udp_sentinel=None, failure_observer=None, cleanup_observer=None):
+        def inner_verify(adb, _instrument, _component, *, fault_control, lifecycle_observer):
+            self.assertFalse(self.device.wifi_on)
+            try:
+                lifecycle_observer('before_stop')
+                adb(proof.CLI + ' service stop sing-box')
+                lifecycle_observer('stopped')
+                adb(proof.CLI + ' service start sing-box')
+                lifecycle_observer('after_start')
+                fault_control(self.device.tcp_app, 10123, udp_sentinel or self.device.app)
+                return dict(status='verified', positive=True, reject=True, positive_after=True, restored=True)
+            finally:
+                if cleanup_observer:
+                    cleanup_observer()
+
+        module = SimpleNamespace(verify=inner_verify)
+        spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda _: None))
+        with patch.dict(os.environ, MAGICNET_DISPOSABLE_AVD='1', ANDROID_SERIAL='emulator-5554'), \
+                patch.object(proof.importlib.util, 'spec_from_file_location', return_value=spec), \
+                patch.object(proof.importlib.util, 'module_from_spec', return_value=module), \
+                patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                patch.object(proof.time, 'sleep', self.sleep):
+            return proof.verify(self.control.adb, None, None, evidence, failure_observer=failure_observer)
+
+    def test_enabled_wifi_is_disabled_before_two_stable_ethernet_observations_then_restored(self):
+        def body():
+            self.assertFalse(self.device.wifi_on)
+            self.assertTrue(self.evidence['prepared'])
+            self.assertEqual(self.clock, proof.POLL_INTERVAL)
+            observations = self.evidence['stable_observations']
+            self.assertEqual(len(observations), 2)
+            self.assertEqual(observations[0], observations[1])
+            self.assertIsNot(observations[0], observations[1])
+            self.assertEqual(observations[0]['egress'], 'eth0')
+            physical = [item for item in observations[0]['netd']['networks'] if item['type'] == 'PHYSICAL']
+            self.assertEqual([item['interfaces'] for item in physical], [['eth0']])
+            self.assertIn(ETH0_RULES[0], observations[0]['rules'])
+        self.run_fixture(body)
+        self.assertTrue(self.device.wifi_on)
+        self.assertTrue(self.evidence['wifi_initial_enabled'])
+        self.assertTrue(self.evidence['wifi_final_enabled'])
+        self.assertTrue(self.evidence['restored'])
+        self.assertTrue(self.evidence['control_transport_verified'])
+        self.assertNotIn('private-ssid', json.dumps(self.evidence))
+        self.assertLess(self.device.calls.index('getprop ro.product.cpu.abi'),
+                        self.device.calls.index(proof.WIFI + ' set-wifi-enabled disabled'))
+
+    def test_initially_disabled_wifi_remains_disabled(self):
+        self.device.adb(proof.WIFI + ' set-wifi-enabled disabled')
+        self.device.calls.clear()
+        self.run_fixture()
+        self.assertFalse(self.evidence['wifi_initial_enabled'])
+        self.assertFalse(self.evidence['wifi_final_enabled'])
+        self.assertTrue(self.evidence['restored'])
+        self.assertNotIn(proof.WIFI + ' set-wifi-enabled enabled', self.device.calls)
+        self.assertEqual(self.device.calls.count(proof.WIFI + ' set-wifi-enabled disabled'), 1)
+
+    def test_real_device_or_wrong_abi_is_rejected_before_wifi_mutation(self):
+        for attribute, value in (('qemu', '0'), ('qemu', ''), ('abi', 'arm64-v8a'), ('abi', 'x86')):
+            self.setUp()
+            setattr(self.device, attribute, value)
+            with self.subTest(attribute=attribute, value=value), self.assertRaisesRegex(
+                    RuntimeError, '^disposable_x86_emulator_required$'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertFalse(any('set-wifi-enabled' in call for call in self.device.calls))
+
+    def test_wifi_carried_or_ambiguous_adb_transport_is_rejected_before_disable(self):
+        for route in ('10.0.2.2 dev wlan0 src 10.0.2.15', '', '10.0.2.2 dev eth0 dev wlan0'):
+            self.setUp()
+            self.device.peers += TCP + '\n'
+            original = self.device.adb
+            def adb(command, **kwargs):
+                return (subprocess.CompletedProcess(['adb'], 0, route, '')
+                        if command == proof.IP + ' -4 route get 10.0.2.2'
+                        else original(command, **kwargs))
+            self.control.adb = adb
+            with self.subTest(route=route), self.assertRaisesRegex(RuntimeError, 'uplink_carries_adb_control'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertFalse(any('set-wifi-enabled' in call for call in self.device.calls))
+
+    def test_unknown_wifi_status_is_not_guessed_or_copied_into_evidence(self):
+        for text in ('', 'Wifi is unknown\nprivate-ssid', 'Wifi is enabled unexpectedly',
+                     'private-ssid\nWifi is enabled'):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                return (subprocess.CompletedProcess(['adb'], 0, text, '') if command == proof.WIFI + ' status'
+                        else original(command, **kwargs))
+            self.control.adb = adb
+            with self.subTest(text=text), self.assertRaisesRegex(RuntimeError, '^wifi_state_unavailable$'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertFalse(any('set-wifi-enabled' in call for call in self.device.calls))
+            self.assertNotIn('private-ssid', json.dumps(self.evidence))
+
+    def test_async_wlan_teardown_and_policy_changes_reset_stable_observations(self):
+        original = self.device.adb
+        def adb(command, **kwargs):
+            result = original(command, **kwargs)
+            if command == proof.NETD and self.clock == 0:
+                current = self.device.networks
+                self.device.networks = current + [copy.deepcopy(NETWORKS[-1])]
+                result.stdout = self.device.netd_dump()
+                self.device.networks = current
+            if command == proof.IP + ' -4 rule show' and self.clock == proof.POLL_INTERVAL:
+                result.stdout += '\n31000: from all fwmark 0x0/0xffff lookup wlan0'
+            return result
+        self.control.adb = adb
+        self.run_fixture()
+        self.assertEqual(self.clock, proof.POLL_INTERVAL * 3)
+        self.assertNotIn('31000: from all fwmark 0x0/0xffff lookup wlan0',
+                         self.evidence['stable_observations'][0]['rules'])
+
+    def test_persistent_competing_network_or_wrong_egress_never_enters_proof(self):
+        for failure in ('physical', 'virtual_wlan', 'egress', 'selector'):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                result = original(command, **kwargs)
+                if command == proof.NETD and failure in ('physical', 'virtual_wlan'):
+                    current = self.device.networks
+                    extra = copy.deepcopy(NETWORKS[-1])
+                    if failure == 'virtual_wlan':
+                        extra['type'] = 'VIRTUAL'
+                        extra['details'] = ['Allowed UID ranges: unrestricted']
+                    self.device.networks = current + [extra]
+                    result.stdout = self.device.netd_dump()
+                    self.device.networks = current
+                if command == proof.IP + ' -4 route get 192.0.2.1' and failure == 'egress':
+                    result.stdout = '192.0.2.1 dev wlan0'
+                if command == proof.IP + ' -4 rule show' and failure == 'selector':
+                    result.stdout = result.stdout.replace(ETH0_RULES[0], '')
+                return result
+            self.control.adb = adb
+            with self.subTest(failure=failure), self.assertRaisesRegex(RuntimeError, '^single_uplink_baseline_deadline$'):
+                self.run_fixture(lambda: self.fail('must not enter proof'))
+            self.assertEqual(self.clock, proof.BASELINE_TIMEOUT)
+            self.assertFalse(self.evidence['prepared'])
+            self.assertTrue(self.evidence['restored'])
+            self.assertTrue(self.device.wifi_on)
+
+    def test_body_failure_and_partial_disable_failure_restore_initial_state(self):
+        for during_disable in (False, True):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                result = original(command, **kwargs)
+                if during_disable and command == proof.WIFI + ' set-wifi-enabled disabled':
+                    result.returncode = 1
+                return result
+            self.control.adb = adb
+            def body():
+                raise RuntimeError('fixture_test_failure')
+            with self.subTest(during_disable=during_disable), self.assertRaisesRegex(
+                    RuntimeError, '^device_command_failed$' if during_disable else '^fixture_test_failure$'):
+                self.run_fixture(body)
+            self.assertTrue(self.evidence['restored'])
+            self.assertTrue(self.evidence['wifi_final_enabled'])
+            self.assertTrue(self.device.wifi_on)
+
+    def test_competing_network_reappearing_after_preparation_is_rejected_before_fault(self):
+        for stage in ('snapshot', 'uplink'):
+            self.setUp()
+            def body():
+                self.device.adb(proof.WIFI + ' set-wifi-enabled enabled')
+                if stage == 'snapshot':
+                    self.control.snapshot()
+                else:
+                    proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, {}, required_interface='eth0')
+            with self.subTest(stage=stage), self.assertRaisesRegex(RuntimeError, '^single_uplink_changed$'):
+                self.run_fixture(body)
+            self.assertTrue(self.evidence['restored'])
+            self.assertFalse(self.control.single_ethernet_required)
+            self.assertFalse(any('link set' in call or ' rule del ' in call for call in self.device.calls))
+
+    def test_failed_restore_command_or_readback_retains_failure_and_never_verifies(self):
+        for failure in ('command', 'readback', 'timeout'):
+            self.setUp()
+            original = self.device.adb
+            restoring = False
+            def adb(command, **kwargs):
+                nonlocal restoring
+                if command == proof.WIFI + ' set-wifi-enabled enabled':
+                    restoring = True
+                    if failure in ('command', 'timeout'):
+                        return subprocess.CompletedProcess(['adb'], int(failure == 'command'), '', '')
+                if restoring and command == proof.WIFI + ' status' and failure == 'readback':
+                    return subprocess.CompletedProcess(['adb'], 1, 'private-ssid', '')
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(failure=failure):
+                result = self.run_report()
+                self.assertEqual(result['rpdb_loss']['status'], 'verified')
+                self.assertEqual(result['uplink_reconnect']['status'], 'verified')
+                self.assertEqual(result['tun_controls']['status'], 'verified')
+                self.assertEqual(result['status'], 'not_verified')
+                self.assertFalse(result['restored'])
+                self.assertFalse(result['network_fixture']['restored'])
+                self.assertEqual(result['reason'], 'network_fixture_restore_failed')
+                self.assertIn('restore_reason', result['network_fixture'])
+                self.assertNotIn('private-ssid', json.dumps(result))
+
+    def test_whole_route_proof_runs_on_cellular_eth0_and_restores_wifi_before_success(self):
+        result = self.run_report(failure_observer=lambda: self.fail('must not capture diagnostics on success'))
+        self.assertEqual(result['status'], 'verified')
+        self.assertTrue(result['restored'])
+        self.assertTrue(result['network_fixture']['restored'])
+        self.assertTrue(self.device.wifi_on)
+        self.assertEqual(result['uplink_reconnect']['interface'], 'eth0')
+        self.assertEqual(result['uplink_reconnect']['restore_method'], 'android_mobile_data_toggle')
+        self.assertTrue(all('link set dev wlan0' not in call for call in self.device.calls))
+        first_disable = self.device.calls.index(proof.WIFI + ' set-wifi-enabled disabled')
+        first_stop = self.device.calls.index(proof.CLI + ' service stop sing-box')
+        final_enable = self.device.calls.index(proof.WIFI + ' set-wifi-enabled enabled')
+        self.assertLess(first_disable, first_stop)
+        self.assertGreater(final_enable, self.device.calls.index(proof.MOBILE_DATA + ' enable'))
+        self.assertTrue(all('wlan0' not in item['interfaces']
+                            for key in ('before', 'fault', 'after')
+                            for item in result['rpdb_loss'][key]['netd']['networks']))
+
+    def test_failure_observer_sees_original_fault_before_cleanup_once_and_cannot_replace_reason(self):
+        for capture_fails in (False, True):
+            self.setUp()
+            result, events = {}, []
+            def udp():
+                return self.device.app() | {'ok': False, 'reason': 'timeout', 'elapsed_ms': 5000, 'accepted': 0}
+            def capture():
+                events.append('capture')
+                self.assertFalse(self.device.wifi_on)
+                self.assertEqual(result['reason'], 'baseline_app_not_captured')
+                self.assertEqual(result['rpdb_loss']['baseline_app']['reason'], 'timeout')
+                self.assertNotIn('fault', result['rpdb_loss'])
+                if capture_fails:
+                    raise ValueError('private-diagnostic-failure')
+            with self.subTest(capture_fails=capture_fails):
+                self.run_report(evidence=result, udp_sentinel=udp, failure_observer=capture,
+                                cleanup_observer=lambda: events.append('cleanup'))
+                self.assertEqual(events, ['capture', 'cleanup'])
+                self.assertEqual(result['status'], 'not_verified')
+                self.assertEqual(result['reason'], 'baseline_app_not_captured')
+                self.assertTrue(result['network_fixture']['restored'])
+                self.assertTrue(self.device.wifi_on)
+                self.assertEqual(result.get('failure_observer_failure'), 'capture_failed' if capture_fails else None)
+                self.assertNotIn('private-diagnostic-failure', json.dumps(result))
+
+
+class CellularLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.device, self.evidence, self.clock = Device(), {'recovery_tick_count': 0}, 0
+        self.device.adb(proof.WIFI + ' set-wifi-enabled disabled')
+        network = next(item for item in self.device.networks if item['interfaces'] == ['eth0'])
+        network['details'].append('Per-app UID ranges: prio 40 uids{ 10134 }')
+        network['details'].sort()
+        self.device.calls.clear()
+        self.control = proof.Control(self.device.adb, self.evidence)
+
+    def sleep(self, seconds):
+        self.clock += seconds
+
+    def run_control(self):
+        with patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                patch.object(proof.time, 'sleep', self.sleep):
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123,
+                                   self.evidence, required_interface='eth0')
+
+    def test_three_captured_current_sections_preserve_actual_owner_and_netd_changes(self):
+        observed, networks = {}, {}
+        for phase, enabled, net_id in (('before', True, 101), ('down', False, None), ('up', True, 102)):
+            fixture = CELLULAR[phase]
+            owner = proof.cellular_owner(fixture['registry'], fixture['phone'])
+            expected = {'phone_id': 0, 'sub_id': 1, 'user_data_enabled': enabled,
+                        'data_enabled': enabled, 'data_state': 2 if enabled else 0,
+                        'connections': ([{'state': 'CONNECTED', 'transport': 'WWAN',
+                                          'net_id': net_id, 'interface': 'eth0'}] if enabled else [])}
+            self.assertEqual(owner, expected)
+            observed[phase] = owner
+            networks[phase] = proof.parse_netd_networks(fixture['netd'])
+            self.assertEqual(int(fixture['flags'], 16), 0x1003 if enabled else 0x1002)
+            self.assertNotIn('<redacted>', json.dumps(owner))
+        self.assertTrue(proof.cellular_online(observed['before'], networks['before']))
+        self.assertTrue(proof.cellular_online(observed['up'], networks['up']))
+        self.assertEqual(proof.cellular_stopped_networks(networks['before']), networks['down'])
+        self.assertTrue(proof.cellular_networks_restored(networks['before'], networks['up']))
+
+    def test_real_sized_registry_and_history_do_not_supply_current_owner_fields(self):
+        before, down = CELLULAR['before'], CELLULAR['down']
+        history = '\n'.join('  historical entry ' + 'x' * 100 for _ in range(650))
+        text = down['registry'] + history + '\n' + before['registry'].partition('local logs:\n')[0].replace(
+            'last known state:\n', '').replace('  Phone Id=0\n', '')
+        self.assertGreater(len(text.encode()), proof.LIMIT)
+        self.assertEqual(proof.cellular_owner(text, down['phone']),
+                         proof.cellular_owner(down['registry'], down['phone']))
+        text = text.replace('    mUserMobileDataState= false\n', '', 1)
+        with self.assertRaises(RuntimeError):
+            proof.cellular_owner(text, down['phone'])
+        phone = before['phone'].replace('  mDefaultDataSubId=1\n', '')
+        phone += 'historical logs:\n  mDefaultDataSubId=1\n'
+        with self.assertRaises(RuntimeError):
+            proof.cellular_owner(before['registry'], phone)
+
+    def test_missing_duplicate_malformed_and_timeout_current_registry_are_rejected(self):
+        before = CELLULAR['before']
+        text = before['registry']
+        connection = next(row for row in text.splitlines() if 'mPreciseDataConnectionStates=' in row)
+        variants = [
+            '', text.partition('local logs:\n')[0], text + 'DUMP TIMEOUT (2s) EXPIRED\n',
+            text + '\x00', 'x' * (proof.NETD_LIMIT + 1),
+            text.replace('last known state:', 'last unknown state:'),
+            text.replace('  Phone Id=0\n', '  Phone Id=0\n  Phone Id=1\n'),
+            text.replace('  Phone Id=0\n', '  Phone Id=0\n  Phone Id=0\n'),
+            text.replace('mUserMobileDataState= true', 'mUserMobileDataState= TRUE'),
+            text.replace('    mIsDataEnabled=true\n', ''),
+            text.replace('mIsDataEnabled=true', 'mIsDataEnabled=true\n    mIsDataEnabled=false'),
+            text.replace('mIsDataEnabled=true', 'mIsDataEnabled= true'),
+            text.replace('mDataConnectionState=2', 'mDataConnectionState=6'),
+            text.replace('mDefaultPhoneId=0', 'mDefaultPhoneId=1'),
+            text.replace('mActiveDataSubId=1', 'mActiveDataSubId=2'),
+            text.replace('mDefaultSubId=1', 'mDefaultSubId=0'),
+            text.replace('mActiveDataSubId=1', 'mActiveDataSubId=2147483648'),
+            text.replace(connection + '\n', ''),
+            text.replace(connection, connection + '\n' + connection),
+            text.replace('Pair{1 ', 'Pair{2 '),
+            text.replace('transport: WWAN', 'transport: WLAN'),
+            text.replace('InterfaceName: eth0', 'InterfaceName: wlan0'),
+            text.replace('state: CONNECTED', 'state: UNKNOWN'),
+            text.replace('id: 1, netId:', 'id: 0, netId:'),
+            text.replace('netId: 101,', 'netId: 99,'),
+            text.replace('netId: 101,', 'netId: 65536,'),
+            text.replace('netId: 101,', 'netId: 101, netId: 101,'),
+            text.replace('APN Setting: [ApnSetting] <redacted>', 'APN Setting: [ApnSetting] changed'),
+            text.replace('network validation status: unsupported}', 'network validation status: unsupported'),
+        ]
+        for index, registry in enumerate(variants):
+            with self.subTest(index=index), self.assertRaises(RuntimeError):
+                proof.cellular_owner(registry, before['phone'])
+
+    def test_phone_globals_boundary_and_default_subscription_are_required(self):
+        before = CELLULAR['before']
+        text = before['phone']
+        variants = [
+            '', text.replace('------- End PhoneGlobals -------\n', ''),
+            text + text, text + 'DUMP TIMEOUT (2s) EXPIRED\n',
+            text.replace('mDefaultDataSubId=1', 'mDefaultDataSubId=2'),
+            text.replace('mDefaultDataSubId=1', 'mDefaultDataSubId=01'),
+            text.replace('  mDefaultDataSubId=1', '    mDefaultDataSubId=1'),
+            text.replace('mDefaultDataSubId=1', 'mDefaultDataSubId=1\n  mDefaultDataSubId=1'),
+        ]
+        for index, phone in enumerate(variants):
+            with self.subTest(index=index), self.assertRaises(RuntimeError):
+                proof.cellular_owner(before['registry'], phone)
+
+    def test_unready_owner_or_competing_network_aborts_before_guard_or_disable(self):
+        for failure in ('user_data_enabled', 'data_enabled', 'cellular_connected',
+                        'data_state', 'competing_network'):
+            self.setUp()
+            if failure == 'competing_network':
+                self.device.networks.append(copy.deepcopy(NETWORKS[-1]))
+            else:
+                setattr(self.device, failure, 4 if failure == 'data_state' else False)
+            with self.subTest(failure=failure), self.assertRaisesRegex(RuntimeError, '^cellular_baseline_not_ready$'):
+                self.run_control()
+            self.assertFalse(any(' data disable' in call or ' nohup ' in call for call in self.device.calls))
+            self.assertFalse(self.evidence['cellular_lifecycle']['acknowledged'])
+
+    def test_invalid_eth0_metadata_aborts_before_guard_or_disable(self):
+        for changes in (
+                {'net_id': 98},
+                {'details': ['Allowed UID ranges: unrestricted', 'Required permission: UNKNOWN']},
+                {'details': ['Allowed UID ranges: uids{ 10123 10000 }', 'Required permission: NONE']}):
+            self.setUp()
+            network = next(item for item in self.device.networks if item['interfaces'] == ['eth0'])
+            network.update(changes)
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                self.run_control()
+            self.assertFalse(any(' data disable' in call or ' nohup ' in call for call in self.device.calls))
+            self.assertFalse(self.evidence['cellular_lifecycle']['acknowledged'])
+
+    def test_existing_unreachable_preferences_are_unsupported_before_mutation(self):
+        for change in (
+                {'details': ['Allowed UID ranges: unrestricted', 'Per-app UID ranges: prio 40 uids{ 10135 }']},
+                {'net_id': 53}, {'interfaces': ['dummy0']},
+                {'details': ['Allowed UID ranges: uids{ 10134 }']}):
+            self.setUp()
+            next(item for item in self.device.networks if item['net_id'] == 52).update(change)
+            with self.subTest(change=change), self.assertRaisesRegex(
+                    RuntimeError, '^unsupported_cellular_unreachable_baseline$'):
+                self.run_control()
+            self.assertFalse(any(' data disable' in call or ' nohup ' in call for call in self.device.calls))
+
+    def test_owner_and_old_network_teardown_are_recorded_before_data_enable(self):
+        before = copy.deepcopy(self.device.networks)
+        self.run_control()
+        lifecycle = self.evidence['cellular_lifecycle']
+        self.assertEqual(self.evidence['status'], 'verified')
+        self.assertEqual(lifecycle['before']['networks'], before)
+        expected = [item for item in before if item['net_id'] != 100]
+        expected[1]['details'].append('Per-app UID ranges: prio 40 uids{ 10134 }')
+        self.assertEqual(lifecycle['down']['networks'], expected)
+        self.assertEqual(lifecycle['down']['flags'], self.evidence['down_flags'])
+        self.assertEqual(lifecycle['down']['owner']['connections'], [])
+        self.assertFalse(lifecycle['down']['owner']['user_data_enabled'])
+        self.assertTrue(lifecycle['acknowledged'])
+        self.assertEqual(lifecycle['after']['owner']['connections'][0]['net_id'], 101)
+        self.assertTrue(lifecycle['after']['owner']['user_data_enabled'])
+        self.assertLess(self.device.calls.index(proof.REGISTRY),
+                        self.device.calls.index(proof.MOBILE_DATA + ' disable'))
+        self.assertTrue(self.evidence['restore_guard_finished'])
+        guard = next(call for call in self.device.calls if call.startswith(proof.BB + ' nohup '))
+        self.assertIn('sleep 30;', guard)
+        self.assertIn(proof.MOBILE_DATA + ' enable', guard)
+        self.assertEqual(self.evidence['restore_method'], 'android_mobile_data_toggle')
+        self.assertFalse(any('link set dev eth0' in call or 'route add' in call
+                             or 'service restart' in call for call in self.device.calls))
+
+    def test_completed_shutdown_allows_same_net_id_to_be_reused(self):
+        self.device.mobile_new_net_id = False
+        self.run_control()
+        lifecycle = self.evidence['cellular_lifecycle']
+        self.assertTrue(lifecycle['acknowledged'])
+        self.assertEqual(lifecycle['before']['networks'], lifecycle['after']['networks'])
+
+    def test_delayed_owner_flags_and_old_netd_deletion_are_all_awaited(self):
+        for owner_delay, netd_delay, flags_delay in ((3, 0, 0), (0, 7, 0), (0, 0, 4), (3, 7, 5)):
+            self.setUp()
+            original, owner_up, netd_up = self.device.adb, self.device.registry_dump(), self.device.netd_dump()
+            down, enabled_at = False, []
+            def adb(command, **kwargs):
+                nonlocal down
+                if command == proof.MOBILE_DATA + ' disable':
+                    down = True
+                if command == proof.MOBILE_DATA + ' enable':
+                    self.assertTrue(self.evidence['cellular_lifecycle']['acknowledged'])
+                    enabled_at.append(self.clock)
+                    down = False
+                if down:
+                    self.assertGreater(kwargs['timeout'], 0)
+                    self.assertLessEqual(kwargs['timeout'], min(3, 15 - self.clock))
+                result = original(command, **kwargs)
+                if down and command == proof.REGISTRY and self.clock < owner_delay:
+                    result.stdout = owner_up
+                if down and command == proof.NETD and self.clock < netd_delay:
+                    result.stdout = netd_up
+                if down and command == 'cat /sys/class/net/eth0/flags' and self.clock < flags_delay:
+                    result.stdout = '0x1003'
+                return result
+            self.control.adb = adb
+            with self.subTest(owner=owner_delay, netd=netd_delay, flags=flags_delay):
+                self.run_control()
+                self.assertEqual(enabled_at, [max(owner_delay, netd_delay, flags_delay)])
+                self.assertEqual(self.evidence['status'], 'verified')
+
+    def test_unknown_or_unfinished_shutdown_fails_and_still_restores(self):
+        for failure in ('user_enabled', 'data_enabled', 'data_state', 'connection', 'old_netd',
+                        'flags_up', 'foreign_network', 'uid_migration', 'dump_timeout', 'read_error'):
+            self.setUp()
+            original, owner_up, netd_up = self.device.adb, self.device.registry_dump(), self.device.netd_dump()
+            down = False
+            def adb(command, **kwargs):
+                nonlocal down
+                if command == proof.MOBILE_DATA + ' disable':
+                    down = True
+                if command == proof.MOBILE_DATA + ' enable':
+                    down = False
+                result = original(command, **kwargs)
+                if down and command == proof.REGISTRY:
+                    if failure == 'user_enabled':
+                        result.stdout = result.stdout.replace('mUserMobileDataState= false',
+                                                              'mUserMobileDataState= true')
+                    elif failure == 'data_enabled':
+                        result.stdout = result.stdout.replace('mIsDataEnabled=false', 'mIsDataEnabled=true')
+                    elif failure == 'data_state':
+                        result.stdout = result.stdout.replace('mDataConnectionState=0', 'mDataConnectionState=4')
+                    elif failure == 'connection':
+                        result.stdout = owner_up
+                    elif failure == 'dump_timeout':
+                        result.stdout += 'DUMP TIMEOUT (2s) EXPIRED\n'
+                    elif failure == 'read_error':
+                        result.returncode = 1
+                if down and command == proof.NETD:
+                    if failure == 'old_netd':
+                        result.stdout = netd_up.replace('100 PHYSICAL eth0', '100 PHYSICAL')
+                    elif failure == 'foreign_network':
+                        result.stdout = result.stdout.replace('51 DUMMY dummy0', '53 DUMMY dummy0')
+                    elif failure == 'uid_migration':
+                        result.stdout = result.stdout.replace('uids{ 10134 }', 'uids{ 10135 }')
+                if down and command == 'cat /sys/class/net/eth0/flags' and failure == 'flags_up':
+                    result.stdout = '0x1003'
+                return result
+            self.control.adb = adb
+            with self.subTest(failure=failure), self.assertRaises(RuntimeError):
+                self.run_control()
+            lifecycle = self.evidence['cellular_lifecycle']
+            self.assertFalse(lifecycle['acknowledged'])
+            self.assertIn('down', lifecycle)
+            self.assertTrue(self.evidence['up_observed'])
+            self.assertTrue(self.evidence['restore_guard_finished'])
+            self.assertTrue(self.device.user_data_enabled)
+            self.assertEqual(self.evidence['status'], 'not_verified')
+            self.assertNotIn('recovery_after', self.evidence)
+            if failure in ('user_enabled', 'data_enabled', 'data_state', 'connection', 'old_netd', 'flags_up'):
+                self.assertEqual(self.clock, 15)
+
+    def test_shutdown_service_and_observations_share_one_deadline(self):
+        original, owner_up = self.device.adb, self.device.registry_dump()
+        down, enabled_at = False, []
+        def adb(command, **kwargs):
+            nonlocal down
+            if command == proof.MOBILE_DATA + ' disable':
+                down = True
+            if command == proof.MOBILE_DATA + ' enable':
+                enabled_at.append(self.clock)
+                down = False
+            if down:
+                timeout = kwargs['timeout']
+                self.assertLessEqual(timeout, min(3, 15 - self.clock))
+                self.clock += timeout
+            result = original(command, **kwargs)
+            if down and command == proof.REGISTRY:
+                result.stdout = owner_up
+            return result
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, '^cellular_shutdown_deadline$'):
+            self.run_control()
+        self.assertEqual(enabled_at, [15])
+        self.assertFalse(self.evidence['cellular_lifecycle']['acknowledged'])
+        self.assertTrue(self.evidence['up_observed'])
+
+    def test_control_transport_is_checked_before_owner_and_guard(self):
+        self.device.peers += TCP + '\n'
+        original = self.device.adb
+        def adb(command, **kwargs):
+            return (subprocess.CompletedProcess(['adb'], 0, '10.0.2.2 dev eth0', '')
+                    if command == proof.IP + ' -4 route get 10.0.2.2' else original(command, **kwargs))
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, 'uplink_carries_adb_control'):
+            self.run_control()
+        self.assertNotIn(proof.REGISTRY, self.device.calls)
+        self.assertFalse(any(' data disable' in call or ' nohup ' in call for call in self.device.calls))
+
+    def test_partial_disable_command_failure_and_host_interrupt_still_enable_data(self):
+        for interrupted in (False, True):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                result = original(command, **kwargs)
+                if command == proof.MOBILE_DATA + ' disable':
+                    if interrupted:
+                        raise KeyboardInterrupt()
+                    result.returncode = 1
+                return result
+            self.control.adb = adb
+            with self.subTest(interrupted=interrupted), self.assertRaises(
+                    KeyboardInterrupt if interrupted else RuntimeError):
+                self.run_control()
+            self.assertTrue(self.evidence['up_observed'])
+            self.assertTrue(self.evidence['restore_guard_finished'])
+            self.assertFalse(self.evidence['cellular_lifecycle']['acknowledged'])
+            self.assertTrue(self.device.user_data_enabled)
+            self.assertIn(proof.MOBILE_DATA + ' enable', self.device.calls)
+
+    def test_missing_or_unreadable_flags_are_not_shutdown_evidence(self):
+        for code, error in ((1, 'No such file or directory'), (1, 'read failed'), (124, 'timed out'), (0, '')):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                if command == 'cat /sys/class/net/eth0/flags' and not self.device.flags & 1:
+                    return subprocess.CompletedProcess(['adb'], code, '', error)
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(code=code, error=error), self.assertRaises(RuntimeError):
+                self.run_control()
+            lifecycle = self.evidence['cellular_lifecycle']
+            self.assertFalse(lifecycle['acknowledged'])
+            self.assertIsNone(lifecycle['down']['flags'])
+            self.assertNotIn('down_flags', self.evidence)
+            self.assertTrue(self.evidence['up_observed'])
+            self.assertTrue(self.evidence['restore_guard_finished'])
+            self.assertIn(proof.MOBILE_DATA + ' enable', self.device.calls)
+            self.assertFalse(any('eth0/flags' in call and 'echo 0x0' in call for call in self.device.calls))
+
+    def test_guard_must_finish_with_its_own_bounded_wait(self):
+        for finishes in (True, False):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                if command.startswith('if [ -r /proc/500/stat ]'):
+                    text = ('gone\n' if finishes and self.clock >= 30 else
+                            '500 (sh) S ' + '0 ' * 18 + '850\n')
+                    return subprocess.CompletedProcess(['adb'], 0, text, '')
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(finishes=finishes):
+                if finishes:
+                    self.run_control()
+                    self.assertEqual(self.clock, 30)
+                    self.assertEqual(self.evidence['status'], 'verified')
+                else:
+                    with self.assertRaisesRegex(RuntimeError, '^uplink_restore_guard_deadline$'):
+                        self.run_control()
+                    self.assertEqual(self.clock, 35)
+                    self.assertEqual(self.evidence['status'], 'not_verified')
+                self.assertTrue(self.device.flags & 1)
+
+    def test_restored_flags_without_owner_or_original_metadata_never_verify(self):
+        for failure in ('user_enabled', 'data_enabled', 'subscription', 'uid', 'other_network'):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                result = original(command, **kwargs)
+                if command == proof.MOBILE_DATA + ' enable':
+                    if failure == 'user_enabled':
+                        self.device.user_data_enabled = False
+                    elif failure == 'data_enabled':
+                        self.device.data_enabled = False
+                    elif failure == 'subscription':
+                        self.device.sub_id = 2
+                    elif failure == 'uid':
+                        network = next(item for item in self.device.networks if item['interfaces'] == ['eth0'])
+                        network['details'] = [row.replace('uids{ 10134 }', 'uids{ 10135 }')
+                                              for row in network['details']]
+                    elif failure == 'other_network':
+                        self.device.networks.append({'net_id': 200, 'type': 'LOCAL', 'interfaces': [],
+                                                     'details': ['Allowed UID ranges: unrestricted']})
+                return result
+            self.control.adb = adb
+            with self.subTest(failure=failure), self.assertRaises(RuntimeError):
+                self.run_control()
+            self.assertTrue(self.evidence['cellular_lifecycle']['acknowledged'])
+            self.assertIn('after', self.evidence['cellular_lifecycle'])
+            self.assertTrue(self.evidence['up_observed'])
+            self.assertTrue(self.evidence['restore_guard_finished'])
+            self.assertEqual(self.evidence['status'], 'not_verified')
+            if failure in ('user_enabled', 'data_enabled'):
+                self.assertEqual(self.clock, proof.RECOVERY_TIMEOUT)
 
 
 class RecoveryTests(unittest.TestCase):
@@ -291,8 +1022,8 @@ class RecoveryTests(unittest.TestCase):
 
     def test_unsupported_netd_metadata_is_preserved_without_adopting_the_network(self):
         for details in (
-                ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK'],
-                ['Allowed UID ranges: unrestricted', 'Required permission: SYSTEM'],
+                ['Allowed UID ranges: unrestricted', 'Required permission: UNKNOWN'],
+                ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK|SYSTEM'],
                 ['Allowed UID ranges: uids{ <BAD: 10000-10001> }', 'Required permission: NONE'],
                 ['Allowed UID ranges: unrestricted', 'Per-app UID ranges: prio 1000 uids{ 10000 }',
                  'Required permission: NONE']):
@@ -326,7 +1057,7 @@ class RecoveryTests(unittest.TestCase):
         for changes in ({'net_id': 98}, {'type': 'VIRTUAL'}, {'interfaces': ['eth0', 'wlan1']},
                         {'details': ['Required permission: NONE']},
                         {'details': ['Allowed UID ranges: unknown', 'Required permission: NONE']},
-                        {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK']},
+                        {'details': ['Allowed UID ranges: unrestricted', 'Required permission: network']},
                         {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE',
                                      'Per-app UID ranges: prio -1 uids{ 10000 }']}):
             self.setUp()
@@ -354,6 +1085,65 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(self.control.netd_observation()['networks'], self.device.networks)
         self.assertNotIn('netd_failure', self.evidence)
 
+    def test_known_restricted_permissions_bind_exact_global_and_per_app_rules(self):
+        for permission, explicit in RESTRICTED_RULES.items():
+            for renumber in (False, True):
+                self.setUp()
+                self.device.networks[3]['details'] = [
+                    'Allowed UID ranges: uids{ 0-99999 }',
+                    'Per-app UID ranges: prio 40 uids{ 10137 }', 'Required permission: ' + permission]
+                self.device.rules = [row for row in self.device.rules if row not in ETH0_RULES]
+                self.device.rules += [explicit] + app_rules(100, 40, [(10137, 10137)])
+                self.device.renumber_on_start = renumber
+                with self.subTest(permission=permission, renumber=renumber):
+                    expected = Counter([explicit] + app_rules(100, 40, [(10137, 10137)]))
+                    selectors = proof.ethernet_rules(self.control.netd_observation())
+                    self.assertEqual(selectors, expected)
+                    self.assertEqual(selectors[ETH0_RULES[1]], 0)
+                    self.run_control()
+                    self.assertEqual(self.evidence['status'], 'verified')
+
+    def test_restricted_permission_cannot_adopt_missing_wrong_or_implicit_rules(self):
+        for permission, explicit in RESTRICTED_RULES.items():
+            for change in ('missing', 'duplicate', 'none-mark', 'wrong-mask', 'implicit', 'extra-implicit'):
+                self.setUp()
+                self.device.networks[3]['details'][-1] = 'Required permission: ' + permission
+                self.device.rules = [row for row in self.device.rules if row not in ETH0_RULES] + [explicit]
+                if change == 'missing':
+                    self.device.rules.remove(explicit)
+                elif change == 'duplicate':
+                    self.device.rules.append(explicit)
+                elif change == 'none-mark':
+                    self.device.rules[self.device.rules.index(explicit)] = ETH0_RULES[0]
+                elif change == 'wrong-mask':
+                    self.device.rules[self.device.rules.index(explicit)] = explicit.split('/')[0] + '/0x1ffff iif lo lookup eth0'
+                else:
+                    self.device.rules += [ETH0_RULES[1]] * (1 if change == 'implicit' else 2)
+                with self.subTest(permission=permission, change=change), self.assertRaisesRegex(
+                        RuntimeError, 'netd_eth0_rules_not_bound'):
+                    self.control.snapshot()
+
+    def test_permission_changes_fail_even_when_both_rule_sets_match_their_metadata(self):
+        for old_permission, old_rule in [('NONE', ETH0_RULES[0]), *RESTRICTED_RULES.items()]:
+            for new_permission, new_rule in [('NONE', ETH0_RULES[0]), *RESTRICTED_RULES.items()]:
+                if old_permission == new_permission:
+                    continue
+                self.setUp()
+                self.device.networks[3]['details'][-1] = 'Required permission: ' + old_permission
+                self.device.rules = [row for row in self.device.rules if row not in ETH0_RULES] + [old_rule]
+                if old_permission == 'NONE':
+                    self.device.rules.append(ETH0_RULES[1])
+                before = {'netd': self.control.netd_observation()}
+                before_rules = Counter(self.device.rules)
+                self.device.networks[3]['details'][-1] = 'Required permission: ' + new_permission
+                self.device.rules = [row for row in self.device.rules if row not in (old_rule, ETH0_RULES[1])] + [new_rule]
+                if new_permission == 'NONE':
+                    self.device.rules.append(ETH0_RULES[1])
+                after = {'netd': self.control.netd_observation()}
+                with self.subTest(old=old_permission, new=new_permission):
+                    self.assertFalse(proof.foreign_rules_preserved(
+                        before, after, before_rules, Counter(self.device.rules)))
+
     def test_uid_metadata_rejects_noncanonical_values_and_priorities(self):
         for value in ('', '<BAD>', 'uids{}', 'uids{ 01 }', 'uids{ -1 }', 'uids{ 2147483648 }',
                       'uids{ 2-1 }', 'uids{ 1-1 }', 'uids{ 2 1 }', 'uids{ 1-3 1-2 }'):
@@ -372,6 +1162,9 @@ class RecoveryTests(unittest.TestCase):
         for renumber in (False, True):
             self.setUp()
             self.device.networks[3]['details'] = list(UID_DETAILS)
+            self.device.rules += app_rules(100, 0, [(10000, 10000), (10000, 10003),
+                                                    (10002, 10005), (10123, 10123)])
+            self.device.rules += app_rules(100, 10, [(10123, 10123)])
             self.device.renumber_on_start = renumber
             with self.subTest(renumber=renumber):
                 self.run_control()
@@ -384,6 +1177,9 @@ class RecoveryTests(unittest.TestCase):
 
     def test_legal_uid_metadata_changes_cannot_be_normalized_as_a_netid_rebuild(self):
         self.device.networks[3]['details'] = list(UID_DETAILS)
+        self.device.rules += app_rules(100, 0, [(10000, 10000), (10000, 10003),
+                                                (10002, 10005), (10123, 10123)])
+        self.device.rules += app_rules(100, 10, [(10123, 10123)])
         before = {'netd': self.control.netd_observation()}
         before_rules = Counter(self.device.rules)
         self.device.renumber_eth0()
@@ -397,6 +1193,78 @@ class RecoveryTests(unittest.TestCase):
             proof.ethernet_network(changed['netd'])['details'][index] = replacement
             with self.subTest(replacement=replacement):
                 self.assertFalse(proof.foreign_rules_preserved(before, changed, before_rules, after_rules))
+
+    def test_captured_android_15_per_app_netid_rebuild_preserves_foreign_rules(self):
+        # Run 43253655173: the app recovered, while eth0 changed netId100 ->101.
+        self.device.networks.pop()  # This snapshot has no wlan0 network.
+        self.device.networks[3]['details'] = [
+            'Allowed UID ranges: uids{ 0-99999 }',
+            'Per-app UID ranges: prio 40 uids{ 10137 }', 'Required permission: NONE']
+        captured = [
+            '15040: from all fwmark 0x10064/0x1ffff iif lo uidrange 10137-10137 lookup eth0',
+            '22040: from all fwmark 0x64/0x1ffff iif lo uidrange 10137-10137 lookup eth0',
+            '25000: from all fwmark 0x0/0x10000 iif lo uidrange 10137-10137 lookup eth0_local',
+            '29040: from all fwmark 0x0/0xffff iif lo uidrange 10137-10137 lookup eth0']
+        self.device.rules += captured
+        before = {'netd': self.control.netd_observation()}
+        before_rules = Counter(self.device.rules)
+        after = copy.deepcopy(before)
+        after['netd']['networks'][3]['net_id'] = 101
+        after_rules = Counter(row.replace('fwmark 0x10064/', 'fwmark 0x10065/')
+                             .replace('fwmark 0x64/', 'fwmark 0x65/')
+                             if row.endswith(' lookup eth0') else row
+                             for row in self.device.rules)
+        self.assertEqual(proof.ethernet_rules(before['netd']), Counter(ETH0_RULES + captured[:2]))
+        self.assertTrue(proof.foreign_rules_preserved(before, after, before_rules, after_rules))
+        for row in captured[2:]:
+            with self.subTest(foreign=row):
+                self.assertFalse(proof.foreign_rules_preserved(
+                    before, after, before_rules, after_rules - Counter([row])))
+
+    def test_per_app_selectors_require_complete_declared_multiplicities(self):
+        self.device.networks[3]['details'] = [
+            'Allowed UID ranges: unrestricted',
+            'Per-app UID ranges: prio 0 uids{ 0 0 }; prio 40 uids{ 10137-10139 }; prio 999 uids{ }',
+            'Required permission: NONE']
+        expected = app_rules(100, 0, [(0, 0), (0, 0)]) + app_rules(100, 40, [(10137, 10139)])
+        self.device.rules += expected
+        self.assertEqual(proof.ethernet_rules(self.control.netd_observation()),
+                         Counter(ETH0_RULES + expected))
+        self.control.snapshot()
+        duplicate = expected[0]
+        for count in (0, 1, 3):
+            self.device.rules = [row for row in self.device.rules if row != duplicate] + [duplicate] * count
+            with self.subTest(count=count), self.assertRaisesRegex(RuntimeError, 'netd_eth0_rules_not_bound'):
+                self.control.snapshot()
+
+    def test_per_app_netid_rebuild_rejects_missing_duplicate_or_foreign_selectors(self):
+        self.device.networks[3]['details'] = [
+            'Allowed UID ranges: unrestricted',
+            'Per-app UID ranges: prio 40 uids{ 10137 }', 'Required permission: NONE']
+        self.device.rules += app_rules(100, 40, [(10137, 10137)])
+        before = {'netd': self.control.netd_observation()}
+        before_rules = Counter(self.device.rules)
+        for renumber in (False, True):
+            if renumber:
+                self.device.renumber_eth0()
+            after = {'netd': self.control.netd_observation()}
+            after_rules = Counter(self.device.rules)
+            row = next(row for row in after_rules if row.startswith('15040:'))
+            variants = [None, row.replace('15040:', '15041:'), row.replace('/0x1ffff', '/0xffff'),
+                        row.replace('10137-10137', '10138-10138'), row.replace('iif lo', 'iif eth0'),
+                        row.replace('lookup eth0', 'lookup wlan0'),
+                        row.replace('0x10066/', '0x10064/') if renumber else row + ' oif eth0']
+            for replacement in variants:
+                changed = after_rules - Counter([row])
+                if replacement:
+                    changed[replacement] += 1
+                with self.subTest(renumber=renumber, replacement=replacement):
+                    self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules, changed))
+            self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules,
+                                                           after_rules + Counter([row])))
+            for extra in (row.replace('15040:', '15041:'), row.replace('10137-10137', '10138-10138')):
+                self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules,
+                                                               after_rules + Counter([extra])))
 
     def test_snapshot_brackets_kernel_reads_with_matching_netd_observations(self):
         original = self.device.adb
@@ -809,14 +1677,14 @@ class RecoveryTests(unittest.TestCase):
         guard = next(call for call in self.device.calls if call.startswith(proof.BB + ' nohup '))
         self.assertIn(restore, guard)
 
-    def test_ethernet_restore_does_not_toggle_wifi(self):
-        self.device.uplinks = ['eth0']
-        self.device.selected_uplink = 'eth0'
+    def test_cellular_restore_does_not_toggle_wifi(self):
+        self.device.adb(proof.WIFI + ' set-wifi-enabled disabled')
+        self.device.calls.clear()
         evidence = {}
         proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
-        self.assertEqual(evidence['restore_method'], 'link_up')
+        self.assertEqual(evidence['restore_method'], 'android_mobile_data_toggle')
         self.assertFalse(any('cmd wifi' in call for call in self.device.calls))
-        self.assertIn(proof.IP + ' link set dev eth0 up', self.device.calls)
+        self.assertIn(proof.MOBILE_DATA + ' enable', self.device.calls)
 
     def test_wifi_interface_recreation_is_observed_with_a_bounded_wait(self):
         for returns in (True, False):

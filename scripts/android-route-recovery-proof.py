@@ -9,6 +9,7 @@ the original config even when a control fails.
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
 import importlib.util
 import ipaddress
 import json
@@ -27,6 +28,11 @@ TUN = 'magicnet0'
 LIMIT = 65536
 NETD_LIMIT = 1024 * 1024
 NETD = '/system/bin/dumpsys -t 5 netd --short'
+REGISTRY = '/system/bin/dumpsys -t 2 telephony.registry 2>&1'
+PHONE = '/system/bin/dumpsys -t 2 phone 2>&1'
+MOBILE_DATA = '/system/bin/cmd phone data'
+WIFI = '/system/bin/cmd wifi'
+NETD_PERMISSIONS = {'NONE': 0, 'NETWORK': 0x40000, 'SYSTEM': 0xc0000}
 TICK_INTERVAL = 60
 BASELINE_TIMEOUT = 180
 RECOVERY_TIMEOUT = 600
@@ -214,7 +220,7 @@ def ethernet_metadata(details):
     fields = dict(row.partition(': ')[::2] for row in details)
     if (len(fields) != len(details)
             or set(fields) - {'Allowed UID ranges', 'Required permission', 'Per-app UID ranges'}
-            or fields.get('Required permission') != 'NONE'):
+            or fields.get('Required permission') not in NETD_PERMISSIONS):
         return False
     allowed = fields.get('Allowed UID ranges', '')
     if allowed != 'unrestricted' and not uid_ranges(allowed):
@@ -239,19 +245,38 @@ def ethernet_network(observation):
 
 
 def ethernet_rules(observation):
-    net_id = ethernet_network(observation)['net_id']
-    return Counter([
-        f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
-        f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'])
+    network = ethernet_network(observation)
+    net_id = network['net_id']
+    details = dict(row.split(': ', 1) for row in network['details'])
+    permission = NETD_PERMISSIONS[details['Required permission']]
+    selectors = Counter({
+        f'16000: from all fwmark {permission | 0x10000 | net_id:#x}/'
+        f'{permission | 0x1ffff:#x} iif lo lookup eth0': 1,
+        # Restricted networks have no global implicit rule. A zero count also
+        # rejects a stale NONE-permission rule left behind for this network.
+        f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0': int(permission == 0),
+    })
+    # Android 15 RouteController::modifyPhysicalNetwork installs both UID
+    # selectors for every declared range, retaining duplicate multiplicities.
+    for section in details.get('Per-app UID ranges', '').split('; '):
+        if not section:
+            continue
+        priority, ranges = section.removeprefix('prio ').split(' ', 1)
+        for interval in ranges.removeprefix('uids{').removesuffix('}').split():
+            low, _, high = interval.partition('-')
+            for base, mark in ((15000, 0x10000 | net_id), (22000, net_id)):
+                selectors[f'{base + int(priority)}: from all fwmark {mark:#x}/0x1ffff '
+                          f'iif lo uidrange {low}-{high or low} lookup eth0'] += 1
+    return selectors
 
 
 def foreign_rules_preserved(before, after, before_rules, after_rules):
     old, new = before['netd'], after['netd']
     old_network, new_network = ethernet_network(old), ethernet_network(new)
     old_id, new_id = old_network['net_id'], new_network['net_id']
-    old_pair, new_pair = ethernet_rules(old), ethernet_rules(new)
-    if (any(before_rules[row] != 1 for row in old_pair)
-            or any(after_rules[row] != 1 for row in new_pair)):
+    old_selectors, new_selectors = ethernet_rules(old), ethernet_rules(new)
+    if (any(before_rules[row] != count for row, count in old_selectors.items())
+            or any(after_rules[row] != count for row, count in new_selectors.items())):
         return False
     if old_id == new_id:
         return old == new and before_rules == after_rules
@@ -262,13 +287,20 @@ def foreign_rules_preserved(before, after, before_rules, after_rules):
             and old_id not in [item['net_id'] for item in new['networks']]
             and new_id not in [item['net_id'] for item in old['networks']]):
         return False
-    return before_rules - old_pair == after_rules - new_pair
+    return before_rules - old_selectors == after_rules - new_selectors
+
+
+def single_ethernet(netd):
+    physical = [item for item in netd['networks'] if item['type'] == 'PHYSICAL']
+    return (len(physical) == 1 and physical[0]['interfaces'] == ['eth0']
+            and not any('wlan0' in item['interfaces'] for item in netd['networks']))
 
 
 class Control:
     def __init__(self, adb, evidence):
         self.adb, self.evidence = adb, evidence
         self.last_tick = -float('inf')
+        self.single_ethernet_required = False
 
     def command(self, text, timeout=10, *, limit=LIMIT):
         cp = self.adb(text, timeout=timeout)
@@ -361,6 +393,7 @@ class Control:
 
     def snapshot(self):
         netd = self.netd_observation()
+        require(not self.single_ethernet_required or single_ethernet(netd), 'single_uplink_changed')
         identity = self.identity()
         index = self.command('cat /sys/class/net/' + TUN + '/ifindex').strip()
         require(re.fullmatch(r'[1-9][0-9]*', index), 'invalid_tun_identity')
@@ -372,7 +405,8 @@ class Control:
         require(self.identity() == identity, 'core_changed_during_snapshot')
         require(self.netd_observation() == netd, 'netd_changed_during_snapshot')
         result['netd'] = netd
-        require(all(Counter(result['rules'])[row] == 1 for row in ethernet_rules(netd)),
+        require(all(Counter(result['rules'])[row] == count
+                    for row, count in ethernet_rules(netd).items()),
                 'netd_eth0_rules_not_bound')
         return result
 
@@ -575,7 +609,180 @@ def control_peers(text):
     return peers
 
 
-def uplink_reconnect(control, sentinel, uid, evidence):
+def verify_control_transport(control, interface):
+    peers = control_peers(control.command(
+        f'p=$({BB} pidof adbd) || exit 1; test -n "$p" || exit 1; printf "ADBD\\n"; '
+        'for n in $p; do test -r /proc/$n/fd || exit 1; '
+        'for f in /proc/$n/fd/*; do readlink "$f" || exit 1; done; done; '
+        'printf "TCP\\n"; cat /proc/net/tcp /proc/net/tcp6'))
+    for peer in peers:
+        route = control.command(shlex.join([IP, '-6' if ':' in peer else '-4', 'route', 'get', peer]))
+        devices = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', route))
+        require(len(devices) == 1 and interface not in devices,
+                'uplink_carries_adb_control_or_unknown_route')
+
+
+def wifi_enabled(control):
+    # Android 15 WifiShellCommand prints this first from getWifiEnabledState().
+    # The remaining status can contain an SSID; retain only the boolean.
+    status = control.command(WIFI + ' status').splitlines()
+    require(status and status[0] in ('Wifi is enabled', 'Wifi is disabled'),
+            'wifi_state_unavailable')
+    return status[0] == 'Wifi is enabled'
+
+
+def cellular_owner(registry, phone):
+    # The pinned Google AVD uses eth0 for its radio data call, not EthernetService.
+    # Read only the current registry/PhoneGlobals sections; historical logs and
+    # APN/address payloads never become evidence or substitutes for missing fields.
+    for text in (registry, phone):
+        require(isinstance(text, str) and len(text.encode()) <= NETD_LIMIT
+                and not re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|'
+                                  r'DUMP TIMEOUT|DUMP ERROR|DUMP FAILED|DUMP TRUNCATED|EXPIRED',
+                                  text, re.IGNORECASE), 'invalid_cellular_dump')
+    rows = [row.rstrip() for row in registry.splitlines() if row.strip()]
+    require(rows and rows[0] == 'last known state:' and rows.count('last known state:') == 1
+            and rows.count('local logs:') == 1, 'incomplete_cellular_registry')
+    current = rows[1:rows.index('local logs:')]
+    require(current and current[0] == '  Phone Id=0'
+            and [row for row in current if row.lstrip().startswith('Phone Id=')]
+            == ['  Phone Id=0'], 'ambiguous_cellular_phone')
+    boundaries = [index for index, row in enumerate(current) if row.startswith('  mPhoneCapability=')]
+    require(len(boundaries) == 1, 'incomplete_cellular_registry')
+    specific, common = current[1:boundaries[0]], current[boundaries[0]:]
+
+    def field(section, name, pattern, indent):
+        found = [row for row in section if re.match(r'\s*' + re.escape(name) + r'\s*=', row)]
+        match = re.fullmatch(' ' * indent + re.escape(name) + '=' + pattern, found[0]) if len(found) == 1 else None
+        require(match, 'invalid_cellular_field')
+        return match[1]
+
+    phone_rows = [row.rstrip() for row in phone.splitlines() if row.strip()]
+    first, last = '------- PhoneGlobals -------', '------- End PhoneGlobals -------'
+    require(phone_rows and phone_rows[0] == first and phone_rows.count(first) == 1
+            and phone_rows.count(last) == 1, 'incomplete_cellular_phone_globals')
+    globals_rows = phone_rows[1:phone_rows.index(last)]
+    integer = r'([1-9][0-9]{0,9})'
+    sub_id = int(field(common, 'mActiveDataSubId', integer, 2))
+    require(sub_id <= 2147483647
+            and int(field(common, 'mDefaultSubId', integer, 2)) == sub_id
+            and field(common, 'mDefaultPhoneId', r'(0)', 2) == '0'
+            and int(field(globals_rows, 'mDefaultDataSubId', integer, 2)) == sub_id,
+            'cellular_subscription_mismatch')
+    owner = {'phone_id': 0, 'sub_id': sub_id,
+             'user_data_enabled': field(specific, 'mUserMobileDataState', r' (true|false)', 4) == 'true',
+             'data_enabled': field(specific, 'mIsDataEnabled', r'(true|false)', 4) == 'true',
+             'data_state': int(field(specific, 'mDataConnectionState', r'(-1|[0-5])', 4)),
+             'connections': []}
+    value = field(specific, 'mPreciseDataConnectionStates', r'(\{[^\n]*\})', 4)
+    if value != '{}':
+        # A single current WWAN data call is the supported fixture. Pair's 1 is
+        # a transport and id is a call ID; neither is the subscription ID.
+        match = re.fullmatch(
+            r'\{Pair\{1 \[ApnSetting\] ([^{}\n]{1,4096})\}= state: '
+            r'(DISCONNECTED|CONNECTING|CONNECTED|SUSPENDED|DISCONNECTING|HANDOVER_IN_PROGRESS), '
+            r'transport: WWAN, id: ([1-9][0-9]{0,9}), netId: ([1-9][0-9]{0,4}), '
+            r'network type: [A-Za-z0-9_+]{1,32}, APN Setting: \[ApnSetting\] ([^{}\n]{1,4096}), '
+            r'link properties: \{InterfaceName: eth0 [^{}\n]{1,8192}\}, '
+            r'default QoS: null, fail cause: NONE\(0x0\), network validation status: unsupported\}', value)
+        require(match and match[1] == match[5] and int(match[3]) <= 2147483647
+                and 100 <= int(match[4]) <= 65535
+                and all(value.count(marker) == 1 for marker in
+                        ('}= state: ', ', transport: ', ', id: ', ', netId: ', ', network type: ',
+                         ', APN Setting: ', ', link properties: ', 'InterfaceName: ',
+                         ', default QoS: ', ', fail cause: ', ', network validation status: ')),
+                'invalid_cellular_connection')
+        owner['connections'] = [{'state': match[2], 'transport': 'WWAN',
+                                 'net_id': int(match[4]), 'interface': 'eth0'}]
+    return owner
+
+
+def cellular_online(owner, networks):
+    if not single_ethernet({'networks': networks}):
+        return False
+    network = ethernet_network({'networks': networks})
+    return (owner['user_data_enabled'] and owner['data_enabled'] and owner['data_state'] == 2
+            and owner['connections'] == [{'state': 'CONNECTED', 'transport': 'WWAN',
+                                         'net_id': network['net_id'], 'interface': 'eth0'}])
+
+
+def cellular_stopped_networks(networks):
+    network = ethernet_network({'networks': networks})
+    unreachable = [item for item in networks if item['type'] == 'UNREACHABLE']
+    require(unreachable == [{'net_id': 52, 'type': 'UNREACHABLE', 'interfaces': [],
+                             'details': ['Allowed UID ranges: unrestricted']}],
+            'unsupported_cellular_unreachable_baseline')
+    per_app = [row for row in network['details'] if row.startswith('Per-app UID ranges: ')]
+    return [item | {'details': sorted(item['details'] + per_app)} if item['net_id'] == 52 else item
+            for item in networks if item['net_id'] != network['net_id']]
+
+
+def cellular_networks_restored(before, after):
+    old, new = (ethernet_network({'networks': networks}) for networks in (before, after))
+    if (old['net_id'] != new['net_id']
+            and (any(item['net_id'] == old['net_id'] for item in after)
+                 or any(item['net_id'] == new['net_id'] for item in before))):
+        return False
+    restored = [item | {'net_id': old['net_id']} if item is new else item for item in after]
+    return sorted(restored, key=lambda item: item['net_id']) == before
+
+
+@contextmanager
+def single_uplink_fixture(control, evidence):
+    evidence.update(scope='disposable-single-eth0', prepared=False, restored=False)
+    require(control.command('getprop ro.kernel.qemu').strip() == '1'
+            and control.command('getprop ro.product.cpu.abi').strip() == 'x86_64',
+            'disposable_x86_emulator_required')
+    evidence.update(qemu=True, abi='x86_64')
+    initial = evidence['wifi_initial_enabled'] = wifi_enabled(control)
+    verify_control_transport(control, 'wlan0')
+    evidence['control_transport_verified'] = True
+    previously_required = control.single_ethernet_required
+    try:
+        if initial:
+            control.command(WIFI + ' set-wifi-enabled disabled')
+        deadline, previous = time.monotonic() + BASELINE_TIMEOUT, None
+        while time.monotonic() < deadline:
+            disabled = not wifi_enabled(control)
+            netd = control.netd_observation()
+            observed = None
+            if disabled and single_ethernet(netd):
+                rows = control.rule_snapshot()
+                route = control.command(IP + ' -4 route get 192.0.2.1')
+                devices = set(re.findall(r'\bdev ([a-zA-Z0-9_.-]+)(?=\s|$)', route))
+                if (devices == {'eth0'} and control.netd_observation() == netd
+                        and all(Counter(rows)[row] == count
+                                for row, count in ethernet_rules(netd).items())):
+                    observed = {'netd': netd, 'rules': rows, 'egress': 'eth0'}
+            if observed is not None and observed == previous:
+                evidence.update(wifi_disabled=True, stable_observations=[previous, observed],
+                                prepared=True)
+                break
+            previous = observed
+            time.sleep(min(POLL_INTERVAL, max(0, deadline - time.monotonic())))
+        require(evidence['prepared'], 'single_uplink_baseline_deadline')
+        control.single_ethernet_required = True
+        yield
+    finally:
+        control.single_ethernet_required = previously_required
+        try:
+            # Reassert the known original setting even after a partial failure;
+            # an unavailable post-proof status must not skip restoration.
+            control.command(WIFI + ' set-wifi-enabled ' + ('enabled' if initial else 'disabled'))
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                current = evidence['wifi_final_enabled'] = wifi_enabled(control)
+                if current == initial:
+                    evidence['restored'] = True
+                    break
+                time.sleep(1)
+            require(evidence['restored'], 'wifi_restore_deadline')
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:
+            evidence['restore_reason'] = str(error) if isinstance(error, RuntimeError) else 'wifi_restore_failed'
+            raise RuntimeError('network_fixture_restore_failed') from None
+
+
+def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=None):
     evidence.update(status='not_verified', stage='select_uplink')
     routes = lines(control.command(IP + ' -4 route show table all'))
     interfaces = {match[1] for row in routes if row.startswith('default ') and 'linkdown' not in row
@@ -587,18 +794,11 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     require(len(selected) == 1 and selected <= interfaces, 'ambiguous_or_missing_uplink')
     interface = evidence['interface'] = selected.pop()
     evidence['default_interfaces'] = sorted(interfaces)
+    require(required_interface is None or interface == required_interface and interfaces == {required_interface},
+            'single_uplink_changed')
     # Refuse to lower an interface carrying a TCP adbd peer. Emulator pipe/Unix
     # transports and peers on a different interface keep the control channel up.
-    peers = control_peers(control.command(
-        f'p=$({BB} pidof adbd) || exit 1; test -n "$p" || exit 1; printf "ADBD\\n"; '
-        'for n in $p; do test -r /proc/$n/fd || exit 1; '
-        'for f in /proc/$n/fd/*; do readlink "$f" || exit 1; done; done; '
-        'printf "TCP\\n"; cat /proc/net/tcp /proc/net/tcp6'))
-    for peer in peers:
-        route = control.command(shlex.join([IP, '-6' if ':' in peer else '-4', 'route', 'get', peer]))
-        require(re.search(r'\bdev [a-zA-Z0-9_.-]+(?:\s|$)', route)
-                and not re.search(r'\bdev ' + interface + r'(?:\s|$)', route),
-                'uplink_carries_adb_control_or_unknown_route')
+    verify_control_transport(control, interface)
     evidence['control_transport_verified'] = True
 
     def begin_observation(key, state=None):
@@ -610,6 +810,16 @@ def uplink_reconnect(control, sentinel, uid, evidence):
 
     def recovered(state, key='last_observation'):
         observed = begin_observation(key, state)
+        if interface == 'eth0' and key == 'last_observation':
+            after = lifecycle['after'] = {'owner': None, 'networks': None}
+            observe_cellular(after)
+            require(all(after['owner'][field] == before['owner'][field]
+                        for field in ('phone_id', 'sub_id')), 'cellular_identity_changed')
+            if not cellular_online(after['owner'], after['networks']):
+                observed['tcp']['reason'] = 'cellular_not_connected'
+                return False
+            require(cellular_networks_restored(before['networks'], after['networks']),
+                    'cellular_foreign_network_changed')
         routes = observed['routes'] = lines(control.command(IP + ' -4 route show table all'))
         routed = observed['selected_default'] = any(
             row.startswith('default ') and 'linkdown' not in row
@@ -640,16 +850,32 @@ def uplink_reconnect(control, sentinel, uid, evidence):
     begin_observation('baseline')
     require(recovered(control.connectivity(), 'baseline'), 'uplink_baseline_not_ready')
 
-    def flags():
+    def flags(timeout=10):
         path = '/sys/class/net/' + interface + '/flags'
-        text = control.command(f'if [ -r {path} ]; then cat {path}; else echo 0x0; fi').strip()
-        require(re.fullmatch(r'0x[0-9a-fA-F]+', text), 'invalid_interface_flags')
+        command = ('cat ' + path if interface == 'eth0' else
+                   f'if [ -r {path} ]; then cat {path}; else echo 0x0; fi')
+        text = control.command(command, timeout=timeout).strip()
+        require(re.fullmatch(r'0x[0-9a-fA-F]{1,8}', text), 'invalid_interface_flags')
         return int(text, 16)
 
     require(flags() & 1, 'uplink_not_initially_up')
+    if interface == 'eth0':
+        def observe_cellular(observed, timeout=lambda: 3):
+            registry = control.command(REGISTRY, timeout=timeout(), limit=NETD_LIMIT)
+            phone = control.command(PHONE, timeout=timeout(), limit=NETD_LIMIT)
+            observed['owner'] = cellular_owner(registry, phone)
+            observed['networks'] = parse_netd_networks(control.command(NETD, timeout=timeout(), limit=NETD_LIMIT))
+
+        lifecycle = evidence['cellular_lifecycle'] = {'acknowledged': False, 'before': {}}
+        before = lifecycle['before']
+        observe_cellular(before)
+        require(cellular_online(before['owner'], before['networks']), 'cellular_baseline_not_ready')
+        network = ethernet_network({'networks': before['networks']})
+        stopped_networks = cellular_stopped_networks(before['networks'])
+        remaining_networks = [item for item in before['networks'] if item['net_id'] != network['net_id']]
     up = shlex.join([IP, 'link', 'set', 'dev', interface, 'up'])
-    restore = up
-    evidence['restore_method'] = 'link_up'
+    restore = MOBILE_DATA + ' enable' if interface == 'eth0' else up
+    evidence['restore_method'] = 'android_mobile_data_toggle' if interface == 'eth0' else 'link_up'
     if interface == 'wlan0':
         # A raw link down tears down the emulator supplicant. Let Android
         # recreate it and reacquire the network before observing recovery.
@@ -658,24 +884,54 @@ def uplink_reconnect(control, sentinel, uid, evidence):
                     ' && /system/bin/cmd wifi set-wifi-enabled enabled')
         evidence['restore_method'] = 'android_wifi_toggle'
     # Independent, short-lived restore guard also survives a host interruption.
-    guard = shlex.join([BB, 'sh', '-c', BB + ' sleep 10; ' + restore])
+    guard_delay, guard_wait = (30, 35) if interface == 'eth0' else (10, 15)
+    guard = shlex.join([BB, 'sh', '-c', BB + f' sleep {guard_delay}; ' + restore])
     guard_pid, guard_start, _ = guard_identity(control.command(
         f'{BB} nohup {BB} true </dev/null >/dev/null 2>&1 || exit 1; '
         f'{BB} nohup {guard} </dev/null >/dev/null 2>&1 & p=$!; cat /proc/$p/stat'))
     evidence.update(restore_guard_pid=guard_pid, restore_guard_start_ticks=guard_start)
     try:
         evidence['stage'] = 'uplink_down'
-        control.command(shlex.join([IP, 'link', 'set', 'dev', interface, 'down']))
-        evidence['down_flags'] = flags()  # A separate live ADB request while down.
-        evidence['down_observed'] = evidence['down_flags'] & 1 == 0
-        require(evidence['down_observed'], 'uplink_down_not_observed')
-        evidence['control_channel_survived'] = True
+        deadline = time.monotonic() + 15
+        def remaining_timeout():
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, 'cellular_shutdown_deadline')
+            return min(3, remaining)
+        down_command = (MOBILE_DATA + ' disable' if interface == 'eth0' else
+                        shlex.join([IP, 'link', 'set', 'dev', interface, 'down']))
+        control.command(down_command,
+                        timeout=remaining_timeout() if interface == 'eth0' else 10)
+        while True:
+            timeout = remaining_timeout() if interface == 'eth0' else 10
+            down = {'owner': None, 'networks': None, 'flags': None}
+            if interface == 'eth0':
+                lifecycle['down'] = down
+            down['flags'] = evidence['down_flags'] = flags(timeout)
+            evidence['down_observed'] = down['flags'] & 1 == 0
+            evidence['control_channel_survived'] = True
+            if interface != 'eth0':
+                require(evidence['down_observed'], 'uplink_down_not_observed')
+                break
+            observe_cellular(down, remaining_timeout)
+            require(all(down['owner'][field] == before['owner'][field]
+                        for field in ('phone_id', 'sub_id')), 'cellular_identity_changed')
+            require([item for item in down['networks'] if item['net_id'] != network['net_id']]
+                    in (remaining_networks, stopped_networks), 'cellular_foreign_network_changed')
+            if (not down['owner']['user_data_enabled'] and not down['owner']['data_enabled']
+                    and down['owner']['data_state'] == 0 and down['owner']['connections'] == []
+                    and evidence['down_observed']
+                    and down['networks'] == stopped_networks and time.monotonic() < deadline):
+                # A raw link up does not ask the radio/Telephony owner to rebuild
+                # routes. Await its completed teardown before enabling data.
+                lifecycle['acknowledged'] = True
+                break
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
     finally:
         try:
             control.command(restore)
         finally:
             # Do not carry the guard's delayed `up` into the next lifecycle phase.
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + guard_wait
             while time.monotonic() < deadline:
                 text = control.command(f'if [ -r /proc/{guard_pid}/stat ]; then '
                                        f'cat /proc/{guard_pid}/stat; else echo gone; fi')
@@ -702,7 +958,7 @@ def uplink_reconnect(control, sentinel, uid, evidence):
                     status='verified', stage='complete')
 
 
-def verify(adb, instrument, component, evidence=None):
+def verify(adb, instrument, component, evidence=None, *, failure_observer=None):
     evidence = {} if evidence is None else evidence
     evidence.update(schema=1, status='not_verified', scope='disposable-android-app-uid-tun')
     if os.environ.get('MAGICNET_DISPOSABLE_AVD') != '1' or not re.fullmatch(
@@ -715,6 +971,7 @@ def verify(adb, instrument, component, evidence=None):
     rpdb = evidence['rpdb_loss'] = {'status': 'not_verified', 'recovery_entry': 'connectivity.tick',
                                    'recovery_tick_count': 0}
     control = Control(adb, rpdb)
+    failure_observed = False
 
     def observe(stage):
         try:
@@ -724,20 +981,36 @@ def verify(adb, instrument, component, evidence=None):
             raise RuntimeError('helper_control_failed') from None
 
     def fault(sentinel, uid, udp_sentinel):
+        nonlocal failure_observed
         evidence['app_uid'] = uid
         try:
             control.rpdb_loss(udp_sentinel, uid)
             reconnect = evidence['uplink_reconnect'] = {'recovery_tick_count': 0}
-            uplink_reconnect(Control(adb, reconnect), sentinel, uid, reconnect)
+            uplink_reconnect(Control(adb, reconnect), sentinel, uid, reconnect, required_interface='eth0')
         except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:
             # RuntimeError text is exclusively a fixed token from this harness.
             evidence['reason'] = str(error) if isinstance(error, RuntimeError) else 'fault_observation_failed'
+            if failure_observer is not None and not failure_observed:
+                failure_observed = True
+                try:
+                    failure_observer()
+                except Exception:
+                    evidence['failure_observer_failure'] = 'capture_failed'
             raise RuntimeError('route_control_failed') from None
 
-    result = proof.verify(adb, instrument, component, fault_control=fault, lifecycle_observer=observe)
+    fixture = evidence['network_fixture'] = {}
+    result = {'status': 'not_verified', 'positive': False, 'reject': False,
+              'positive_after': False, 'restored': False}
+    try:
+        with single_uplink_fixture(control, fixture):
+            result = proof.verify(adb, instrument, component, fault_control=fault, lifecycle_observer=observe)
+    except (RuntimeError, ValueError, KeyError, TypeError, OSError) as error:
+        evidence.setdefault('reason', str(error) if isinstance(error, RuntimeError) else 'network_fixture_failed')
     evidence['tun_controls'] = result
     evidence.update({key: result.get(key) is True for key in ('positive', 'reject', 'positive_after', 'restored')})
-    if result['status'] == 'verified' and all(evidence.get(key, {}).get('status') == 'verified'
+    evidence['restored'] = evidence['restored'] and fixture.get('restored') is True
+    if result['status'] == 'verified' and fixture.get('prepared') is True and evidence['restored'] \
+            and all(evidence.get(key, {}).get('status') == 'verified'
                                            for key in ('rpdb_loss', 'uplink_reconnect')):
         evidence['status'] = 'verified'
         evidence.pop('reason', None)
