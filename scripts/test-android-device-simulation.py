@@ -1234,6 +1234,17 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(device.stop_checks, [{'operation': 'service_stop', 'exit_code': 1,
                                               'error_kinds': ['core_identity']}])
 
+    def test_service_stop_marker_diagnostic_is_exact_and_sanitized(self):
+        for suffix, expected in (('', [{'target': 'fswatch', 'kind': 'replaced'}]),
+                                 (' private-canary', None)):
+            device = self.device()
+            message = '[error] supervisor PID file changed during stop: replaced [supervisor=fswatch]'
+            with patch.object(device, 'kshell', return_value=cp('private-canary', 1, message + suffix)), \
+                 self.assertRaisesRegex(RuntimeError, 'service stop command failed'):
+                device.stop_service()
+            self.assertEqual(device.stop_checks[0].get('marker_errors'), expected)
+            self.assertNotIn('private-canary', json.dumps(device.stop_checks))
+
     def test_stop_observation_waits_for_kernel_exit_without_replaying_stop(self):
         device = self.device()
         with patch.object(device, 'kshell', side_effect=[cp(rc=1), cp(), *[cp()] * 6]) as run, \
