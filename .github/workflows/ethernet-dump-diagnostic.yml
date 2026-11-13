@@ -1,0 +1,95 @@
+name: Issue 436 Ethernet dump diagnostic
+
+on:
+  push:
+    branches: [diagnostic/issue-436-ethernet-20261113]
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  ANDROID_SERIAL: emulator-5554
+
+jobs:
+  inspect:
+    name: Read Ethernet dump on pinned API 35 image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install emulator tools
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" "$ANDROID_SDK_ROOT/platform-tools" "$ANDROID_SDK_ROOT/emulator" >> "$GITHUB_PATH"
+          timeout 600 "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" platform-tools emulator
+      - name: Restore pinned pristine image
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.android/avd/MagicNet_API_35.avd
+            ~/.android/avd/MagicNet_API_35.ini
+            /usr/local/lib/android/sdk/system-images/android-35/google_apis/x86_64
+          key: android-avd-v6-api35-r9-kernel12525588
+      - name: Verify exact image and boot stock kernel
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = true
+          image="$ANDROID_SDK_ROOT/system-images/android-35/google_apis/x86_64"
+          grep -Eq '^Pkg.Revision[[:space:]]*=[[:space:]]*9[[:space:]]*$' "$image/source.properties"
+          grep -Eq '^AndroidVersion.ApiLevel[[:space:]]*=[[:space:]]*35[[:space:]]*$' "$image/source.properties"
+          printf '%s  %s\n' 987818a35792fb62f6ea6aa604d5fa476e1e85c84fc1cbac3979e1ae26965f46 "$image/kernel-ranchu" ed02243242916aaa878b880f3eaa7ace1b44406747cdfecd585ad14ea0464fd5 "$image/ramdisk.img" | sha256sum --check --strict
+          mkdir -p artifacts/ethernet-diagnostic
+          cp "$image/source.properties" artifacts/ethernet-diagnostic/system-image.properties
+          test -e /dev/kvm
+          sudo chmod 0666 /dev/kvm
+          nohup emulator @MagicNet_API_35 -port 5554 -accel on -no-window -noaudio -no-boot-anim -no-snapshot -no-snapshot-save -gpu swiftshader_indirect -memory 2048 >artifacts/ethernet-diagnostic/emulator.log 2>&1 &
+      - name: Capture bounded read-only Ethernet observations
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          from pathlib import Path
+          out = Path('artifacts/ethernet-diagnostic')
+          def adb(*args, timeout=12):
+              result = subprocess.run(['adb', '-s', os.environ['ANDROID_SERIAL'], *args], capture_output=True, timeout=timeout, check=True)
+              if len(result.stdout) > 262144:
+                  raise RuntimeError('diagnostic output limit exceeded')
+              return result.stdout
+          deadline = time.monotonic() + 240
+          while time.monotonic() < deadline:
+              try:
+                  if adb('shell', 'getprop', 'sys.boot_completed').strip() == b'1':
+                      break
+              except (subprocess.SubprocessError, OSError):
+                  pass
+              time.sleep(2)
+          else:
+              raise RuntimeError('boot deadline')
+          adb('root')
+          adb('wait-for-device', timeout=30)
+          time.sleep(5)
+          props = {key: adb('shell', 'getprop', key).decode().strip() for key in ['ro.build.fingerprint', 'ro.build.version.release', 'ro.build.version.sdk', 'ro.product.cpu.abi', 'ro.kernel.qemu']}
+          assert props['ro.product.cpu.abi'] == 'x86_64' and props['ro.kernel.qemu'] == '1'
+          (out / 'provenance.json').write_text(json.dumps({'scope': 'read-only-stock-kernel-parser-diagnostic', 'source_sha': os.environ['GITHUB_SHA'], 'device': props}, indent=2) + '\n')
+          for seconds in (2, 5):
+              (out / f'ethernet-{seconds}s.txt').write_bytes(adb('shell', '/system/bin/dumpsys', '-t', str(seconds), 'ethernet'))
+          (out / 'netd.txt').write_bytes(adb('shell', '/system/bin/dumpsys', '-t', '5', 'netd'))
+          PY
+      - name: Stop disposable emulator
+        if: always()
+        run: adb -s emulator-5554 emu kill || true
+      - name: Upload parser diagnostic
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ethernet-parser-diagnostic-${{ github.run_id }}
+          path: artifacts/ethernet-diagnostic
+          retention-days: 14
+          if-no-files-found: error
