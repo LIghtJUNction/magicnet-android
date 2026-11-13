@@ -133,6 +133,66 @@ kernel and application evidence. This reproduces the recoverable missing-rule
 condition from #436; it does not identify which OEM component originally removed
 the rules or establish physical ARM64 modem behavior.
 
+## Host evidence when the emulator disappears
+
+[Source run 43407220745](https://github.com/LIghtJUNction/magicnet-android/actions/runs/43407220745)
+completed route recovery, then failed to observe a completed new Android boot
+during upgrade preservation. The guest serial log showed that init received the
+reboot request, but the original artifacts did not retain the host emulator's
+exit status. The additional host observations address that evidence gap. They do
+not establish or repair the cause of that reboot failure.
+
+A passive Python parent launches the existing emulator argument list once and
+waits for that child. Emulator output still goes directly to `emulator.log`;
+there is no pipe between the emulator and its log, no new session, signal
+forwarding, retry or restart. `emulator-host-launch.json` records separate child
+and observer PID/starttime identities, an argument digest and the child's
+cgroup memory baseline. `emulator.pid` contains the actual child PID.
+`emulator-host-exit.json` retains the real
+[Python wait result](https://docs.python.org/3.12/library/subprocess.html#subprocess.Popen.returncode):
+a negative value represents a signal, while a normal exit code such as 137 stays
+a normal exit code. Missing process identity or a lost observer leaves the
+corresponding observation unknown.
+
+An always-running step writes `emulator-host-before-stop.json` before explicit
+cleanup. It reads only the recorded processes, the original cgroup and a bounded
+kernel-log stream, and queries the existing localhost ADB server with
+`host:devices`. That query cannot start an ADB server, reconnect a transport or
+send a guest command. Only the target emulator's normalized state and the device
+count are retained. The snapshot has a 12-second internal deadline and a
+15-second external timeout, with one further second allowed for termination.
+Each ADB or kernel reader receives at most three seconds. JSON records are
+limited to 32 KiB, individual proc/cgroup reads to 16 KiB, ADB payloads to 8 KiB
+and 64 device rows, and kernel input to 512 KiB. Only 16 matching PID OOM records
+can be retained; truncation, denied access and absent counters remain explicit.
+
+The uploaded host records contain numeric process observations, fixed status
+tokens, content digests and whitelisted memory/OOM fields. They contain no full
+environment, command line, cgroup path or host-log body. The cgroup lookup path
+stays in private runner temporary state outside the uploaded artifact directory.
+Both [hierarchical and local memory events](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files)
+are sampled when available. An increased OOM counter describes that cgroup's
+scope; a SIGKILL or a matching PID in a kernel message alone does not establish
+that the emulator was killed by OOM.
+
+Explicit Stop records its request time separately, keeps the existing bounded
+ADB shutdown, and uses a pidfd plus matching starttime for the existing SIGTERM.
+SIGTERM also requires a complete spawned receipt, the original observer still
+alive with the same starttime, and matching recorded and current parentage.
+A missing observer, an orphan, a parent mismatch or malformed ownership evidence
+leaves cleanup unknown and sends no SIGTERM. Missing pidfd support or a reused
+PID never falls back to an unverified `kill(pid)`. The two cleanup helpers each
+have a three-second timeout plus one second for termination. Cleanup observations do not overwrite the snapshot.
+An exit observed after the cleanup request is not automatically attributed to
+cleanup; the files retain timestamps so the sequence can be assessed.
+
+Host collection failures do not replace the lifecycle failure or make it pass.
+The single reboot request, 300-second new-boot observation, route recovery
+budgets and independent Android acceptance gate remain unchanged. Host tests
+exercise actual child exits and signals, identity loss, PID reuse, bounded
+inputs and cleanup ordering. A later successful run would provide additional
+acceptance evidence, not prove the cause of the earlier host/guest loss.
+
 ## Sustained device observations
 
 Short connectivity rounds and lifecycle acceptance do not establish stability.
