@@ -57,10 +57,14 @@ jobs:
           import json, os, subprocess, time
           from pathlib import Path
           out = Path('artifacts/ethernet-diagnostic')
-          def adb(*args, timeout=12):
+          def adb(*args, timeout=12, record=None):
               result = subprocess.run(['adb', '-s', os.environ['ANDROID_SERIAL'], *args], capture_output=True, timeout=timeout, check=True)
-              if len(result.stdout) > 262144:
+              if len(result.stdout) + len(result.stderr) > 524288:
                   raise RuntimeError('diagnostic output limit exceeded')
+              if record:
+                  (out / (record + '.txt')).write_bytes(result.stdout)
+                  (out / (record + '.stderr.txt')).write_bytes(result.stderr)
+                  (out / (record + '.json')).write_text(json.dumps({'args': args, 'exit_code': result.returncode, 'stdout_bytes': len(result.stdout), 'stderr_bytes': len(result.stderr)}, indent=2) + '\n')
               return result.stdout
           deadline = time.monotonic() + 240
           while time.monotonic() < deadline:
@@ -78,9 +82,20 @@ jobs:
           props = {key: adb('shell', 'getprop', key).decode().strip() for key in ['ro.build.fingerprint', 'ro.build.version.release', 'ro.build.version.sdk', 'ro.product.cpu.abi', 'ro.kernel.qemu']}
           assert props['ro.product.cpu.abi'] == 'x86_64' and props['ro.kernel.qemu'] == '1'
           (out / 'provenance.json').write_text(json.dumps({'scope': 'read-only-stock-kernel-parser-diagnostic', 'source_sha': os.environ['GITHUB_SHA'], 'device': props}, indent=2) + '\n')
+          adb('shell', '/system/bin/dumpsys', '-l', record='services')
+          adb('shell', 'service', 'list', record='binder-services')
+          adb('shell', 'pm', 'list', 'features', record='features')
+          deadline = time.monotonic() + 90
+          while time.monotonic() < deadline:
+              netd = adb('shell', '/system/bin/dumpsys', '-t', '5', 'netd', record='netd')
+              if b'PHYSICAL eth0' in netd:
+                  break
+              time.sleep(3)
           for seconds in (2, 5):
-              (out / f'ethernet-{seconds}s.txt').write_bytes(adb('shell', '/system/bin/dumpsys', '-t', str(seconds), 'ethernet'))
-          (out / 'netd.txt').write_bytes(adb('shell', '/system/bin/dumpsys', '-t', '5', 'netd'))
+              adb('shell', '/system/bin/dumpsys', '-t', str(seconds), 'ethernet', record=f'ethernet-{seconds}s')
+          adb('shell', '/system/bin/dumpsys', '-t', '5', 'connectivity', record='connectivity')
+          adb('shell', '/system/bin/dumpsys', '-t', '5', 'network_stack', record='network-stack')
+          adb('shell', 'ip', '-4', 'address', record='ipv4-address')
           PY
       - name: Stop disposable emulator
         if: always()
