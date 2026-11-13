@@ -105,6 +105,23 @@ def identity(value):
     return {key: value[key] for key in ('pid', 'start_ticks')}
 
 
+def launch_identities(record):
+    """A process tuple alone is not proof that this observer launched it."""
+    if (not isinstance(record, dict) or type(record.get('schema')) is not int
+            or record['schema'] != 1 or record.get('scope') != 'host-diagnostics-only'
+            or record.get('launch_status') != 'spawned'):
+        raise ValueError('invalid_launch')
+    observer = identity(record.get('observer'))
+    child = identity(record.get('emulator'))
+    recorded = record['emulator']
+    if (child['pid'] == observer['pid'] or child['start_ticks'] < observer['start_ticks']
+            or not uint(recorded.get('ppid'), (1 << 31) - 1)
+            or recorded['ppid'] != observer['pid']
+            or recorded.get('status') not in {'observed', 'zombie'}):
+        raise ValueError('invalid_launch_owner')
+    return observer, child
+
+
 def process(pid, expected=None, proc=Path('/proc')):
     if not uint(pid, (1 << 31) - 1) or pid == 0:
         return {'status': 'unknown'}
@@ -379,11 +396,10 @@ def snapshot(output, state, serial):
     identities = set()
     try:
         launch = read_json(output / LAUNCH)
-        if (not isinstance(launch, dict) or type(launch.get('schema')) is not int
-                or launch['schema'] != 1 or not isinstance(launch.get('cgroup'), dict)):
+        observer, child = launch_identities(launch)
+        if not isinstance(launch.get('cgroup'), dict):
             raise ValueError('invalid_launch')
-        for name in ('emulator', 'observer'):
-            item = identity(launch[name])
+        for name, item in (('emulator', child), ('observer', observer)):
             identities.add(item['pid'])
             result[name] = process(item['pid'], item['start_ticks'])
         result['launch'] = 'observed'
@@ -412,21 +428,28 @@ def mark_stop(output):
 
 
 def terminate(output):
-    """Existing Stop-step SIGTERM, pinned to the recorded child with a pidfd."""
+    """Existing Stop-step SIGTERM, only for the live observer's proven child."""
     result = {'schema': 1, 'scope': 'explicit-workflow-cleanup', 'observed': stamp(),
               'status': 'unknown'}
     descriptor = None
     try:
         launch = read_json(output / LAUNCH)
-        child = identity(launch['emulator'])
-        # Pin first, then compare starttime. A later PID reuse cannot redirect
-        # the signal; unavailable pidfd support never falls back to kill(pid).
+        observer, child = launch_identities(launch)
+        # Pin first, then compare starttime and ownership. A later PID reuse
+        # cannot redirect the signal; there is never a bare kill(pid) fallback.
         descriptor = os.pidfd_open(child['pid'])
         observed = process(child['pid'], child['start_ticks'])
         result['status'] = observed['status']
         if observed['status'] == 'observed':
-            signal.pidfd_send_signal(descriptor, signal.SIGTERM)
-            result['status'] = 'sigterm_sent'
+            owner = process(observer['pid'], observer['start_ticks'])
+            if owner['status'] != 'observed':
+                result.update(status='unknown', refusal='observer_unavailable')
+            elif (not uint(observed.get('ppid'), (1 << 31) - 1)
+                  or observed['ppid'] != observer['pid']):
+                result.update(status='unknown', refusal='parent_mismatch')
+            else:
+                signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+                result['status'] = 'sigterm_sent'
     except ProcessLookupError:
         result['status'] = 'already_exited'
     except (OSError, ValueError, TypeError, KeyError, AttributeError):

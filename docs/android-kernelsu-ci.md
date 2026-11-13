@@ -177,9 +177,12 @@ that the emulator was killed by OOM.
 
 Explicit Stop records its request time separately, keeps the existing bounded
 ADB shutdown, and uses a pidfd plus matching starttime for the existing SIGTERM.
-Missing pidfd support or a reused PID never falls back to an unverified
-`kill(pid)`. The two cleanup helpers each have a three-second timeout plus one
-second for termination. Cleanup observations do not overwrite the snapshot.
+SIGTERM also requires a complete spawned receipt, the original observer still
+alive with the same starttime, and matching recorded and current parentage.
+A missing observer, an orphan, a parent mismatch or malformed ownership evidence
+leaves cleanup unknown and sends no SIGTERM. Missing pidfd support or a reused
+PID never falls back to an unverified `kill(pid)`. The two cleanup helpers each
+have a three-second timeout plus one second for termination. Cleanup observations do not overwrite the snapshot.
 An exit observed after the cleanup request is not automatically attributed to
 cleanup; the files retain timestamps so the sequence can be assessed.
 

@@ -28,6 +28,40 @@ def proc_stat(pid=77, ticks=123, state='S', comm='odd ) worker name'):
     return (f'{pid} ({comm}) ' + ' '.join(fields) + '\n').encode()
 
 
+def launch_record(child, observer=None):
+    observer = observer or {'pid': 88, 'start_ticks': 100}
+    return {'schema': 1, 'scope': 'host-diagnostics-only', 'launch_status': 'spawned',
+            'observer': observer,
+            'emulator': {'status': 'observed', 'ppid': observer['pid'], **child},
+            'cgroup': {'status': 'unavailable'}}
+
+
+def start_observer(out):
+    observer = subprocess.Popen(
+        [sys.executable, str(SCRIPT), '--output', str(out),
+         '--state', str(out / 'private-state'), 'watch', '--',
+         sys.executable, '-c', 'import time;time.sleep(5)'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if (out / OBS.LAUNCH).is_file():
+            return observer, json.loads((out / OBS.LAUNCH).read_text())
+        if observer.poll() is not None:
+            break
+        time.sleep(0.01)
+    finish_observer(observer)
+    raise RuntimeError('observer launch deadline')
+
+
+def finish_observer(observer):
+    # The test child also has a fixed self-exit deadline, including on failure.
+    try:
+        observer.wait(timeout=7)
+    except subprocess.TimeoutExpired:
+        observer.kill()
+        observer.wait(timeout=3)
+
+
 class ProcessTests(unittest.TestCase):
     def run_child(self, code, arguments=()):
         with tempfile.TemporaryDirectory() as directory:
@@ -162,26 +196,82 @@ class ProcessTests(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'),
                          'Linux pidfd API required')
-    def test_cleanup_signals_only_the_actual_recorded_child(self):
-        child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'])
-        try:
-            with tempfile.TemporaryDirectory() as directory:
-                out = Path(directory)
-                OBS.write_json(out / OBS.LAUNCH, {'emulator': OBS.process(child.pid)})
+    def test_cleanup_signals_only_the_actual_observer_owned_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            observer, launch = start_observer(out)
+            try:
+                self.assertEqual(launch['emulator']['ppid'], observer.pid)
+                self.assertEqual(launch['observer']['pid'], observer.pid)
                 OBS.terminate(out)
-                self.assertEqual(child.wait(timeout=3), -signal.SIGTERM)
+                self.assertEqual(observer.wait(timeout=3), 0)
+                receipt = json.loads((out / OBS.EXIT).read_text())
+                self.assertEqual(receipt['returncode'], -signal.SIGTERM)
                 self.assertEqual(json.loads((out / 'emulator-host-cleanup.json').read_text())['status'],
                                  'sigterm_sent')
-        finally:
-            if child.poll() is None:
-                child.kill()
-                child.wait(timeout=3)
+            finally:
+                finish_observer(observer)
 
-    def test_cleanup_pins_before_identity_check_and_refuses_reused_pid(self):
-        for status in ('observed', 'pid_reused', 'missing', 'unknown', 'zombie'):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+    @unittest.skipUnless(hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'),
+                         'Linux pidfd API required')
+    def test_cleanup_leaves_a_real_unrelated_live_process_intact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            observer, launch = start_observer(out)
+            foreign = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(5)'])
+            try:
+                # Even a valid-looking stored ppid cannot replace live parentage.
+                replaced = dict(launch)
+                replaced['emulator'] = OBS.process(foreign.pid) | {'ppid': observer.pid}
+                OBS.write_json(out / OBS.LAUNCH, replaced)
+                OBS.terminate(out)
+                self.assertIsNone(foreign.poll())
+                self.assertIsNone(observer.poll())
+                refused = json.loads((out / 'emulator-host-cleanup.json').read_text())
+                self.assertEqual(refused['status'], 'unknown')
+                self.assertEqual(refused['refusal'], 'parent_mismatch')
+            finally:
+                OBS.write_json(out / OBS.LAUNCH, launch)
+                OBS.terminate(out)
+                finish_observer(observer)
+                if foreign.poll() is None:
+                    foreign.terminate()
+                foreign.wait(timeout=3)
+
+    def test_cleanup_refuses_incomplete_or_mismatched_launch_ownership(self):
+        valid = launch_record({'pid': 77, 'start_ticks': 123})
+        variants = [
+            {'emulator': valid['emulator']},
+            valid | {'schema': True}, valid | {'scope': 'other'},
+            valid | {'launch_status': 'failed'}, valid | {'observer': None},
+            valid | {'observer': {'pid': 77, 'start_ticks': 123}},
+            valid | {'emulator': valid['emulator'] | {'ppid': 99}},
+            valid | {'emulator': valid['emulator'] | {'start_ticks': 99}},
+        ]
+        for record in variants:
+            with self.subTest(record=record), tempfile.TemporaryDirectory() as directory:
                 out = Path(directory)
-                OBS.write_json(out / OBS.LAUNCH, {'emulator': {'pid': 77, 'start_ticks': 123}})
+                OBS.write_json(out / OBS.LAUNCH, record)
+                with patch.object(OBS.os, 'pidfd_open') as pin, \
+                     patch.object(OBS.signal, 'pidfd_send_signal') as send:
+                    OBS.terminate(out)
+                pin.assert_not_called()
+                send.assert_not_called()
+                self.assertEqual(json.loads((out / 'emulator-host-cleanup.json').read_text())['status'],
+                                 'unknown')
+
+    def test_cleanup_pins_before_identity_and_requires_live_matching_observer(self):
+        cases = [('observed', 'observed', 88, True),
+                 ('pid_reused', 'observed', 88, False),
+                 ('missing', 'observed', 88, False), ('unknown', 'observed', 88, False),
+                 ('zombie', 'observed', 88, False), ('observed', 'missing', 88, False),
+                 ('observed', 'pid_reused', 88, False), ('observed', 'unknown', 88, False),
+                 ('observed', 'zombie', 88, False), ('observed', 'observed', 99, False)]
+        for child_status, owner_status, ppid, allowed in cases:
+            with self.subTest(child=child_status, owner=owner_status, ppid=ppid), \
+                 tempfile.TemporaryDirectory() as directory:
+                out = Path(directory)
+                OBS.write_json(out / OBS.LAUNCH, launch_record({'pid': 77, 'start_ticks': 123}))
                 order = []
                 real_close = os.close
                 def close(fd):
@@ -189,22 +279,27 @@ class ProcessTests(unittest.TestCase):
                         order.append('close')
                     else:
                         real_close(fd)
+                def process(pid, expected):
+                    order.append('child' if pid == 77 else 'owner')
+                    return {'status': child_status if pid == 77 else owner_status,
+                            'pid': pid, 'ppid': ppid}
                 with patch.object(OBS.os, 'pidfd_open', side_effect=lambda pid: order.append('pin') or 100000), \
-                     patch.object(OBS, 'process', side_effect=lambda *args: order.append('check') or {'status': status}), \
+                     patch.object(OBS, 'process', side_effect=process), \
                      patch.object(OBS.signal, 'pidfd_send_signal',
                                   side_effect=lambda *args: order.append('signal')) as send, \
                      patch.object(OBS.os, 'close', side_effect=close):
                     OBS.terminate(out)
-                self.assertEqual(order[:2], ['pin', 'check'])
-                self.assertEqual(send.call_count, int(status == 'observed'))
-                if status == 'observed':
+                self.assertEqual(order[:2], ['pin', 'child'])
+                self.assertEqual(send.call_count, int(allowed))
+                if allowed:
+                    self.assertEqual(order, ['pin', 'child', 'owner', 'signal', 'close'])
                     send.assert_called_once_with(100000, signal.SIGTERM)
                 self.assertEqual(order[-1], 'close')
 
     def test_cleanup_never_falls_back_to_kill_pid_without_pidfd(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
-            OBS.write_json(out / OBS.LAUNCH, {'emulator': {'pid': 77, 'start_ticks': 123}})
+            OBS.write_json(out / OBS.LAUNCH, launch_record({'pid': 77, 'start_ticks': 123}))
             with patch.object(OBS.os, 'pidfd_open', side_effect=OSError('private-canary')), \
                  patch.object(OBS.os, 'kill') as kill, \
                  patch.object(OBS.signal, 'pidfd_send_signal') as send:
@@ -371,9 +466,8 @@ class AdbTests(unittest.TestCase):
 class SnapshotTests(unittest.TestCase):
     def launch(self, out):
         reference = {'relative': '/fixture', 'device': 1, 'inode': 2}
-        launch = {'schema': 1, 'emulator': {'pid': 77, 'start_ticks': 123},
-                  'observer': {'pid': 88, 'start_ticks': 456},
-                  'cgroup': {'identity_sha256': OBS.cgroup_key(reference)}}
+        launch = launch_record({'pid': 77, 'start_ticks': 123})
+        launch['cgroup'] = {'identity_sha256': OBS.cgroup_key(reference)}
         OBS.write_json(out / OBS.LAUNCH, launch)
         return launch, reference
 
@@ -402,17 +496,40 @@ class SnapshotTests(unittest.TestCase):
             stop = json.loads((out / OBS.STOP).read_text())
             self.assertGreaterEqual(stop['requested']['monotonic_ns'], record['finished']['monotonic_ns'])
 
+    def test_missing_private_cgroup_state_preserves_valid_process_and_exit_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            launch, _ = self.launch(out)
+            OBS.write_json(out / OBS.EXIT, {
+                'returncode': 0, 'emulator_pid': 77, 'observer': launch['observer'],
+                'observed': {'monotonic_ns': 100}})
+            with patch.object(OBS, 'process', side_effect=lambda pid, expected:
+                              {'status': 'observed', 'pid': pid, 'start_ticks': expected}), \
+                 patch.object(OBS, 'memory_observation') as memory, \
+                 patch.object(OBS, 'adb_observation', return_value={'status': 'unavailable'}), \
+                 patch.object(OBS, 'bounded_command', return_value=(b'', 'unavailable')):
+                OBS.snapshot(out, out / 'missing-private-state', 'emulator-5554')
+            memory.assert_not_called()
+            report = json.loads((out / OBS.SNAPSHOT).read_text())
+            self.assertEqual(report['launch'], 'observed')
+            self.assertEqual(report['emulator']['status'], 'observed')
+            self.assertEqual(report['observer']['status'], 'observed')
+            self.assertEqual(report['exit']['status'], 'observed')
+            self.assertEqual(report['exit']['returncode'], 0)
+            self.assertEqual(report['cgroup'], {'status': 'unavailable'})
+            self.assertNotIn('values', report['cgroup'])
+
     def test_exit_receipt_requires_child_and_observer_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
             launch, _ = self.launch(out)
             receipt = {'returncode': -9, 'emulator_pid': 77,
-                       'observer': {'pid': 88, 'start_ticks': 456},
+                       'observer': {'pid': 88, 'start_ticks': 100},
                        'observed': {'monotonic_ns': 100}}
             OBS.write_json(out / OBS.EXIT, receipt)
             self.assertEqual(OBS.exit_observation(out, launch)['signal'], 9)
             for mutation in ({'returncode': True}, {'emulator_pid': 99},
-                             {'observer': {'pid': 88, 'start_ticks': 457}}):
+                             {'observer': {'pid': 88, 'start_ticks': 101}}):
                 OBS.write_json(out / OBS.EXIT, receipt | mutation)
                 self.assertEqual(OBS.exit_observation(out, launch)['status'], 'unknown')
 
