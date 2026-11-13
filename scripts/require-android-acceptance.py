@@ -151,17 +151,33 @@ def netd_observation(snapshot):
     return ethernet[0]['net_id']
 
 
-def netd_selectors(net_id):
-    return Counter((f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
-                    f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'))
+def netd_selectors(snapshot):
+    net_id = netd_observation(snapshot)
+    network = next(item for item in snapshot['netd']['networks'] if item['net_id'] == net_id)
+    details = dict(item.split(': ', 1) for item in network['details'])
+    selectors = Counter((f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
+                         f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'))
+    # Android 15 RouteController::modifyPhysicalNetwork installs explicit and
+    # implicit UID rules for every range at its subpriority. UidRanges retains
+    # duplicates and overlaps, so completeness includes their multiplicities.
+    for priority, ranges in re.findall(r'prio ([0-9]+) uids\{([^}]*)\}',
+                                       details.get('Per-app UID ranges', '')):
+        for interval in ranges.split():
+            start, _, end = interval.partition('-')
+            uid = f'{start}-{end or start}'
+            for base, mark in ((15000, 0x10000 | net_id), (22000, net_id)):
+                selectors[f'{base + int(priority)}: from all fwmark {mark:#x}/0x1ffff '
+                          f'iif lo uidrange {uid} lookup eth0'] += 1
+    return selectors
 
 
 def foreign_rules_preserved(before, after, before_rules, after_rules):
     old_id, new_id = netd_observation(before), netd_observation(after)
     old, new = before['netd'], after['netd']
-    selectors = [netd_selectors(old_id), netd_selectors(new_id)]
-    require(all(rules[row] == 1 for rules, expected in zip((before_rules, after_rules), selectors)
-                for row in expected), 'Netd identity lacks its two exact unique eth0 policy rules')
+    selectors = [netd_selectors(before), netd_selectors(after)]
+    require(all(rules[row] == count for rules, expected in zip((before_rules, after_rules), selectors)
+                for row, count in expected.items()),
+            'Netd identity lacks its exact complete eth0 policy rules')
     if old_id == new_id:
         require(old == new, 'Unchanged netd identity has changed network metadata')
         return before_rules == after_rules
@@ -174,7 +190,8 @@ def foreign_rules_preserved(before, after, before_rules, after_rules):
             and [item for item in old['networks'] if item['net_id'] != old_id]
             == [item for item in new['networks'] if item['net_id'] != new_id],
             'Netd change is not confined to a new eth0 network identity')
-    # Only independently observed NetIDs authorize these two complete selectors.
+    # Only unchanged netd metadata authorizes NetID changes in these complete
+    # selectors. UID default/local rules and all other rows remain protected.
     return before_rules - selectors[0] == after_rules - selectors[1]
 
 
@@ -187,7 +204,7 @@ def route_snapshot(value):
     fib = text_rows(value.get('fib'), 'FIB')
     require(any(re.search(r'\bdev magicnet0\b', row) for row in fib),
             'Route recovery lacks the live TUN FIB')
-    require(all(rules[row] == 1 for row in netd_selectors(netd_observation(value))),
+    require(all(rules[row] == count for row, count in netd_selectors(value).items()),
             'Route snapshot lacks the observed netd eth0 policy rules')
     return rules, fib
 

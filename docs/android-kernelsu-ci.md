@@ -56,10 +56,14 @@ ownership of the core's random redirect table. Recovery may replace that proven
 helper; its complete rule/FIB evidence and every other unowned rule are checked.
 Across recovery, an `eth0` network-ID change requires complete [netd observations](https://android.googlesource.com/platform/system/netd/+/refs/tags/android-15.0.0_r23/server/NetworkController.cpp)
 binding both IDs to the same interface, permissions and FIB. Only the two exact
-corresponding Android selectors may change; all other rules remain identical.
-The two-selector model requires permission `NONE`; canonical UID restrictions are
-allowed only when unchanged. Rejected parsed network observations are retained
-with their failure stage for diagnosis.
+global selectors and the per-app selectors declared by unchanged UID metadata may
+change their network ID. The latter use priorities `15000 + preference` and
+`22000 + preference`, the observed UID interval, `iif lo`, table `eth0` and mark
+mask `0x1ffff`, as defined by the pinned [Android 15 RouteController](https://android.googlesource.com/platform/system/netd/+/refs/tags/android-15.0.0_r23/server/RouteController.cpp).
+Every derived selector must have its exact expected multiplicity in both snapshots.
+Permission must remain `NONE`; default/local UID rules and all other unowned rules
+remain identical. The producer and independent release validator each enforce
+these constraints. Rejected network observations retain their failure stage.
 
 The report retains the fault observations, recovery action, app controls and
 configuration/resource restoration. A separate bounded JSON validator requires

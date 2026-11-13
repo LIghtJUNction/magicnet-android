@@ -53,6 +53,13 @@ def eth0_rules(net_id):
             f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0']
 
 
+def eth0_uid_rules(net_id, priority, ranges):
+    return [f'{base + priority}: from all fwmark {mark:#x}/0x1ffff '
+            f'iif lo uidrange {start}-{end} lookup eth0'
+            for start, end in ranges
+            for base, mark in ((15000, 0x10000 | net_id), (22000, net_id))]
+
+
 def netd_state():
     return {'networks': [
                 {'net_id': 99, 'type': 'LOCAL', 'interfaces': [],
@@ -68,8 +75,10 @@ def netd_state():
 
 def renumber_eth0(snapshot, net_id):
     network = next(item for item in snapshot['netd']['networks'] if item['interfaces'] == ['eth0'])
-    selectors = dict(zip(eth0_rules(network['net_id']), eth0_rules(net_id)))
-    snapshot['rules'] = [selectors.get(row, row) for row in snapshot['rules']]
+    for prefix in (0x10000, 0):
+        old, new = f'fwmark {prefix | network["net_id"]:#x}/', f'fwmark {prefix | net_id:#x}/'
+        snapshot['rules'] = [row.replace(old, new) if row.endswith(' lookup eth0') else row
+                             for row in snapshot['rules']]
     network['net_id'] = net_id
     snapshot['netd']['networks'].sort(key=lambda item: item['net_id'])
 
@@ -160,6 +169,27 @@ def completed_report():
             'reboot_checks': [copy.deepcopy(reboot) for _ in range(5)], 'route_recovery': recovery,
         },
     }
+
+
+def per_app_report():
+    report = completed_report()
+    loss = report['provenance']['route_recovery']['rpdb_loss']
+    # Netd metadata and per-app selectors observed in Android run 43253655173.
+    # The other report fields remain the synthetic complete-gate fixture.
+    uid_rules = [
+        '15040: from all fwmark 0x10064/0x1ffff iif lo uidrange 10137-10137 lookup eth0',
+        '22040: from all fwmark 0x64/0x1ffff iif lo uidrange 10137-10137 lookup eth0',
+        '25000: from all fwmark 0x0/0x10000 iif lo uidrange 10137-10137 lookup eth0_local',
+        '29040: from all fwmark 0x0/0xffff iif lo uidrange 10137-10137 lookup eth0',
+    ]
+    for snapshot in (loss['before'], loss['fault'], loss['after'],
+                     loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+        eth0_uid_metadata(snapshot, 'uids{ 0-99999 }', 'prio 40 uids{ 10137 }')
+        snapshot['netd']['networks'] = [network for network in snapshot['netd']['networks']
+                                       if network['interfaces'] != ['wlan0']]
+        snapshot['rules'] += uid_rules
+    loss['helper_lifecycle']['stopped']['rules'] += uid_rules
+    return report
 
 
 class AndroidReportGateTests(unittest.TestCase):
@@ -298,6 +328,89 @@ class AndroidReportGateTests(unittest.TestCase):
         renumber_eth0(loss['after'], 102)
         GATE.validate_report(report, SHA)
 
+    def test_observed_per_app_uid_rules_follow_the_proven_netid_change(self):
+        report = per_app_report()
+        loss = report['provenance']['route_recovery']['rpdb_loss']
+        renumber_eth0(loss['helper_lifecycle']['before_stop'], 103)
+        renumber_eth0(loss['after'], 101)
+        self.assertEqual(dict(GATE.netd_selectors(loss['after'])), {
+            '16000: from all fwmark 0x10065/0x1ffff iif lo lookup eth0': 1,
+            '23000: from all fwmark 0x65/0x1ffff iif lo lookup eth0': 1,
+            '15040: from all fwmark 0x10065/0x1ffff iif lo uidrange 10137-10137 lookup eth0': 1,
+            '22040: from all fwmark 0x65/0x1ffff iif lo uidrange 10137-10137 lookup eth0': 1,
+        })
+        GATE.validate_report(report, SHA)
+
+    def test_per_app_renumbering_rejects_partial_stale_or_altered_selectors(self):
+        for stage in ('after', 'before_stop'):
+            for change in ('missing-explicit', 'missing-implicit', 'duplicate', 'stale',
+                           'uid', 'range', 'priority', 'mask', 'iif', 'table',
+                           'foreign-local', 'foreign-default'):
+                with self.subTest(stage=stage, change=change):
+                    report = per_app_report()
+                    loss = report['provenance']['route_recovery']['rpdb_loss']
+                    snapshot = loss[stage] if stage in loss else loss['helper_lifecycle'][stage]
+                    renumber_eth0(snapshot, 101)
+                    explicit, implicit = eth0_uid_rules(101, 40, [(10137, 10137)])
+                    rules = snapshot['rules']
+                    if change.startswith('missing-'):
+                        rules.remove(explicit if change == 'missing-explicit' else implicit)
+                    elif change == 'duplicate':
+                        rules.append(explicit)
+                    elif change == 'stale':
+                        rules.append(eth0_uid_rules(100, 40, [(10137, 10137)])[0])
+                    elif change.startswith('foreign-'):
+                        rules[:] = [row for row in rules if not row.startswith(
+                            '25000:' if change == 'foreign-local' else '29040:')]
+                    else:
+                        old, new = {
+                            'uid': ('10137-10137', '10138-10138'),
+                            'range': ('10137-10137', '10136-10138'),
+                            'priority': ('15040:', '15041:'),
+                            'mask': ('/0x1ffff', '/0xffff'),
+                            'iif': ('iif lo', 'iif eth0'),
+                            'table': ('lookup eth0', 'lookup main'),
+                        }[change]
+                        rules[rules.index(explicit)] = explicit.replace(old, new)
+                    self.assert_rejected(report)
+
+    def test_per_app_metadata_requires_both_rules_even_without_renumbering(self):
+        for change in ('missing', 'duplicate', 'no-metadata'):
+            with self.subTest(change=change):
+                report = per_app_report()
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                for snapshot in (loss['before'], loss['fault'], loss['after'],
+                                 loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+                    explicit, _ = eth0_uid_rules(100, 40, [(10137, 10137)])
+                    if change == 'missing':
+                        snapshot['rules'].remove(explicit)
+                    elif change == 'duplicate':
+                        snapshot['rules'].append(explicit)
+                    else:
+                        eth0_uid_metadata(snapshot, 'uids{ 0-99999 }')
+                if change == 'no-metadata':
+                    # Undeclared rows remain foreign: their NetID cannot change.
+                    renumber_eth0(loss['after'], 101)
+                self.assert_rejected(report)
+
+    def test_per_app_duplicates_need_exact_counts_without_merging_overlaps(self):
+        report = completed_report()
+        loss = report['provenance']['route_recovery']['rpdb_loss']
+        intervals = [(10000, 10000), (10000, 10000), (10000, 10005), (10002, 10002)]
+        for snapshot in (loss['before'], loss['fault'], loss['after'],
+                         loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+            eth0_uid_metadata(snapshot, 'unrestricted',
+                              'prio 0 uids{ 10000 10000 10000-10005 10002 }; prio 999 uids{ }')
+            snapshot['rules'] += eth0_uid_rules(100, 0, intervals)
+        renumber_eth0(loss['after'], 102)
+        selectors = GATE.netd_selectors(loss['after'])
+        self.assertEqual(sum(selectors.values()), 10)
+        duplicate = eth0_uid_rules(102, 0, [(10000, 10000)])[0]
+        self.assertEqual(selectors[duplicate], 2)
+        GATE.validate_report(report, SHA)
+        loss['after']['rules'].remove(duplicate)
+        self.assert_rejected(report)
+
     def test_stable_canonical_uid_metadata_preserves_full_report_evidence(self):
         for allowed, per_app in (
                 ('uids{ }', None), ('uids{ 0 10000 10002-10005 2147483647 }', None),
@@ -310,6 +423,9 @@ class AndroidReportGateTests(unittest.TestCase):
                     for snapshot in (loss['before'], loss['fault'], loss['after'],
                                      loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
                         eth0_uid_metadata(snapshot, allowed, per_app)
+                        if per_app:
+                            snapshot['rules'] += eth0_uid_rules(100, 0,
+                                [(10000, 10000), (10000, 10000), (10000, 10005), (10002, 10002)])
                     if renumber:
                         renumber_eth0(loss['helper_lifecycle']['before_stop'], 103)
                         renumber_eth0(loss['after'], 102)
@@ -343,6 +459,7 @@ class AndroidReportGateTests(unittest.TestCase):
                     for snapshot in (loss['before'], loss['fault'], loss['after'],
                                      loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
                         eth0_uid_metadata(snapshot, 'uids{ 10000 }', 'prio 0 uids{ 10000 }')
+                        snapshot['rules'] += eth0_uid_rules(100, 0, [(10000, 10000)])
                     snapshot = loss[stage] if stage in loss else loss['helper_lifecycle'][stage]
                     renumber_eth0(snapshot, 102)
                     eth0_uid_metadata(snapshot, 'uids{ 10001 }' if change == 'allowed' else 'uids{ 10000 }',

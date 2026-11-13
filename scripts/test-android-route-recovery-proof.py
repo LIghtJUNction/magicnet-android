@@ -55,6 +55,13 @@ def state(status='present', failures=0, attempts=0):
                 last_recovery_at=90 if attempts else None)
 
 
+def app_rules(net_id, priority, intervals):
+    return [f'{base + priority}: from all fwmark {mark:#x}/0x1ffff '
+            f'iif lo uidrange {low}-{high} lookup eth0'
+            for low, high in intervals
+            for base, mark in ((15000, 0x10000 | net_id), (22000, net_id))]
+
+
 class Device:
     """In-memory command model verifies harness decisions and mutation boundaries."""
     def __init__(self):
@@ -109,7 +116,7 @@ class Device:
         network['net_id'] += 2
         for prefix in (0x10000, 0):
             old, new = f'fwmark {prefix | old_id:#x}/', f'fwmark {prefix | network["net_id"]:#x}/'
-            self.rules = [row.replace(old, new) if row.endswith('iif lo lookup eth0') else row
+            self.rules = [row.replace(old, new) if row.endswith(' lookup eth0') else row
                           for row in self.rules]
 
     def netd_dump(self):
@@ -372,6 +379,9 @@ class RecoveryTests(unittest.TestCase):
         for renumber in (False, True):
             self.setUp()
             self.device.networks[3]['details'] = list(UID_DETAILS)
+            self.device.rules += app_rules(100, 0, [(10000, 10000), (10000, 10003),
+                                                    (10002, 10005), (10123, 10123)])
+            self.device.rules += app_rules(100, 10, [(10123, 10123)])
             self.device.renumber_on_start = renumber
             with self.subTest(renumber=renumber):
                 self.run_control()
@@ -384,6 +394,9 @@ class RecoveryTests(unittest.TestCase):
 
     def test_legal_uid_metadata_changes_cannot_be_normalized_as_a_netid_rebuild(self):
         self.device.networks[3]['details'] = list(UID_DETAILS)
+        self.device.rules += app_rules(100, 0, [(10000, 10000), (10000, 10003),
+                                                (10002, 10005), (10123, 10123)])
+        self.device.rules += app_rules(100, 10, [(10123, 10123)])
         before = {'netd': self.control.netd_observation()}
         before_rules = Counter(self.device.rules)
         self.device.renumber_eth0()
@@ -397,6 +410,78 @@ class RecoveryTests(unittest.TestCase):
             proof.ethernet_network(changed['netd'])['details'][index] = replacement
             with self.subTest(replacement=replacement):
                 self.assertFalse(proof.foreign_rules_preserved(before, changed, before_rules, after_rules))
+
+    def test_captured_android_15_per_app_netid_rebuild_preserves_foreign_rules(self):
+        # Run 43253655173: the app recovered, while eth0 changed netId100 ->101.
+        self.device.networks.pop()  # This snapshot has no wlan0 network.
+        self.device.networks[3]['details'] = [
+            'Allowed UID ranges: uids{ 0-99999 }',
+            'Per-app UID ranges: prio 40 uids{ 10137 }', 'Required permission: NONE']
+        captured = [
+            '15040: from all fwmark 0x10064/0x1ffff iif lo uidrange 10137-10137 lookup eth0',
+            '22040: from all fwmark 0x64/0x1ffff iif lo uidrange 10137-10137 lookup eth0',
+            '25000: from all fwmark 0x0/0x10000 iif lo uidrange 10137-10137 lookup eth0_local',
+            '29040: from all fwmark 0x0/0xffff iif lo uidrange 10137-10137 lookup eth0']
+        self.device.rules += captured
+        before = {'netd': self.control.netd_observation()}
+        before_rules = Counter(self.device.rules)
+        after = copy.deepcopy(before)
+        after['netd']['networks'][3]['net_id'] = 101
+        after_rules = Counter(row.replace('fwmark 0x10064/', 'fwmark 0x10065/')
+                             .replace('fwmark 0x64/', 'fwmark 0x65/')
+                             if row.endswith(' lookup eth0') else row
+                             for row in self.device.rules)
+        self.assertEqual(proof.ethernet_rules(before['netd']), Counter(ETH0_RULES + captured[:2]))
+        self.assertTrue(proof.foreign_rules_preserved(before, after, before_rules, after_rules))
+        for row in captured[2:]:
+            with self.subTest(foreign=row):
+                self.assertFalse(proof.foreign_rules_preserved(
+                    before, after, before_rules, after_rules - Counter([row])))
+
+    def test_per_app_selectors_require_complete_declared_multiplicities(self):
+        self.device.networks[3]['details'] = [
+            'Allowed UID ranges: unrestricted',
+            'Per-app UID ranges: prio 0 uids{ 0 0 }; prio 40 uids{ 10137-10139 }; prio 999 uids{ }',
+            'Required permission: NONE']
+        expected = app_rules(100, 0, [(0, 0), (0, 0)]) + app_rules(100, 40, [(10137, 10139)])
+        self.device.rules += expected
+        self.assertEqual(proof.ethernet_rules(self.control.netd_observation()),
+                         Counter(ETH0_RULES + expected))
+        self.control.snapshot()
+        duplicate = expected[0]
+        for count in (0, 1, 3):
+            self.device.rules = [row for row in self.device.rules if row != duplicate] + [duplicate] * count
+            with self.subTest(count=count), self.assertRaisesRegex(RuntimeError, 'netd_eth0_rules_not_bound'):
+                self.control.snapshot()
+
+    def test_per_app_netid_rebuild_rejects_missing_duplicate_or_foreign_selectors(self):
+        self.device.networks[3]['details'] = [
+            'Allowed UID ranges: unrestricted',
+            'Per-app UID ranges: prio 40 uids{ 10137 }', 'Required permission: NONE']
+        self.device.rules += app_rules(100, 40, [(10137, 10137)])
+        before = {'netd': self.control.netd_observation()}
+        before_rules = Counter(self.device.rules)
+        for renumber in (False, True):
+            if renumber:
+                self.device.renumber_eth0()
+            after = {'netd': self.control.netd_observation()}
+            after_rules = Counter(self.device.rules)
+            row = next(row for row in after_rules if row.startswith('15040:'))
+            variants = [None, row.replace('15040:', '15041:'), row.replace('/0x1ffff', '/0xffff'),
+                        row.replace('10137-10137', '10138-10138'), row.replace('iif lo', 'iif eth0'),
+                        row.replace('lookup eth0', 'lookup wlan0'),
+                        row.replace('0x10066/', '0x10064/') if renumber else row + ' oif eth0']
+            for replacement in variants:
+                changed = after_rules - Counter([row])
+                if replacement:
+                    changed[replacement] += 1
+                with self.subTest(renumber=renumber, replacement=replacement):
+                    self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules, changed))
+            self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules,
+                                                           after_rules + Counter([row])))
+            for extra in (row.replace('15040:', '15041:'), row.replace('10137-10137', '10138-10138')):
+                self.assertFalse(proof.foreign_rules_preserved(before, after, before_rules,
+                                                               after_rules + Counter([extra])))
 
     def test_snapshot_brackets_kernel_reads_with_matching_netd_observations(self):
         original = self.device.adb

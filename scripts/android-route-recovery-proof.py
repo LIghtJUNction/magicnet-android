@@ -239,19 +239,33 @@ def ethernet_network(observation):
 
 
 def ethernet_rules(observation):
-    net_id = ethernet_network(observation)['net_id']
-    return Counter([
+    network = ethernet_network(observation)
+    net_id = network['net_id']
+    selectors = Counter([
         f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
         f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'])
+    details = dict(row.split(': ', 1) for row in network['details'])
+    # Android 15 RouteController::modifyPhysicalNetwork installs both UID
+    # selectors for every declared range, retaining duplicate multiplicities.
+    for section in details.get('Per-app UID ranges', '').split('; '):
+        if not section:
+            continue
+        priority, ranges = section.removeprefix('prio ').split(' ', 1)
+        for interval in ranges.removeprefix('uids{').removesuffix('}').split():
+            low, _, high = interval.partition('-')
+            for base, mark in ((15000, 0x10000 | net_id), (22000, net_id)):
+                selectors[f'{base + int(priority)}: from all fwmark {mark:#x}/0x1ffff '
+                          f'iif lo uidrange {low}-{high or low} lookup eth0'] += 1
+    return selectors
 
 
 def foreign_rules_preserved(before, after, before_rules, after_rules):
     old, new = before['netd'], after['netd']
     old_network, new_network = ethernet_network(old), ethernet_network(new)
     old_id, new_id = old_network['net_id'], new_network['net_id']
-    old_pair, new_pair = ethernet_rules(old), ethernet_rules(new)
-    if (any(before_rules[row] != 1 for row in old_pair)
-            or any(after_rules[row] != 1 for row in new_pair)):
+    old_selectors, new_selectors = ethernet_rules(old), ethernet_rules(new)
+    if (any(before_rules[row] != count for row, count in old_selectors.items())
+            or any(after_rules[row] != count for row, count in new_selectors.items())):
         return False
     if old_id == new_id:
         return old == new and before_rules == after_rules
@@ -262,7 +276,7 @@ def foreign_rules_preserved(before, after, before_rules, after_rules):
             and old_id not in [item['net_id'] for item in new['networks']]
             and new_id not in [item['net_id'] for item in old['networks']]):
         return False
-    return before_rules - old_pair == after_rules - new_pair
+    return before_rules - old_selectors == after_rules - new_selectors
 
 
 class Control:
@@ -372,7 +386,8 @@ class Control:
         require(self.identity() == identity, 'core_changed_during_snapshot')
         require(self.netd_observation() == netd, 'netd_changed_during_snapshot')
         result['netd'] = netd
-        require(all(Counter(result['rules'])[row] == 1 for row in ethernet_rules(netd)),
+        require(all(Counter(result['rules'])[row] == count
+                    for row, count in ethernet_rules(netd).items()),
                 'netd_eth0_rules_not_bound')
         return result
 
