@@ -23,6 +23,10 @@ RUN = {'id': 10, 'head_sha': SHA, 'head_branch': 'main', 'event': 'push',
 JOBS = [{'name': name, 'status': 'completed', 'conclusion': 'success'}
         for name in ('Simulation harness contracts', 'Android 15 / KernelSU / x86_64',
                      'Android Simulation Gate')]
+RESTRICTED_RULES = {
+    'NETWORK': '16000: from all fwmark 0x50064/0x5ffff iif lo lookup eth0',
+    'SYSTEM': '16000: from all fwmark 0xd0064/0xdffff iif lo lookup eth0',
+}
 
 
 def helper(table):
@@ -75,7 +79,7 @@ def netd_state():
 
 def renumber_eth0(snapshot, net_id):
     network = next(item for item in snapshot['netd']['networks'] if item['interfaces'] == ['eth0'])
-    for prefix in (0x10000, 0):
+    for prefix in (0x10000, 0x50000, 0xd0000, 0):
         old, new = f'fwmark {prefix | network["net_id"]:#x}/', f'fwmark {prefix | net_id:#x}/'
         snapshot['rules'] = [row.replace(old, new) if row.endswith(' lookup eth0') else row
                              for row in snapshot['rules']]
@@ -189,6 +193,21 @@ def per_app_report():
                                        if network['interfaces'] != ['wlan0']]
         snapshot['rules'] += uid_rules
     loss['helper_lifecycle']['stopped']['rules'] += uid_rules
+    return report
+
+
+def restricted_report(permission):
+    report = per_app_report()
+    loss = report['provenance']['route_recovery']['rpdb_loss']
+    for snapshot in (loss['before'], loss['fault'], loss['after'],
+                     loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+        network = next(item for item in snapshot['netd']['networks'] if item['interfaces'] == ['eth0'])
+        network['details'][-1] = 'Required permission: ' + permission
+        snapshot['rules'] = [row for row in snapshot['rules'] if row not in eth0_rules(100)]
+        snapshot['rules'].append(RESTRICTED_RULES[permission])
+    stopped = loss['helper_lifecycle']['stopped']
+    stopped['rules'] = [row for row in stopped['rules'] if row not in eth0_rules(100)]
+    stopped['rules'].append(RESTRICTED_RULES[permission])
     return report
 
 
@@ -340,6 +359,73 @@ class AndroidReportGateTests(unittest.TestCase):
             '22040: from all fwmark 0x65/0x1ffff iif lo uidrange 10137-10137 lookup eth0': 1,
         })
         GATE.validate_report(report, SHA)
+
+    def test_known_restricted_permissions_use_exact_explicit_rules_without_global_implicit(self):
+        for permission, explicit in RESTRICTED_RULES.items():
+            for renumber in (False, True):
+                report = restricted_report(permission)
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                with self.subTest(permission=permission, renumber=renumber):
+                    self.assertEqual(dict(GATE.netd_selectors(loss['before'])), {
+                        explicit: 1,
+                        '23000: from all fwmark 0x64/0x1ffff iif lo lookup eth0': 0,
+                        '15040: from all fwmark 0x10064/0x1ffff iif lo uidrange 10137-10137 lookup eth0': 1,
+                        '22040: from all fwmark 0x64/0x1ffff iif lo uidrange 10137-10137 lookup eth0': 1,
+                    })
+                    if renumber:
+                        renumber_eth0(loss['helper_lifecycle']['before_stop'], 103)
+                        renumber_eth0(loss['after'], 101)
+                    GATE.validate_report(report, SHA)
+
+    def test_restricted_permission_rules_fail_when_missing_duplicated_or_misbound(self):
+        for permission, explicit in RESTRICTED_RULES.items():
+            for change in ('missing', 'duplicate', 'none-mark', 'mask', 'implicit', 'uid-permission'):
+                report = restricted_report(permission)
+                loss = report['provenance']['route_recovery']['rpdb_loss']
+                for snapshot in (loss['before'], loss['fault'], loss['after'],
+                                 loss['helper_lifecycle']['before_stop'], loss['helper_lifecycle']['after_start']):
+                    rules = snapshot['rules']
+                    if change == 'missing':
+                        rules.remove(explicit)
+                    elif change == 'duplicate':
+                        rules.append(explicit)
+                    elif change == 'none-mark':
+                        rules[rules.index(explicit)] = eth0_rules(100)[0]
+                    elif change == 'mask':
+                        rules[rules.index(explicit)] = explicit.split('/')[0] + '/0x1ffff iif lo lookup eth0'
+                    elif change == 'implicit':
+                        rules.append(eth0_rules(100)[1])
+                    else:
+                        uid = eth0_uid_rules(100, 40, [(10137, 10137)])[0]
+                        rules[rules.index(uid)] = uid.replace('0x10064/0x1ffff',
+                                                             explicit.split('fwmark ')[1].split(' ')[0])
+                with self.subTest(permission=permission, change=change):
+                    self.assert_rejected(report)
+
+    def test_known_permission_changes_still_fail_with_matching_global_rules(self):
+        for old_permission in ('NONE', 'NETWORK', 'SYSTEM'):
+            for new_permission in ('NONE', 'NETWORK', 'SYSTEM'):
+                if old_permission == new_permission:
+                    continue
+                report = per_app_report() if old_permission == 'NONE' else restricted_report(old_permission)
+                after = report['provenance']['route_recovery']['rpdb_loss']['after']
+                network = next(item for item in after['netd']['networks'] if item['interfaces'] == ['eth0'])
+                network['details'][-1] = 'Required permission: ' + new_permission
+                old_rules = eth0_rules(100) if old_permission == 'NONE' else [RESTRICTED_RULES[old_permission]]
+                new_rules = eth0_rules(100) if new_permission == 'NONE' else [RESTRICTED_RULES[new_permission]]
+                after['rules'] = [row for row in after['rules'] if row not in old_rules] + new_rules
+                with self.subTest(old=old_permission, new=new_permission):
+                    self.assert_rejected(report)
+
+    def test_permission_metadata_rejects_unknown_tokens_and_wrong_types(self):
+        for value in ('Required permission: network', 'Required permission: UNKNOWN',
+                      'Required permission: NETWORK|SYSTEM', 'Required permission: 1', True, 1, None):
+            report = restricted_report('NETWORK')
+            after = report['provenance']['route_recovery']['rpdb_loss']['after']
+            network = next(item for item in after['netd']['networks'] if item['interfaces'] == ['eth0'])
+            network['details'][-1] = value
+            with self.subTest(value=value):
+                self.assert_rejected(report)
 
     def test_per_app_renumbering_rejects_partial_stale_or_altered_selectors(self):
         for stage in ('after', 'before_stop'):

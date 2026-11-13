@@ -21,6 +21,10 @@ OWNED = ['9000: from all to 172.19.0.0/30 lookup 2022',
          '9010: from all nop']
 ETH0_RULES = ['16000: from all fwmark 0x10064/0x1ffff iif lo lookup eth0',
               '23000: from all fwmark 0x64/0x1ffff iif lo lookup eth0']
+RESTRICTED_RULES = {
+    'NETWORK': '16000: from all fwmark 0x50064/0x5ffff iif lo lookup eth0',
+    'SYSTEM': '16000: from all fwmark 0xd0064/0xdffff iif lo lookup eth0',
+}
 FOREIGN = ['0: from all lookup local', '32766: from all lookup main',
            '18000: from all fwmark 0x64/0x1ffff lookup wlan0'] + ETH0_RULES
 LEDGER = ('schema=2\nphase=active\nboot=' + BOOT + '\ntable=2022\ninterface=magicnet0\n'
@@ -114,7 +118,7 @@ class Device:
         network = next(item for item in self.networks if item['interfaces'] == ['eth0'])
         old_id = network['net_id']
         network['net_id'] += 2
-        for prefix in (0x10000, 0):
+        for prefix in (0x10000, 0x50000, 0xd0000, 0):
             old, new = f'fwmark {prefix | old_id:#x}/', f'fwmark {prefix | network["net_id"]:#x}/'
             self.rules = [row.replace(old, new) if row.endswith(' lookup eth0') else row
                           for row in self.rules]
@@ -298,8 +302,8 @@ class RecoveryTests(unittest.TestCase):
 
     def test_unsupported_netd_metadata_is_preserved_without_adopting_the_network(self):
         for details in (
-                ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK'],
-                ['Allowed UID ranges: unrestricted', 'Required permission: SYSTEM'],
+                ['Allowed UID ranges: unrestricted', 'Required permission: UNKNOWN'],
+                ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK|SYSTEM'],
                 ['Allowed UID ranges: uids{ <BAD: 10000-10001> }', 'Required permission: NONE'],
                 ['Allowed UID ranges: unrestricted', 'Per-app UID ranges: prio 1000 uids{ 10000 }',
                  'Required permission: NONE']):
@@ -333,7 +337,7 @@ class RecoveryTests(unittest.TestCase):
         for changes in ({'net_id': 98}, {'type': 'VIRTUAL'}, {'interfaces': ['eth0', 'wlan1']},
                         {'details': ['Required permission: NONE']},
                         {'details': ['Allowed UID ranges: unknown', 'Required permission: NONE']},
-                        {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NETWORK']},
+                        {'details': ['Allowed UID ranges: unrestricted', 'Required permission: network']},
                         {'details': ['Allowed UID ranges: unrestricted', 'Required permission: NONE',
                                      'Per-app UID ranges: prio -1 uids{ 10000 }']}):
             self.setUp()
@@ -360,6 +364,65 @@ class RecoveryTests(unittest.TestCase):
             with self.subTest(allowed=allowed):
                 self.assertEqual(self.control.netd_observation()['networks'], self.device.networks)
         self.assertNotIn('netd_failure', self.evidence)
+
+    def test_known_restricted_permissions_bind_exact_global_and_per_app_rules(self):
+        for permission, explicit in RESTRICTED_RULES.items():
+            for renumber in (False, True):
+                self.setUp()
+                self.device.networks[3]['details'] = [
+                    'Allowed UID ranges: uids{ 0-99999 }',
+                    'Per-app UID ranges: prio 40 uids{ 10137 }', 'Required permission: ' + permission]
+                self.device.rules = [row for row in self.device.rules if row not in ETH0_RULES]
+                self.device.rules += [explicit] + app_rules(100, 40, [(10137, 10137)])
+                self.device.renumber_on_start = renumber
+                with self.subTest(permission=permission, renumber=renumber):
+                    expected = Counter([explicit] + app_rules(100, 40, [(10137, 10137)]))
+                    selectors = proof.ethernet_rules(self.control.netd_observation())
+                    self.assertEqual(selectors, expected)
+                    self.assertEqual(selectors[ETH0_RULES[1]], 0)
+                    self.run_control()
+                    self.assertEqual(self.evidence['status'], 'verified')
+
+    def test_restricted_permission_cannot_adopt_missing_wrong_or_implicit_rules(self):
+        for permission, explicit in RESTRICTED_RULES.items():
+            for change in ('missing', 'duplicate', 'none-mark', 'wrong-mask', 'implicit', 'extra-implicit'):
+                self.setUp()
+                self.device.networks[3]['details'][-1] = 'Required permission: ' + permission
+                self.device.rules = [row for row in self.device.rules if row not in ETH0_RULES] + [explicit]
+                if change == 'missing':
+                    self.device.rules.remove(explicit)
+                elif change == 'duplicate':
+                    self.device.rules.append(explicit)
+                elif change == 'none-mark':
+                    self.device.rules[self.device.rules.index(explicit)] = ETH0_RULES[0]
+                elif change == 'wrong-mask':
+                    self.device.rules[self.device.rules.index(explicit)] = explicit.split('/')[0] + '/0x1ffff iif lo lookup eth0'
+                else:
+                    self.device.rules += [ETH0_RULES[1]] * (1 if change == 'implicit' else 2)
+                with self.subTest(permission=permission, change=change), self.assertRaisesRegex(
+                        RuntimeError, 'netd_eth0_rules_not_bound'):
+                    self.control.snapshot()
+
+    def test_permission_changes_fail_even_when_both_rule_sets_match_their_metadata(self):
+        for old_permission, old_rule in [('NONE', ETH0_RULES[0]), *RESTRICTED_RULES.items()]:
+            for new_permission, new_rule in [('NONE', ETH0_RULES[0]), *RESTRICTED_RULES.items()]:
+                if old_permission == new_permission:
+                    continue
+                self.setUp()
+                self.device.networks[3]['details'][-1] = 'Required permission: ' + old_permission
+                self.device.rules = [row for row in self.device.rules if row not in ETH0_RULES] + [old_rule]
+                if old_permission == 'NONE':
+                    self.device.rules.append(ETH0_RULES[1])
+                before = {'netd': self.control.netd_observation()}
+                before_rules = Counter(self.device.rules)
+                self.device.networks[3]['details'][-1] = 'Required permission: ' + new_permission
+                self.device.rules = [row for row in self.device.rules if row not in (old_rule, ETH0_RULES[1])] + [new_rule]
+                if new_permission == 'NONE':
+                    self.device.rules.append(ETH0_RULES[1])
+                after = {'netd': self.control.netd_observation()}
+                with self.subTest(old=old_permission, new=new_permission):
+                    self.assertFalse(proof.foreign_rules_preserved(
+                        before, after, before_rules, Counter(self.device.rules)))
 
     def test_uid_metadata_rejects_noncanonical_values_and_priorities(self):
         for value in ('', '<BAD>', 'uids{}', 'uids{ 01 }', 'uids{ -1 }', 'uids{ 2147483648 }',

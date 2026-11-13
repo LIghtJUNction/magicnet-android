@@ -27,6 +27,7 @@ TUN = 'magicnet0'
 LIMIT = 65536
 NETD_LIMIT = 1024 * 1024
 NETD = '/system/bin/dumpsys -t 5 netd --short'
+NETD_PERMISSIONS = {'NONE': 0, 'NETWORK': 0x40000, 'SYSTEM': 0xc0000}
 TICK_INTERVAL = 60
 BASELINE_TIMEOUT = 180
 RECOVERY_TIMEOUT = 600
@@ -214,7 +215,7 @@ def ethernet_metadata(details):
     fields = dict(row.partition(': ')[::2] for row in details)
     if (len(fields) != len(details)
             or set(fields) - {'Allowed UID ranges', 'Required permission', 'Per-app UID ranges'}
-            or fields.get('Required permission') != 'NONE'):
+            or fields.get('Required permission') not in NETD_PERMISSIONS):
         return False
     allowed = fields.get('Allowed UID ranges', '')
     if allowed != 'unrestricted' and not uid_ranges(allowed):
@@ -241,10 +242,15 @@ def ethernet_network(observation):
 def ethernet_rules(observation):
     network = ethernet_network(observation)
     net_id = network['net_id']
-    selectors = Counter([
-        f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
-        f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'])
     details = dict(row.split(': ', 1) for row in network['details'])
+    permission = NETD_PERMISSIONS[details['Required permission']]
+    selectors = Counter({
+        f'16000: from all fwmark {permission | 0x10000 | net_id:#x}/'
+        f'{permission | 0x1ffff:#x} iif lo lookup eth0': 1,
+        # Restricted networks have no global implicit rule. A zero count also
+        # rejects a stale NONE-permission rule left behind for this network.
+        f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0': int(permission == 0),
+    })
     # Android 15 RouteController::modifyPhysicalNetwork installs both UID
     # selectors for every declared range, retaining duplicate multiplicities.
     for section in details.get('Per-app UID ranges', '').split('; '):

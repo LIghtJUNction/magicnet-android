@@ -21,6 +21,7 @@ REQUIRED_PHASES = {
     'upgrade-preservation', 'disable-reboot', 'enable-reboot', 'uninstall-reboot',
 }
 REQUIRED_PAYLOADS = {'bin/magicnet-cli', 'bin/sing-box', 'bin/jq', 'bin/yq', 'bin/curl'}
+NETD_PERMISSIONS = {'NONE': 0, 'NETWORK': 0x40000, 'SYSTEM': 0xc0000}
 
 
 def require(condition, message):
@@ -132,10 +133,11 @@ def netd_observation(snapshot):
         if 'eth0' in interfaces:
             ethernet.append(network)
     require(ids == sorted(set(ids)) and len(ethernet) == 1 and ethernet[0]['net_id'] >= 100
-            and ethernet[0]['type'] == 'PHYSICAL' and ethernet[0]['interfaces'] == ['eth0']
-            and 'Required permission: NONE' in ethernet[0]['details'],
-            'Netd does not prove one physical eth0 network with NONE permission')
+            and ethernet[0]['type'] == 'PHYSICAL' and ethernet[0]['interfaces'] == ['eth0'],
+            'Netd does not prove one physical eth0 network')
     details = dict(item.split(': ', 1) for item in ethernet[0]['details'])
+    require(details.get('Required permission') in NETD_PERMISSIONS,
+            'Netd eth0 permission is not a known Android permission')
     allowed, per_app = details['Allowed UID ranges'], details.get('Per-app UID ranges')
     require((allowed == 'unrestricted' or canonical_uid_ranges(allowed))
             and (per_app is None or canonical_per_app_ranges(per_app)),
@@ -155,8 +157,13 @@ def netd_selectors(snapshot):
     net_id = netd_observation(snapshot)
     network = next(item for item in snapshot['netd']['networks'] if item['net_id'] == net_id)
     details = dict(item.split(': ', 1) for item in network['details'])
-    selectors = Counter((f'16000: from all fwmark {0x10000 | net_id:#x}/0x1ffff iif lo lookup eth0',
-                         f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0'))
+    permission = NETD_PERMISSIONS[details['Required permission']]
+    selectors = Counter({
+        f'16000: from all fwmark {permission | 0x10000 | net_id:#x}/'
+        f'{permission | 0x1ffff:#x} iif lo lookup eth0': 1,
+        # RouteController omits the global implicit rule for restricted networks.
+        f'23000: from all fwmark {net_id:#x}/0x1ffff iif lo lookup eth0': int(permission == 0),
+    })
     # Android 15 RouteController::modifyPhysicalNetwork installs explicit and
     # implicit UID rules for every range at its subpriority. UidRanges retains
     # duplicates and overlaps, so completeness includes their multiplicities.
