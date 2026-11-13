@@ -97,15 +97,10 @@ def canonical_per_app_ranges(value):
     return True
 
 
-def netd_observation(snapshot):
-    observed = snapshot.get('netd')
-    require(isinstance(observed, dict)
-            and observed.keys() == {'networks', 'eth0_ifindex', 'eth0_fib'},
-            'Route snapshot lacks complete netd ownership evidence')
-    networks = observed['networks']
+def netd_networks(networks):
     require(isinstance(networks, list) and 1 <= len(networks) <= 256,
             'Invalid netd network inventory')
-    ids, ethernet = [], []
+    ids = []
     for network in networks:
         require(isinstance(network, dict)
                 and network.keys() == {'net_id', 'type', 'interfaces', 'details'}
@@ -130,9 +125,13 @@ def netd_observation(snapshot):
                 and ('Required permission' in fields) == (network['type'] == 'PHYSICAL'),
                 'Incomplete or repeated netd network metadata')
         ids.append(network['net_id'])
-        if 'eth0' in interfaces:
-            ethernet.append(network)
-    require(ids == sorted(set(ids)) and len(ethernet) == 1 and ethernet[0]['net_id'] >= 100
+    require(ids == sorted(set(ids)), 'Unordered or repeated netd network identities')
+    return networks
+
+
+def netd_ethernet(networks):
+    ethernet = [network for network in networks if 'eth0' in network['interfaces']]
+    require(len(ethernet) == 1 and ethernet[0]['net_id'] >= 100
             and ethernet[0]['type'] == 'PHYSICAL' and ethernet[0]['interfaces'] == ['eth0'],
             'Netd does not prove one physical eth0 network')
     details = dict(item.split(': ', 1) for item in ethernet[0]['details'])
@@ -142,6 +141,15 @@ def netd_observation(snapshot):
     require((allowed == 'unrestricted' or canonical_uid_ranges(allowed))
             and (per_app is None or canonical_per_app_ranges(per_app)),
             'Netd eth0 UID metadata is not canonical')
+    return ethernet[0]
+
+
+def netd_observation(snapshot):
+    observed = snapshot.get('netd')
+    require(isinstance(observed, dict)
+            and observed.keys() == {'networks', 'eth0_ifindex', 'eth0_fib'},
+            'Route snapshot lacks complete netd ownership evidence')
+    ethernet = netd_ethernet(netd_networks(observed['networks']))
     fib = observed['eth0_fib']
     require(type(observed['eth0_ifindex']) is int and 1 <= observed['eth0_ifindex'] <= 0x7fffffff
             and isinstance(fib, list) and 1 <= len(fib) <= 256
@@ -150,7 +158,7 @@ def netd_observation(snapshot):
                     and re.search(r'(?:^| )dev eth0(?: |$)', row) for row in fib)
             and fib == sorted(set(fib)),
             'Netd eth0 identity or complete interface FIB is unavailable')
-    return ethernet[0]['net_id']
+    return ethernet['net_id']
 
 
 def netd_selectors(snapshot):
@@ -299,6 +307,38 @@ def validate_helper_lifecycle(loss, before, before_helper):
             'Route helper calibration changed other rules or does not describe the fault core')
 
 
+def validate_ethernet_lifecycle(reconnect):
+    lifecycle = reconnect.get('ethernet_lifecycle')
+    require(matches(lifecycle, {'acknowledged': True})
+            and lifecycle.keys() == {'before', 'down', 'acknowledged'},
+            'Ethernet reconnect lacks an acknowledged owner teardown')
+    for stage, running in (('before', True), ('down', False)):
+        snapshot = lifecycle[stage]
+        expected_fields = {'owner', 'networks'} | ({'flags'} if stage == 'down' else set())
+        require(isinstance(snapshot, dict) and snapshot.keys() == expected_fields,
+                'Ethernet lifecycle lacks a complete ' + stage + ' observation')
+        expected_owner = {'enabled': True, 'interface': 'eth0', 'link_up': running,
+                          'network_agent_present': running, 'ip_client_present': running}
+        owner = snapshot['owner']
+        require(matches(owner, expected_owner) and owner.keys() == expected_owner.keys(),
+                'Ethernet owner did not confirm its ' + stage + ' lifecycle state')
+        netd_networks(snapshot['networks'])
+
+    before, down = lifecycle['before'], lifecycle['down']
+    ethernet = netd_ethernet(before['networks'])
+    require(sum(network['type'] == 'PHYSICAL' for network in before['networks']) == 1
+            and not any('wlan0' in network['interfaces'] for network in before['networks']),
+            'Ethernet lifecycle was not isolated to the physical eth0 uplink')
+    previous_id = ethernet['net_id']
+    require(all(network['net_id'] != previous_id for network in down['networks'])
+            and down['networks'] == [network for network in before['networks']
+                                     if network['net_id'] != previous_id],
+            'Ethernet teardown did not remove exactly its previous netd network')
+    require(type(down['flags']) is int and 0 <= down['flags'] <= 0xffffffff
+            and down['flags'] & 1 == 0 and down['flags'] == reconnect['down_flags'],
+            'Ethernet teardown lacks matching observed down flags')
+
+
 def uplink_observation(value, interface, uid, minimum_attempts):
     require(isinstance(value, dict), 'Local uplink lacks an independent observation')
     state = value.get('state')
@@ -418,6 +458,7 @@ def validate_route_recovery(evidence):
                     for key in ('down_flags', 'up_flags'))
             and reconnect['down_flags'] & 1 == 0 and reconnect['up_flags'] & 1 == 1,
             'Local uplink reconnect was not verified')
+    validate_ethernet_lifecycle(reconnect)
     require(reconnect.get('restore_method') == ('android_wifi_toggle'
             if reconnect['interface'] == 'wlan0' else 'link_up'),
             'Local uplink restore method is missing or inconsistent')

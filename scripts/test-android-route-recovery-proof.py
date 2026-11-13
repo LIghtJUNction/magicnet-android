@@ -95,6 +95,23 @@ class Device:
         self.selected_uplink = 'wlan0'
         self.peers = 'ADBD\n/dev/null\nsocket:[77]\nTCP\n' + HEADER + '\n' + HEADER + '\n'
         self.qemu, self.abi, self.wifi_on = '1', 'x86_64', True
+        self.ethernet_enabled = self.ethernet_link_up = True
+        self.ethernet_agent = self.ethernet_client = True
+        self.stopped_ethernet = None
+
+    def ethernet_dump(self):
+        agent = 'com.android.server.ethernet.EthernetNetworkAgent@123ab' if self.ethernet_agent else 'null'
+        client = 'android.net.ip.IpClientManager@456cd' if self.ethernet_client else 'null'
+        return ('Current Ethernet state: \n  EthernetTracker\n  Ethernet State: '
+                + ('enabled' if self.ethernet_enabled else 'disabled')
+                + '\n  Ethernet interface name filter: eth\\d+\n  IP Configurations:\n'
+                '  Network Capabilities:\n  EthernetNetworkFactory\n  Tracking interfaces:\n'
+                '    eth0:NetworkInterfaceState{ iface: eth0, up: '
+                + str(self.ethernet_link_up).lower()
+                + ', hwAddress: 02:00:00:00:00:01, networkCapabilities: [ Transports: ETHERNET ], '
+                + f'networkAgent: {agent}, ipClient: {client},linkProperties: {{InterfaceName: eth0}}}}\n'
+                + ('' if self.ethernet_client else '      IpClient is null\n')
+                + 'Handler:\n  EthernetServiceImpl Looper (EthernetService, tid 1) {}\n')
 
     def helper_rule(self):
         return '1: from all lookup ' + str(self.helper_table)
@@ -157,6 +174,8 @@ class Device:
             output = str(self.ifindex)
         elif command == proof.NETD:
             output = self.netd_dump()
+        elif command == proof.ETHERNET:
+            output = self.ethernet_dump()
         elif command == 'cat /sys/class/net/eth0/ifindex':
             output = str(self.eth0_ifindex)
         elif command == proof.IP + ' -4 route show table eth0':
@@ -232,7 +251,8 @@ class Device:
             output = self.peers
         elif command == proof.IP + ' -4 route get 10.0.2.2':
             output = '10.0.2.2 dev wlan0 src 10.0.2.15'
-        elif command.startswith('if [ -r /sys/class/net/') and command.endswith('/flags; else echo 0x0; fi'):
+        elif (command == 'cat /sys/class/net/eth0/flags'
+              or command.startswith('if [ -r /sys/class/net/') and command.endswith('/flags; else echo 0x0; fi')):
             self.flag_reads += 1
             if self.fail_down_observation and self.flag_reads == 2:
                 rc = 1
@@ -243,8 +263,20 @@ class Device:
             output = 'gone\n'
         elif command in (proof.IP + ' link set dev wlan0 down', proof.IP + ' link set dev eth0 down'):
             self.flags &= ~1
+            if command.endswith(' eth0 down'):
+                self.ethernet_link_up = self.ethernet_agent = self.ethernet_client = False
+                self.stopped_ethernet = next(item for item in self.networks if item['interfaces'] == ['eth0'])
+                self.networks.remove(self.stopped_ethernet)
+                self.uplinks = [name for name in self.uplinks if name != 'eth0']
         elif command.startswith(proof.IP + ' link set dev wlan0 up') or command == proof.IP + ' link set dev eth0 up':
             self.flags |= 1
+            if command.endswith(' eth0 up'):
+                self.ethernet_link_up = self.ethernet_agent = self.ethernet_client = True
+                if self.stopped_ethernet is not None:
+                    self.networks.append(self.stopped_ethernet)
+                    self.stopped_ethernet = None
+                if 'eth0' not in self.uplinks:
+                    self.uplinks.append('eth0')
         else:
             raise AssertionError('unexpected command: ' + command)
         return subprocess.CompletedProcess(['adb'], rc, output, '')
@@ -507,6 +539,278 @@ class NetworkFixtureTests(unittest.TestCase):
                 self.assertTrue(self.device.wifi_on)
                 self.assertEqual(result.get('failure_observer_failure'), 'capture_failed' if capture_fails else None)
                 self.assertNotIn('private-diagnostic-failure', json.dumps(result))
+
+
+class EthernetLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.device, self.evidence, self.clock = Device(), {'recovery_tick_count': 0}, 0
+        self.device.adb(proof.WIFI + ' set-wifi-enabled disabled')
+        self.device.calls.clear()
+        self.control = proof.Control(self.device.adb, self.evidence)
+
+    def sleep(self, seconds):
+        self.clock += seconds
+
+    def run_control(self):
+        with patch.object(proof.time, 'monotonic', lambda: self.clock), \
+                patch.object(proof.time, 'sleep', self.sleep):
+            proof.uplink_reconnect(self.control, self.device.tcp_app, 10123,
+                                   self.evidence, required_interface='eth0')
+
+    def test_owner_dump_records_real_objects_and_independently_confirmed_null(self):
+        before = proof.ethernet_owner(self.device.ethernet_dump())
+        self.assertEqual(before, {'enabled': True, 'interface': 'eth0', 'link_up': True,
+                                 'network_agent_present': True, 'ip_client_present': True})
+        self.device.adb(proof.IP + ' link set dev eth0 down')
+        down = proof.ethernet_owner(self.device.ethernet_dump())
+        self.assertEqual(down, before | {'link_up': False, 'network_agent_present': False,
+                                        'ip_client_present': False})
+        self.assertNotIn('02:00:00:00:00:01', json.dumps([before, down]))
+        self.assertNotIn('@', json.dumps([before, down]))
+
+    def test_missing_duplicate_malformed_and_timeout_owner_dumps_are_rejected(self):
+        before = self.device.ethernet_dump()
+        row = next(row for row in before.splitlines() if ':NetworkInterfaceState{' in row)
+        self.device.adb(proof.IP + ' link set dev eth0 down')
+        down = self.device.ethernet_dump()
+        variants = [
+            '', before[:before.index('Handler:')], before + '\nDUMP TIMEOUT (2s) EXPIRED\n',
+            before + '\x00', 'x' * (proof.LIMIT + 1),
+            before.replace('  EthernetTracker\n', ''),
+            before.replace('Ethernet State: enabled', 'Ethernet State: unknown'),
+            before.replace('Ethernet State: enabled', 'Ethernet State: enabled\n  Ethernet State: enabled'),
+            before.replace(row + '\n', ''), before.replace(row, row + '\n' + row),
+            before.replace('iface: eth0', 'iface: eth1'), before.replace('up: true', 'up: TRUE'),
+            before.replace('networkAgent: com.android.server.ethernet.EthernetNetworkAgent@123ab',
+                           'networkAgent: not-null'),
+            before.replace('ipClient: android.net.ip.IpClientManager@456cd', 'ipClient: null-but-running'),
+            before.replace(row, row + '\n      IpClient is null'),
+            before.replace('networkCapabilities: [ Transports: ETHERNET ]', 'networkCapabilities: broken'),
+            down.replace('      IpClient is null\n', ''),
+            down.replace('      IpClient is null\n', '    IpClient is null\n'),
+            down.replace('      IpClient is null', '      IpClient is null\n      IpClient is null'),
+            down.replace('ipClient: null,', 'ipClient: null, ipClient: null,'),
+        ]
+        for index, text in enumerate(variants):
+            with self.subTest(index=index), self.assertRaises(RuntimeError):
+                proof.ethernet_owner(text)
+
+    def test_incomplete_owner_or_competing_network_aborts_before_any_mutation(self):
+        for failure in ('enabled', 'link_up', 'agent', 'client', 'competing_network'):
+            self.setUp()
+            if failure == 'competing_network':
+                self.device.networks.append(copy.deepcopy(NETWORKS[-1]))
+            else:
+                setattr(self.device, 'ethernet_' + failure, False)
+            with self.subTest(failure=failure), self.assertRaisesRegex(RuntimeError, '^ethernet_baseline_not_ready$'):
+                self.run_control()
+            self.assertFalse(any('link set' in call or ' nohup ' in call for call in self.device.calls))
+            self.assertFalse(self.evidence['ethernet_lifecycle']['acknowledged'])
+
+    def test_invalid_ethernet_metadata_aborts_before_guard_or_link_mutation(self):
+        for changes in (
+                {'net_id': 98},
+                {'details': ['Allowed UID ranges: unrestricted', 'Required permission: UNKNOWN']},
+                {'details': ['Allowed UID ranges: uids{ 10123 10000 }', 'Required permission: NONE']}):
+            self.setUp()
+            network = next(item for item in self.device.networks if item['interfaces'] == ['eth0'])
+            network.update(changes)
+            with self.subTest(changes=changes), self.assertRaisesRegex(
+                    RuntimeError, '^netd_eth0_ownership_unavailable$'):
+                self.run_control()
+            self.assertFalse(any('link set' in call or ' nohup ' in call for call in self.device.calls))
+            self.assertFalse(self.evidence['ethernet_lifecycle']['acknowledged'])
+
+    def test_owner_and_complete_old_network_stop_are_recorded_before_link_up(self):
+        before = copy.deepcopy(self.device.networks)
+        self.run_control()
+        lifecycle = self.evidence['ethernet_lifecycle']
+        self.assertEqual(self.evidence['status'], 'verified')
+        self.assertEqual(lifecycle['before']['networks'], before)
+        self.assertEqual(lifecycle['down']['networks'], [item for item in before if item['net_id'] != 100])
+        self.assertEqual(lifecycle['down']['flags'], self.evidence['down_flags'])
+        self.assertFalse(lifecycle['down']['owner']['ip_client_present'])
+        self.assertTrue(lifecycle['acknowledged'])
+        self.assertLess(self.device.calls.index(proof.ETHERNET),
+                        self.device.calls.index(proof.IP + ' link set dev eth0 down'))
+        self.assertTrue(self.evidence['restore_guard_finished'])
+        guard = next(call for call in self.device.calls if call.startswith(proof.BB + ' nohup '))
+        self.assertIn('sleep 30;', guard)
+        self.assertIn(proof.IP + ' link set dev eth0 up', guard)
+        self.assertFalse(any('route add' in call or 'service restart' in call for call in self.device.calls))
+
+    def test_delayed_owner_and_old_netd_deletion_are_both_awaited(self):
+        for owner_delay, netd_delay in ((3, 0), (0, 7), (3, 7)):
+            self.setUp()
+            original, owner_up, netd_up = self.device.adb, self.device.ethernet_dump(), self.device.netd_dump()
+            down = False
+            raised_at = []
+            def adb(command, **kwargs):
+                nonlocal down
+                if command == proof.IP + ' link set dev eth0 down':
+                    down = True
+                if command == proof.IP + ' link set dev eth0 up':
+                    self.assertTrue(self.evidence['ethernet_lifecycle']['acknowledged'])
+                    raised_at.append(self.clock)
+                    down = False
+                if down:
+                    self.assertGreater(kwargs['timeout'], 0)
+                    self.assertLessEqual(kwargs['timeout'], min(3, 15 - self.clock))
+                result = original(command, **kwargs)
+                if down and command == proof.ETHERNET and self.clock < owner_delay:
+                    result.stdout = owner_up
+                if down and command == proof.NETD and self.clock < netd_delay:
+                    result.stdout = netd_up
+                return result
+            self.control.adb = adb
+            with self.subTest(owner_delay=owner_delay, netd_delay=netd_delay):
+                self.run_control()
+                self.assertEqual(raised_at, [max(owner_delay, netd_delay)])
+                self.assertEqual(self.evidence['status'], 'verified')
+
+    def test_unknown_or_unfinished_shutdown_fails_and_still_restores(self):
+        for failure in ('client', 'agent', 'link', 'old_netd', 'disabled', 'foreign_network',
+                        'missing_null', 'dump_timeout', 'read_error'):
+            self.setUp()
+            original, netd_up = self.device.adb, self.device.netd_dump()
+            down = False
+            def adb(command, **kwargs):
+                nonlocal down
+                if command == proof.IP + ' link set dev eth0 down':
+                    down = True
+                if command == proof.IP + ' link set dev eth0 up':
+                    down = False
+                result = original(command, **kwargs)
+                if down and command == proof.ETHERNET:
+                    if failure in ('client', 'agent', 'link'):
+                        attribute = 'ethernet_' + ('link_up' if failure == 'link' else failure)
+                        setattr(self.device, attribute, True)
+                        result.stdout = self.device.ethernet_dump()
+                        setattr(self.device, attribute, False)
+                    elif failure == 'disabled':
+                        result.stdout = result.stdout.replace('Ethernet State: enabled', 'Ethernet State: disabled')
+                    elif failure == 'missing_null':
+                        result.stdout = result.stdout.replace('      IpClient is null\n', '')
+                    elif failure == 'dump_timeout':
+                        result.stdout += 'DUMP TIMEOUT (2s) EXPIRED\n'
+                    elif failure == 'read_error':
+                        result.returncode = 1
+                if down and command == proof.NETD:
+                    if failure == 'old_netd':
+                        result.stdout = netd_up.replace('100 PHYSICAL eth0', '100 PHYSICAL')
+                    elif failure == 'foreign_network':
+                        result.stdout = result.stdout.replace('51 DUMMY dummy0', '53 DUMMY dummy0')
+                return result
+            self.control.adb = adb
+            with self.subTest(failure=failure), self.assertRaises(RuntimeError):
+                self.run_control()
+            lifecycle = self.evidence['ethernet_lifecycle']
+            self.assertFalse(lifecycle['acknowledged'])
+            self.assertIn('down', lifecycle)
+            self.assertEqual(lifecycle['down']['flags'] & 1, 0)
+            self.assertTrue(self.evidence['up_observed'])
+            self.assertTrue(self.evidence['restore_guard_finished'])
+            self.assertEqual(self.evidence['status'], 'not_verified')
+            self.assertNotIn('recovery_after', self.evidence)
+            if failure in ('client', 'agent', 'link', 'old_netd'):
+                self.assertEqual(self.clock, 15)
+                self.assertIsNotNone(lifecycle['down']['owner'])
+                self.assertIsNotNone(lifecycle['down']['networks'])
+
+    def test_shutdown_observation_shares_one_deadline_across_commands(self):
+        original, owner_up = self.device.adb, self.device.ethernet_dump()
+        down = False
+        raised_at = []
+        def adb(command, **kwargs):
+            nonlocal down
+            if command == proof.IP + ' link set dev eth0 down':
+                down = True
+            if command == proof.IP + ' link set dev eth0 up':
+                raised_at.append(self.clock)
+                down = False
+            if down:
+                timeout = kwargs['timeout']
+                self.assertLessEqual(timeout, min(3, 15 - self.clock))
+                self.clock += timeout
+            result = original(command, **kwargs)
+            if down and command == proof.ETHERNET:
+                result.stdout = owner_up
+            return result
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, '^ethernet_shutdown_deadline$'):
+            self.run_control()
+        self.assertEqual(raised_at, [15])
+        self.assertFalse(self.evidence['ethernet_lifecycle']['acknowledged'])
+        self.assertTrue(self.evidence['up_observed'])
+
+    def test_ethernet_control_path_is_checked_before_owner_and_guard(self):
+        self.device.peers += TCP + '\n'
+        original = self.device.adb
+        def adb(command, **kwargs):
+            return (subprocess.CompletedProcess(['adb'], 0, '10.0.2.2 dev eth0', '')
+                    if command == proof.IP + ' -4 route get 10.0.2.2' else original(command, **kwargs))
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, 'uplink_carries_adb_control'):
+            self.run_control()
+        self.assertNotIn(proof.ETHERNET, self.device.calls)
+        self.assertFalse(any('link set' in call or ' nohup ' in call for call in self.device.calls))
+
+    def test_partial_down_command_failure_still_restores_without_acknowledging(self):
+        original = self.device.adb
+        def adb(command, **kwargs):
+            result = original(command, **kwargs)
+            if command == proof.IP + ' link set dev eth0 down':
+                result.returncode = 1
+            return result
+        self.control.adb = adb
+        with self.assertRaisesRegex(RuntimeError, '^device_command_failed$'):
+            self.run_control()
+        self.assertTrue(self.evidence['up_observed'])
+        self.assertTrue(self.evidence['restore_guard_finished'])
+        self.assertFalse(self.evidence['ethernet_lifecycle']['acknowledged'])
+
+    def test_missing_or_unreadable_ethernet_flags_are_not_down_evidence(self):
+        for code, error in ((1, 'No such file or directory'), (1, 'read failed'), (124, 'timed out'), (0, '')):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                if command == 'cat /sys/class/net/eth0/flags' and not self.device.flags & 1:
+                    return subprocess.CompletedProcess(['adb'], code, '', error)
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(code=code, error=error), self.assertRaises(RuntimeError):
+                self.run_control()
+            lifecycle = self.evidence['ethernet_lifecycle']
+            self.assertFalse(lifecycle['acknowledged'])
+            self.assertIsNone(lifecycle['down']['flags'])
+            self.assertNotIn('down_flags', self.evidence)
+            self.assertTrue(self.evidence['up_observed'])
+            self.assertTrue(self.evidence['restore_guard_finished'])
+            self.assertIn(proof.IP + ' link set dev eth0 up', self.device.calls)
+            self.assertFalse(any('eth0/flags' in call and 'echo 0x0' in call for call in self.device.calls))
+
+    def test_ethernet_guard_must_finish_with_its_own_bounded_wait(self):
+        for finishes in (True, False):
+            self.setUp()
+            original = self.device.adb
+            def adb(command, **kwargs):
+                if command.startswith('if [ -r /proc/500/stat ]'):
+                    text = ('gone\n' if finishes and self.clock >= 30 else
+                            '500 (sh) S ' + '0 ' * 18 + '850\n')
+                    return subprocess.CompletedProcess(['adb'], 0, text, '')
+                return original(command, **kwargs)
+            self.control.adb = adb
+            with self.subTest(finishes=finishes):
+                if finishes:
+                    self.run_control()
+                    self.assertEqual(self.clock, 30)
+                    self.assertEqual(self.evidence['status'], 'verified')
+                else:
+                    with self.assertRaisesRegex(RuntimeError, '^uplink_restore_guard_deadline$'):
+                        self.run_control()
+                    self.assertEqual(self.clock, 35)
+                    self.assertEqual(self.evidence['status'], 'not_verified')
+                self.assertTrue(self.device.flags & 1)
 
 
 class RecoveryTests(unittest.TestCase):
@@ -1235,8 +1539,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertIn(restore, guard)
 
     def test_ethernet_restore_does_not_toggle_wifi(self):
-        self.device.uplinks = ['eth0']
-        self.device.selected_uplink = 'eth0'
+        self.device.adb(proof.WIFI + ' set-wifi-enabled disabled')
+        self.device.calls.clear()
         evidence = {}
         proof.uplink_reconnect(self.control, self.device.tcp_app, 10123, evidence)
         self.assertEqual(evidence['restore_method'], 'link_up')

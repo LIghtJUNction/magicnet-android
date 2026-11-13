@@ -63,6 +63,24 @@ fresh TCP positive control before interruption and retaining the final route,
 readiness and app observation if recovery times out. Production
 grace, confirmation and cooldown periods remain active; the fixture does not
 fabricate canonical state or require Google or a subscription provider.
+
+The Ethernet interruption waits for Android to finish stopping the old network
+before raising the link. Before `down`, the report records an enabled Ethernet
+owner with a live NetworkAgent and IpClient, together with the complete netd
+inventory. Within 15 seconds after `down`, the interface must remain down, the
+owner must report link-down and both objects absent, and netd must have removed
+exactly the old `eth0` network while preserving every other record. The
+`ethernet_lifecycle` evidence retains these parsed observations and an explicit
+acknowledgment; missing, malformed or timed-out dumps remain failures. This
+ordering addresses the teardown race described in the pinned Android
+[EthernetNetworkFactory](https://android.googlesource.com/platform/packages/modules/Connectivity/+/refs/tags/android-15.0.0_r23/service-t/src/com/android/server/ethernet/EthernetNetworkFactory.java),
+where destroying the old network can otherwise remove newly created routes.
+Every failure still executes link restoration. An independent 30-second restore
+guard survives a host interruption. Cleanup observes its completion with a
+35-second polling deadline and a 10-second limit on each device read. The
+subsequent 600-second route/readiness/app recovery
+budget is unchanged; the harness never recreates Android's routes itself.
+
 The first fixture activation observes the normal stop/start boundary to prove
 ownership of the core's random redirect table. Recovery may replace that proven
 helper; its complete rule/FIB evidence and every other unowned rule are checked.

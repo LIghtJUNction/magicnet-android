@@ -28,6 +28,7 @@ TUN = 'magicnet0'
 LIMIT = 65536
 NETD_LIMIT = 1024 * 1024
 NETD = '/system/bin/dumpsys -t 5 netd --short'
+ETHERNET = '/system/bin/dumpsys -t 2 ethernet'
 WIFI = '/system/bin/cmd wifi'
 NETD_PERMISSIONS = {'NONE': 0, 'NETWORK': 0x40000, 'SYSTEM': 0xc0000}
 TICK_INTERVAL = 60
@@ -628,6 +629,53 @@ def wifi_enabled(control):
     return status[0] == 'Wifi is enabled'
 
 
+def ethernet_owner(text):
+    # Android 15 r23 EthernetTracker/NetworkFactory dump on the service handler.
+    # Object identities and network details are parsed, never retained.
+    require(isinstance(text, str) and len(text.encode()) <= LIMIT and '\x00' not in text
+            and not re.search(r'DUMP TIMEOUT|DUMP ERROR|DUMP FAILED|EXPIRED', text),
+            'invalid_ethernet_dump')
+    rows = [row.rstrip() for row in text.splitlines() if row.strip()]
+    stripped = [row.strip() for row in rows]
+    headings = ('Current Ethernet state:', 'EthernetTracker', 'EthernetNetworkFactory',
+                'Tracking interfaces:', 'Handler:')
+    require(all(stripped.count(heading) == 1 for heading in headings), 'incomplete_ethernet_dump')
+    positions = [stripped.index(heading) for heading in headings]
+    require(positions == sorted(positions) and positions[0] == 0, 'invalid_ethernet_dump_order')
+    states = [row for row in stripped if row.startswith('Ethernet State:')]
+    require(len(states) == 1 and states[0] in ('Ethernet State: enabled', 'Ethernet State: disabled')
+            and positions[1] < stripped.index(states[0]) < positions[2], 'invalid_ethernet_state')
+    records = rows[positions[3] + 1:positions[4]]
+    pattern = re.compile(
+        r'( *)([a-zA-Z0-9_.-]{1,15}):NetworkInterfaceState\{ iface: ([a-zA-Z0-9_.-]{1,15}), '
+        r'up: (true|false), hwAddress: (?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}, '
+        r'networkCapabilities: \[[^\n]*\], '
+        r'networkAgent: (null|(?:[a-zA-Z_$][a-zA-Z0-9_$]*\.)+EthernetNetworkAgent@[0-9a-f]{1,8}), '
+        r'ipClient: (null|(?:[a-zA-Z_$][a-zA-Z0-9_$]*\.)+IpClientManager@[0-9a-f]{1,8}),'
+        r'linkProperties: \{[^\n]*\}\}')
+    interfaces, result, index = set(), None, 0
+    while index < len(records):
+        row = records[index]
+        match = pattern.fullmatch(row)
+        require(match and match[2] == match[3] and match[2] not in interfaces
+                and all(row.count(field + ': ') == 1 for field in
+                        ('iface', 'up', 'hwAddress', 'networkCapabilities', 'networkAgent',
+                         'ipClient', 'linkProperties')), 'invalid_ethernet_interface')
+        interfaces.add(match[2])
+        index += 1
+        client_present = match[6] != 'null'
+        if not client_present:
+            require(index < len(records) and records[index] == match[1] + '  IpClient is null',
+                    'ethernet_ip_client_null_not_confirmed')
+            index += 1
+        if match[2] == 'eth0':
+            result = {'enabled': states[0] == 'Ethernet State: enabled', 'interface': 'eth0',
+                      'link_up': match[4] == 'true', 'network_agent_present': match[5] != 'null',
+                      'ip_client_present': client_present}
+    require(result is not None, 'ethernet_interface_unavailable')
+    return result
+
+
 @contextmanager
 def single_uplink_fixture(control, evidence):
     evidence.update(scope='disposable-single-eth0', prepared=False, restored=False)
@@ -741,13 +789,25 @@ def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=Non
     begin_observation('baseline')
     require(recovered(control.connectivity(), 'baseline'), 'uplink_baseline_not_ready')
 
-    def flags():
+    def flags(timeout=10):
         path = '/sys/class/net/' + interface + '/flags'
-        text = control.command(f'if [ -r {path} ]; then cat {path}; else echo 0x0; fi').strip()
-        require(re.fullmatch(r'0x[0-9a-fA-F]+', text), 'invalid_interface_flags')
+        command = ('cat ' + path if interface == 'eth0' else
+                   f'if [ -r {path} ]; then cat {path}; else echo 0x0; fi')
+        text = control.command(command, timeout=timeout).strip()
+        require(re.fullmatch(r'0x[0-9a-fA-F]{1,8}', text), 'invalid_interface_flags')
         return int(text, 16)
 
     require(flags() & 1, 'uplink_not_initially_up')
+    if interface == 'eth0':
+        lifecycle = evidence['ethernet_lifecycle'] = {'acknowledged': False, 'before': {}}
+        before = lifecycle['before']
+        before['owner'] = ethernet_owner(control.command(ETHERNET, timeout=3))
+        before['networks'] = parse_netd_networks(control.command(NETD, timeout=3, limit=NETD_LIMIT))
+        require(before['owner'] == {'enabled': True, 'interface': 'eth0', 'link_up': True,
+                                   'network_agent_present': True, 'ip_client_present': True}
+                and single_ethernet({'networks': before['networks']}), 'ethernet_baseline_not_ready')
+        network = ethernet_network({'networks': before['networks']})
+        stopped_networks = [item for item in before['networks'] if item['net_id'] != network['net_id']]
     up = shlex.join([IP, 'link', 'set', 'dev', interface, 'up'])
     restore = up
     evidence['restore_method'] = 'link_up'
@@ -759,24 +819,52 @@ def uplink_reconnect(control, sentinel, uid, evidence, *, required_interface=Non
                     ' && /system/bin/cmd wifi set-wifi-enabled enabled')
         evidence['restore_method'] = 'android_wifi_toggle'
     # Independent, short-lived restore guard also survives a host interruption.
-    guard = shlex.join([BB, 'sh', '-c', BB + ' sleep 10; ' + restore])
+    guard_delay, guard_wait = (30, 35) if interface == 'eth0' else (10, 15)
+    guard = shlex.join([BB, 'sh', '-c', BB + f' sleep {guard_delay}; ' + restore])
     guard_pid, guard_start, _ = guard_identity(control.command(
         f'{BB} nohup {BB} true </dev/null >/dev/null 2>&1 || exit 1; '
         f'{BB} nohup {guard} </dev/null >/dev/null 2>&1 & p=$!; cat /proc/$p/stat'))
     evidence.update(restore_guard_pid=guard_pid, restore_guard_start_ticks=guard_start)
     try:
         evidence['stage'] = 'uplink_down'
-        control.command(shlex.join([IP, 'link', 'set', 'dev', interface, 'down']))
-        evidence['down_flags'] = flags()  # A separate live ADB request while down.
-        evidence['down_observed'] = evidence['down_flags'] & 1 == 0
-        require(evidence['down_observed'], 'uplink_down_not_observed')
-        evidence['control_channel_survived'] = True
+        deadline = time.monotonic() + 15
+        def remaining_timeout():
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, 'ethernet_shutdown_deadline')
+            return min(3, remaining)
+        control.command(shlex.join([IP, 'link', 'set', 'dev', interface, 'down']),
+                        timeout=remaining_timeout() if interface == 'eth0' else 10)
+        while True:
+            timeout = remaining_timeout() if interface == 'eth0' else 10
+            down = {'owner': None, 'networks': None, 'flags': None}
+            if interface == 'eth0':
+                lifecycle['down'] = down
+            down['flags'] = evidence['down_flags'] = flags(timeout)
+            evidence['down_observed'] = down['flags'] & 1 == 0
+            require(evidence['down_observed'], 'uplink_down_not_observed')
+            evidence['control_channel_survived'] = True
+            if interface != 'eth0':
+                break
+            down['owner'] = ethernet_owner(control.command(ETHERNET, timeout=remaining_timeout()))
+            down['networks'] = parse_netd_networks(control.command(
+                NETD, timeout=remaining_timeout(), limit=NETD_LIMIT))
+            require(down['owner']['enabled'], 'ethernet_disabled_during_fault')
+            require([item for item in down['networks'] if item['net_id'] != network['net_id']]
+                    == stopped_networks, 'ethernet_foreign_network_changed')
+            if (down['owner'] == {'enabled': True, 'interface': 'eth0', 'link_up': False,
+                                 'network_agent_present': False, 'ip_client_present': False}
+                    and down['networks'] == stopped_networks and time.monotonic() < deadline):
+                # Factory.stop() warns that old destroyNativeNetwork can delete
+                # a new IpClient's routes. Observe both owners before link up.
+                lifecycle['acknowledged'] = True
+                break
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
     finally:
         try:
             control.command(restore)
         finally:
             # Do not carry the guard's delayed `up` into the next lifecycle phase.
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + guard_wait
             while time.monotonic() < deadline:
                 text = control.command(f'if [ -r /proc/{guard_pid}/stat ]; then '
                                        f'cat /proc/{guard_pid}/stat; else echo gone; fi')
