@@ -78,6 +78,13 @@ MAGICNET_SUB_RESOLVE_TIMEOUT=10
 # Used once, only for a 403 under the default curl User-Agent (issue #434).
 MAGICNET_SUB_FALLBACK_USER_AGENT=clash.meta
 
+magicnet_singbox_subscription_trust_configured() {
+    [ -n "${MODDIR:-}" ] && {
+        [ -e "${MODDIR}/.config/sing-box/subscription-trust.list" ] ||
+            [ -L "${MODDIR}/.config/sing-box/subscription-trust.list" ]
+    }
+}
+
 magicnet_singbox_subscription_hostname_valid() (
     _subscription_hostname="$1"
     case "$_subscription_hostname" in
@@ -99,15 +106,17 @@ magicnet_singbox_subscription_parse_authority() {
     _subscription_url="$1"
     _subscription_scheme=${_subscription_url%%://*}
     case "$_subscription_scheme" in
-        [hH][tT][tT][pP][sS]) _subscription_rest=${_subscription_url#*://} ;;
+        [hH][tT][tT][pP][sS]) _subscription_scheme=https; _subscription_default_port=443 ;;
+        [hH][tT][tT][pP]) _subscription_scheme=http; _subscription_default_port=80 ;;
         *) return 1 ;;
     esac
-    case "$_subscription_url" in *[[:space:]]*) return 1 ;; esac
+    _subscription_rest=${_subscription_url#*://}
+    case "$_subscription_url" in *[[:space:][:cntrl:]]* | *\\*) return 1 ;; esac
     _subscription_authority=${_subscription_rest%%/*}
     _subscription_authority=${_subscription_authority%%\?*}
     _subscription_authority=${_subscription_authority%%\#*}
     [ -n "$_subscription_authority" ] || return 1
-    case "$_subscription_authority" in *@*) return 1 ;; esac
+    case "$_subscription_authority" in *@* | *:) return 1 ;; esac
 
     case "$_subscription_authority" in
         \[* )
@@ -139,7 +148,7 @@ magicnet_singbox_subscription_parse_authority() {
         [ "$_subscription_port" -ge 1 ] 2>/dev/null &&
             [ "$_subscription_port" -le 65535 ] 2>/dev/null || return 1
     else
-        _subscription_port=443
+        _subscription_port=$_subscription_default_port
     fi
 }
 
@@ -161,6 +170,11 @@ magicnet_singbox_normalize_subscription_url() (
     _normalize_url=$(printf '%s' "$_normalize_raw" | sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//')
     [ -n "$_normalize_url" ] || return 1
     magicnet_singbox_subscription_parse_authority "$_normalize_url" || return 1
+    if [ "$_subscription_scheme" = http ] || magicnet_singbox_subscription_trust_configured; then
+        [ -n "${MODDIR:-}" ] || return 1
+        timeout "$MAGICNET_SUB_RESOLVE_TIMEOUT" "${MODDIR}/cli" sub check-source \
+            "$_subscription_scheme" "$_subscription_host" "$_subscription_port" >/dev/null 2>&1 || return 1
+    fi
 
     _normalize_host=$(printf '%s' "$_subscription_host" | LC_ALL=C tr '[:upper:]' '[:lower:]')
     case "$_normalize_host" in *:*) _normalize_host="[$_normalize_host]" ;; esac
@@ -180,13 +194,13 @@ magicnet_singbox_normalize_subscription_url() (
     esac
     _normalize_suffix=$(magicnet_singbox_percent_encode_url_suffix "$_normalize_suffix") || return 1
 
-    if [ "$_subscription_port" -eq 443 ] 2>/dev/null; then
+    if [ "$_subscription_port" -eq "$_subscription_default_port" ] 2>/dev/null; then
         _normalize_port=
     else
         _normalize_port=$(awk -v port="$_subscription_port" 'BEGIN { printf "%d", port + 0 }')
         _normalize_port=":$_normalize_port"
     fi
-    printf 'https://%s%s%s\n' "$_normalize_host" "$_normalize_port" "$_normalize_suffix"
+    printf '%s://%s%s%s\n' "$_subscription_scheme" "$_normalize_host" "$_normalize_port" "$_normalize_suffix"
 )
 
 magicnet_singbox_public_ipv4() {
@@ -415,14 +429,45 @@ magicnet_singbox_public_address() (
 magicnet_singbox_subscription_resolve_public() {
     _subscription_url="$1"
     magicnet_singbox_subscription_parse_authority "$_subscription_url" || return 1
+    [ "$_subscription_scheme" = https ] || return 1
     [ -x "${MODDIR}/cli" ] || return 1
-    timeout "$MAGICNET_SUB_RESOLVE_TIMEOUT" \
-        "${MODDIR}/cli" sub resolve-host "$_subscription_host" "$_subscription_port" 2>/dev/null |
-        while IFS= read -r _subscription_address; do
-            magicnet_singbox_public_address "$_subscription_address" || exit 1
-            _subscription_resolve_address=$(magicnet_singbox_subscription_pin_address "$_subscription_address")
-            printf '%s|%s|%s\n' "$_subscription_host" "$_subscription_port" "$_subscription_resolve_address"
-        done
+    _subscription_addresses=$(timeout "$MAGICNET_SUB_RESOLVE_TIMEOUT" \
+        "${MODDIR}/cli" sub resolve-host "$_subscription_host" "$_subscription_port" 2>/dev/null) || return 1
+    [ -n "$_subscription_addresses" ] || return 1
+    while IFS= read -r _subscription_address; do
+        magicnet_singbox_public_address "$_subscription_address" || return 1
+        _subscription_resolve_address=$(magicnet_singbox_subscription_pin_address "$_subscription_address")
+        printf '%s|%s|%s\n' "$_subscription_host" "$_subscription_port" "$_subscription_resolve_address"
+    done <<EOF
+$_subscription_addresses
+EOF
+}
+
+# Trust is selected by the initial origin, never by a redirect target. The Rust
+# helper validates the complete DNS set and optional loopback SOCKS5 route before
+# emitting any addresses. A failed helper cannot leave usable partial output.
+magicnet_singbox_subscription_resolve_source() {
+    magicnet_singbox_subscription_parse_authority "$1" || return 1
+    _resolve_origin_scheme=${_fetch_origin_scheme:-$_subscription_scheme}
+    _resolve_origin_host=${_fetch_origin_host:-$_subscription_host}
+    _resolve_origin_port=${_fetch_origin_port:-$_subscription_port}
+    if [ "$_subscription_scheme" = https ] && [ "$_resolve_origin_scheme" = https ] &&
+        ! magicnet_singbox_subscription_trust_configured; then
+        magicnet_singbox_subscription_resolve_public "$1"
+        return
+    fi
+    [ -n "${MODDIR:-}" ] && [ -x "${MODDIR}/cli" ] || return 1
+    _subscription_addresses=$(timeout "$MAGICNET_SUB_RESOLVE_TIMEOUT" "${MODDIR}/cli" sub resolve-source \
+        "$_subscription_scheme" "$_subscription_host" "$_subscription_port" \
+        "$_resolve_origin_scheme" "$_resolve_origin_host" "$_resolve_origin_port" 2>/dev/null) || return 1
+    [ -n "$_subscription_addresses" ] || return 1
+    while IFS='|' read -r _subscription_address _subscription_route; do
+        [ -n "$_subscription_address" ] && [ -n "$_subscription_route" ] || return 1
+        _subscription_resolve_address=$(magicnet_singbox_subscription_pin_address "$_subscription_address")
+        printf '%s|%s|%s|%s\n' "$_subscription_host" "$_subscription_port" "$_subscription_resolve_address" "$_subscription_route"
+    done <<EOF
+$_subscription_addresses
+EOF
 }
 
 # Linux/Android monotonic seconds: changing the wall clock cannot extend a fetch.
@@ -467,7 +512,7 @@ magicnet_singbox_fetch_curl_env() {
         "$@"
 }
 
-# One pinned HTTPS hop. The caller owns the small, private .response sidecar;
+# One authorized, pinned hop. The caller owns the small, private .response sidecar;
 # raw headers are streamed only into the numeric usage parser, never persisted.
 magicnet_singbox_fetch_response() (
     umask 077
@@ -492,7 +537,7 @@ magicnet_singbox_fetch_response() (
     rm -f "$_download_file" "${_download_file}.usage.json" "${_download_file}.response" "$_resolve_file" "$_stream_fifo" "$_headers_fifo"
     magicnet_singbox_subscription_parse_authority "$_url" || return 3
     [ "$_max_time" -ge "$MAGICNET_SUB_RESOLVE_TIMEOUT" ] || MAGICNET_SUB_RESOLVE_TIMEOUT=$_max_time
-    magicnet_singbox_subscription_resolve_public "$_url" >"$_resolve_file" || return 6
+    magicnet_singbox_subscription_resolve_source "$_url" >"$_resolve_file" || return 6
     [ -s "$_resolve_file" ] || return 6
     _max_time=$((_max_time - $(magicnet_singbox_fetch_clock) + _response_start))
     [ "$_max_time" -gt 0 ] || return 28
@@ -502,22 +547,31 @@ magicnet_singbox_fetch_response() (
     (exec 9>&-; head -c 65537 <"$_headers_fifo" | magicnet_singbox_parse_subscription_usage) >"${_download_file}.usage.json" &
     _headers_pid=$!
     # -q must be first: neither .curlrc nor environment proxies may change the
-    # direct-fetch policy. Never use -L: every redirect must be resolved/checked.
-    set -- -q -fs --globoff --path-as-is --noproxy '*' --max-redirs 0 --proto '=https' --proto-redir '=https' \
+    # source policy. Never use -L: every redirect must be resolved/checked.
+    set -- -q -fs --globoff --path-as-is --max-redirs 0 --proto "=$_subscription_scheme" --proto-redir "=$_subscription_scheme" \
         --compressed --max-filesize "$MAGICNET_SUB_MAX_RESPONSE_BYTES" --dump-header "$_headers_fifo"
     [ -z "${MAGICNET_SUB_USER_AGENT:-}" ] || set -- "$@" --user-agent "$MAGICNET_SUB_USER_AGENT"
     # Repeating --resolve for the same authority replaces, rather than extends,
     # its address set. Keep all validated A/AAAA records in a single entry.
     _resolve_authority=
     _resolve_addresses=
-    while IFS='|' read -r _resolved_host _resolved_port _resolved_address; do
+    _resolve_route=
+    while IFS='|' read -r _resolved_host _resolved_port _resolved_address _resolved_route; do
         [ -n "$_resolved_address" ] || return 6
+        _resolved_route=${_resolved_route:-direct}
         if [ -z "$_resolve_authority" ]; then
             _resolve_authority="${_resolved_host}:${_resolved_port}"
+            _resolve_route=$_resolved_route
         fi
         [ "$_resolve_authority" = "${_resolved_host}:${_resolved_port}" ] || return 6
+        [ "$_resolve_route" = "$_resolved_route" ] || return 6
         _resolve_addresses="${_resolve_addresses:+${_resolve_addresses},}${_resolved_address}"
     done <"$_resolve_file"
+    case "$_resolve_route" in
+        direct) set -- "$@" --noproxy '*' ;;
+        socks5://*) set -- "$@" --noproxy '' --proxy "$_resolve_route" ;;
+        *) return 6 ;;
+    esac
     # Literal IPv6 URLs need no DNS override (old Android curl versions do not
     # accept an IPv6 host in --resolve). The resolver validated the literal above.
     case "$_subscription_host" in
@@ -555,6 +609,10 @@ magicnet_singbox_try_fetch_subscription() (
     _fetch_target="$2"
     _fetch_connect="$3"
     _fetch_budget="$4"
+    magicnet_singbox_subscription_parse_authority "$_fetch_url" || return 1
+    _fetch_origin_scheme=$_subscription_scheme
+    _fetch_origin_host=$_subscription_host
+    _fetch_origin_port=$_subscription_port
     case "$_fetch_connect:$_fetch_budget" in *[!0-9:]*) return 1 ;; esac
     [ "${#_fetch_connect}" -le 3 ] && [ "${#_fetch_budget}" -le 3 ] || return 1
     [ "$_fetch_connect" -gt 0 ] && [ "$_fetch_budget" -gt 0 ] || return 1
@@ -588,9 +646,9 @@ magicnet_singbox_try_fetch_subscription() (
                 [ "$_fetch_hops" -lt 5 ] || { warn "Subscription redirect limit exceeded"; return 1; }
                 _fetch_url=$(sed -n '2p' "${_fetch_target}.response")
                 # libcurl resolves relative Location values but does not fetch
-                # them. The next hop repeats HTTPS/public-address validation.
+                # them. The next hop rechecks the original source's policy.
                 magicnet_singbox_subscription_parse_authority "$_fetch_url" || {
-                    warn "Subscription redirect is not a permitted HTTPS URL"
+                    warn "Subscription redirect has an invalid URL"
                     return 1
                 }
                 _fetch_hops=$((_fetch_hops + 1))
@@ -626,7 +684,7 @@ magicnet_singbox_try_fetch_subscription() (
         _fetch_retries=$((_fetch_retries + 1))
         _fetch_left=$((_fetch_deadline - $(magicnet_singbox_fetch_clock)))
         [ "$_fetch_left" -gt "$_fetch_retries" ] || return 1
-        warn "Retrying direct subscription fetch ($_fetch_retries/2)"
+        warn "Retrying subscription fetch ($_fetch_retries/2)"
         sleep "$_fetch_retries"
     done
 )

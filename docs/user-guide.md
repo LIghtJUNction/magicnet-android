@@ -52,6 +52,8 @@ su -c /data/adb/modules/MagicNet/cli sub status
 
 保存过程会下载到候选区，解析节点，生成候选 sing-box 配置，执行校验并原子替换运行配置。任一步失败都会保留上一次有效来源和配置。
 
+公网来源默认要求 HTTPS。自己的 NAS、局域网、Tailnet 或 loopback 来源须先通过设备 CLI 配置准确的 scheme、主机、端口与 CIDR；WebUI 的 HTTP 输入不会自动取得授权。设置和撤销步骤见 [受信任的 NAS 与本地订阅源](trusted-subscriptions.md)。
+
 ### 本地文件来源
 
 WebUI 的“导入本地文件”支持完整 sing-box JSON、Clash YAML、base64 订阅、常见分享链接和转换器可识别的文本。文件内容在设备本地进入同一套候选校验流程，不需要先上传到公共 URL。

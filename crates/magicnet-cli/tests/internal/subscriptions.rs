@@ -402,7 +402,11 @@ fn https_download_private_ip_literals_are_rejected_before_skipping_pinning() {
         ("fc00::1", "https://[fc00::1]/list"),
     ] {
         assert!(validate_subscription_url(url).is_err());
-        let authority = SubscriptionAuthority { host, port: 443 };
+        let authority = SubscriptionAuthority {
+            scheme: "https",
+            host,
+            port: 443,
+        };
         let resolved = HashSet::from([IpAddr::from_str(host).unwrap()]);
         let mut command = Command::new("curl");
         assert!(pin_https_download_addresses(&mut command, &authority, resolved).is_err());
@@ -490,20 +494,21 @@ fn set_file_dedupes_and_trims_singbox_subscription_lines() {
     let payload = crate::encode_base64(
         b"\nhttps://example.com/a\nhttps://example.com/a\n  https://example.com/b  \n",
     );
-    let text = normalized_subscription_payload(&payload).unwrap();
+    let text = normalized_subscription_payload(&temp_app(), &payload).unwrap();
     assert_eq!(text, "https://example.com/a\nhttps://example.com/b\n");
 }
 
 #[test]
 fn webui_raw_subscription_text_uses_the_same_normalization_rules() {
     let text = normalized_subscription_text(
+        &temp_app(),
         "\nhttps://example.com/a\nhttps://example.com/a\n  https://example.com/b  \n",
     )
     .expect("normalize WebUI payload text");
 
     assert_eq!(text, "https://example.com/a\nhttps://example.com/b\n");
-    assert!(normalized_subscription_text("vmess://not-a-subscription\n").is_err());
-    assert!(normalized_subscription_text("\n  \n").is_err());
+    assert!(normalized_subscription_text(&temp_app(), "vmess://not-a-subscription\n").is_err());
+    assert!(normalized_subscription_text(&temp_app(), "\n  \n").is_err());
 }
 
 #[test]
@@ -522,7 +527,7 @@ fn set_file_rejects_non_http_subscription_lines() {
     )
     .unwrap_err();
 
-    assert!(err.contains("must use HTTPS"), "{err}");
+    assert!(err.contains("must use HTTP or HTTPS"), "{err}");
 }
 
 #[test]

@@ -141,6 +141,7 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
             "customize.sh": (module / "customize.sh").read_bytes(),
             ".config/kamfw/.envrc": (module / ".config/kamfw/.envrc").read_bytes(),
             ".config/sing-box/config.json": cls.template,
+            ".config/sing-box/subscription-trust.list": b"http://build-host.invalid:25500 10.1.2.3/32\n",
             ".config/magicnet/website-targets.tsv": cls.website_targets,
             ".config/sing-box/rules/fixture.json": b'{"version":3,"rules":[{"domain_suffix":["example.invalid"]}]}',
             "bin/jq": Path(shutil.which("jq")).read_bytes(),
@@ -209,11 +210,26 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
                 self.assertIsNone(archive.testzip())
                 names = set(archive.namelist())
                 self.assertFalse(any(PACKAGE.DEVELOPMENT_DIRECTORY.search(name) for name in names))
+                self.assertNotIn(".config/sing-box/subscription-trust.list", names)
                 for name in names & self.framework_runtime.keys():
                     self.assertEqual(archive.read(name), self.framework_runtime[name])
         with zipfile.ZipFile(self.sanitized_source) as archive:
             self.assertTrue({"lib/kamfw/.kamfwrc", "lib/kamfw/watchdog.sh", "lib/kamfw/fswatch.sh"}
                             <= set(archive.namelist()))
+
+    def test_packaging_rejects_unsanitized_subscription_trust(self):
+        with zipfile.ZipFile(self.sanitized_source) as source:
+            entries = {info.filename: (info, source.read(info)) for info in source.infolist()}
+        path = ".config/sing-box/subscription-trust.list"
+        entries[path] = PACKAGE.zip_entry(path, b"http://build-host.invalid:25500 10.1.2.3/32\n", 0o600)
+        archive = self.root / "unsanitized-trust.zip"
+        PACKAGE.write_zip(archive, entries)
+        with self.assertRaisesRegex(ValueError, "device subscription trust policy"):
+            PACKAGE.split(archive, self.helper, self.root / "rejected-dist", "LIghtJUNction/MagicNet", "amd64")
+        smoke = subprocess.run(["bash", str(ROOT / "scripts/package-smoke.sh"), str(archive)],
+                               capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(smoke.returncode, 0)
+        self.assertIn("zip contains device subscription trust policy", smoke.stderr)
 
     def install(self, root, name, shell, *, upgrade=False, rejected=False, expected_error=None,
                 customize=None, before="", after=""):
@@ -230,7 +246,7 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
                 (module / "bin" / utility).symlink_to(executable)
         previous = b'{"outbounds":[{"type":"trojan","tag":"US saved","server":"node.invalid","server_port":443,"password":"fixture-secret"}]}'
         if upgrade:
-            (active / ".config/sing-box").mkdir(parents=True)
+            (active / ".config/sing-box").mkdir(parents=True, exist_ok=True)
             (active / ".config/sing-box/config.json").write_bytes(previous)
             (active / ".config/sing-box/subscription.url").write_bytes(b"https://subscription.invalid/example\n")
         script = root / "customize.sh"
@@ -442,6 +458,10 @@ cp() {
                     history = previous / "subscription-status"
                     history.write_bytes(b"phase=complete\nresult=success\nattempt_epoch=123\nsuccess_epoch=123\nsource_mode=local\n")
                     history.chmod(0o600)
+                    trust = root / "modules/MagicNet/.config/sing-box/subscription-trust.list"
+                    trust.parent.mkdir(parents=True)
+                    trust.write_bytes(b"http://nas.example.invalid:25500 100.100.1.2/32\n")
+                    trust.chmod(0o600)
                     (previous / "subscription-update.lock").mkdir()
                     (previous / "subscription-update.lock/owner").write_text("999999:1:old\n")
                     self.install(root, name, shell, upgrade=True)
@@ -449,6 +469,9 @@ cp() {
                     self.assertEqual((restored / history.name).read_bytes(), history.read_bytes())
                     self.assertEqual((restored / history.name).stat().st_mode & 0o777, 0o600)
                     self.assertFalse((restored / "subscription-update.lock").exists())
+                    restored_trust = root / "modules_update/MagicNet/.config/sing-box" / trust.name
+                    self.assertEqual(restored_trust.read_bytes(), trust.read_bytes())
+                    self.assertEqual(restored_trust.stat().st_mode & 0o777, 0o600)
 
     def test_upgrade_refuses_linked_catalog_without_touching_target(self):
         for shell in SHELLS:

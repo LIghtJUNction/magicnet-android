@@ -79,10 +79,14 @@ count=0
 while IFS= read -r value || [ -n "$value" ]; do
     count=$((count + 1))
     [ "$count" -le 5 ] || reply '400 Bad Request' invalid
-    # Match the runtime's HTTPS-only policy; never eval/source the received value.
-    case "$value" in https://?*) ;; *) reply '400 Bad Request' invalid ;; esac
+    # HTTP is accepted only through the device's explicit source authorization.
+    case "$value" in
+        [hH][tT][tT][pP][sS]://?*) scheme=https; default_port=443 ;;
+        [hH][tT][tT][pP]://?*) scheme=http; default_port=80 ;;
+        *) reply '400 Bad Request' invalid ;;
+    esac
     case "$value" in *'@'* | *'#'* | *\\*) reply '400 Bad Request' invalid ;; esac
-    authority=${value#https://}
+    authority=${value#*://}
     authority=${authority%%[/?]*}
     printf '%s\n' "$authority" | "$bb" grep -Eq '^([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$' || reply '400 Bad Request' invalid
     case "$authority" in
@@ -94,6 +98,17 @@ while IFS= read -r value || [ -n "$value" ]; do
             [ -n "$port" ] && [ "$port" -le 65535 ] || reply '400 Bad Request' invalid
             ;;
     esac
+    if [ "$scheme" = http ] || [ -e "$root/.config/sing-box/subscription-trust.list" ] ||
+        [ -L "$root/.config/sing-box/subscription-trust.list" ]; then
+        case "$authority" in
+            \[*) host=${authority#\[}; host=${host%%\]*}; port=${authority#*\]}; port=${port#:} ;;
+            *:*) host=${authority%:*}; port=${authority##*:} ;;
+            *) host=$authority; port= ;;
+        esac
+        [ -x "$root/cli" ] || reply '400 Bad Request' invalid
+        MODDIR="$root" "$bb" timeout 10 "$root/cli" sub check-source \
+            "$scheme" "$host" "${port:-$default_port}" >/dev/null 2>&1 || reply '400 Bad Request' invalid
+    fi
 done <"$body"
 [ "$count" -gt 0 ] || reply '400 Bad Request' invalid
 for path in "$root" "$root/.config" "$root/.config/sing-box"; do

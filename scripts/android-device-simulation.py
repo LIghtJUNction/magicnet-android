@@ -1085,9 +1085,24 @@ class Device:
         kinds = sorted({kind for prefix, kind in error_kinds.items()
                         if any(line.startswith('[error] ' + prefix)
                                for line in result.stderr.splitlines())})
-        self.stop_checks.append({'operation': 'service_stop',
-                                 'exit_code': bounded_exit_code(result.returncode),
-                                 'error_kinds': kinds})
+        evidence = {'operation': 'service_stop',
+                    'exit_code': bounded_exit_code(result.returncode),
+                    'error_kinds': kinds}
+        # Accept only complete CLI-owned messages with fixed enums. Never copy
+        # stderr, path names, PIDs, or text appended by a child/helper.
+        marker_errors = {
+            'supervisor PID file changed during read': 'read_race',
+            'supervisor PID file changed during stop: missing': 'missing',
+            'supervisor PID file changed during stop: replaced': 'replaced',
+            'supervisor PID file changed during cleanup': 'cleanup_race',
+        }
+        details = [{'target': target, 'kind': kind}
+                   for message, kind in marker_errors.items()
+                   for target in ('watchdog', 'fswatch', 'hotspot', 'unknown')
+                   if result.stderr.strip() == f'[error] {message} [supervisor={target}]']
+        if details:
+            evidence['marker_errors'] = details
+        self.stop_checks.append(evidence)
         require(result.returncode == 0,
                 f'service stop command failed (exit {result.returncode}; kinds {kinds})')
 
