@@ -694,6 +694,20 @@ fn restore_network_after_failed_stop_command() -> &'static str {
 }
 
 fn stop_supervisor_pidfile(app: &App, path: PathBuf) -> Result<(), String> {
+    // Export only a fixed target label, never a caller-controlled path or PID.
+    // This lets device acceptance distinguish launcher/marker races without
+    // collecting private command output or weakening ownership checks.
+    let target = match path.file_name().and_then(|name| name.to_str()) {
+        Some("magicnet-kernel.pid") => "watchdog",
+        Some("magicnet-config.pid") => "fswatch",
+        Some("magicnet-hotspot-route.pid") => "hotspot",
+        _ => "unknown",
+    };
+    stop_supervisor_pidfile_inner(app, path)
+        .map_err(|error| format!("{error} [supervisor={target}]"))
+}
+
+fn stop_supervisor_pidfile_inner(app: &App, path: PathBuf) -> Result<(), String> {
     let Some(marker) = crate::process::read_pidfile_identity(&path)? else {
         return Ok(());
     };
@@ -749,7 +763,7 @@ fn remove_supervisor_pidfile_if_unchanged(
         Some(current) if current == marker => fs::remove_file(path)
             .map_err(|_| "unable to remove stopped supervisor PID file".to_string()),
         None => Ok(()),
-        Some(_) => Err("supervisor PID file changed during stop".to_string()),
+        Some(_) => Err("supervisor PID file changed during cleanup".to_string()),
     }
 }
 
@@ -763,7 +777,8 @@ fn supervisor_generation_is_live(
     match crate::process::read_pidfile_identity(path)? {
         Some(observed) if observed == marker => {}
         None if current.is_none() => return Ok(false),
-        _ => return Err("supervisor PID file changed during stop".to_string()),
+        None => return Err("supervisor PID file changed during stop: missing".to_string()),
+        Some(_) => return Err("supervisor PID file changed during stop: replaced".to_string()),
     }
     let Some(current) = current else {
         return Ok(false);
