@@ -13,9 +13,9 @@ use crate::service::{
     transparent_cmd,
 };
 use crate::subscriptions::{
-    setup_subscription, sub_apply_file, sub_clear, sub_filter, sub_get, sub_list, sub_resolve_host,
-    sub_schedule, sub_set, sub_set_file, sub_status, sub_target_file, sub_update, sub_update_all,
-    sub_user_agent,
+    setup_subscription, sub_apply_file, sub_check_source, sub_clear, sub_filter, sub_get, sub_list,
+    sub_resolve_host, sub_resolve_source, sub_schedule, sub_set, sub_set_file, sub_status,
+    sub_target_file, sub_trust, sub_update, sub_update_all, sub_user_agent,
 };
 use crate::warp::warp_cmd;
 use crate::webui_api::{api_cmd, hotspot_cmd, webui_cmd};
@@ -76,7 +76,7 @@ const COMMANDS: &[CommandSpec] = commands! {
     "route" => route_cmd, "{list|add-domain <proxy|direct|block|warp> <domain-suffix>|remove-domain <proxy|direct|block|warp> <domain-suffix>|apply}";
     "dns" => dns_cmd, "{status|set <default|cloudflare-doh|cloudflare-dot|cloudflare-udp>|test [domain]|apply}";
     "warp" => warp_cmd, "{status|import-file <wireguard-conf-path>|enable|disable|global|rule|apply|test}";
-    "sub" => subscription_command, "{update <sing-box|all>|update-all|clear|status|schedule {status|set <off|12|24|48|72>}|user-agent {get|set <base64-value>|clear}|filter {list|set <base64-lines>|clear}|list|get sing-box|set sing-box <url>|set-file sing-box <base64-lines>|apply-file sing-box <base64-lines>|file [sing-box]}";
+    "sub" => subscription_command, "{update <sing-box|all>|update-all|clear|status|schedule {status|set <off|12|24|48|72>}|user-agent {get|set <base64-value>|clear}|filter {list|set <base64-lines>|clear}|trust {set <base64-lines>|clear}|list|get sing-box|set sing-box <url>|set-file sing-box <base64-lines>|apply-file sing-box <base64-lines>|file [sing-box]}";
     "block" => block_cmd, "{list|enable|disable|community <on|off>|url <http-url>|update|add-domain <suffix>|remove-domain <suffix>|allow-rule <rule>|unallow-rule <rule>|diff|apply}";
     "mcp" => mcp, "{status|enable [bind] [port]|disable|set [bind] [port]|secret|rotate-secret|start|stop|restart|logs [lines]}";
     "webui" => webui_cmd, "{status|verify|install-local <https-download-url> <sha256> [name]|payload {create <tmp|subscription> <safe-basename>|append <tmp|subscription> <safe-basename> <base64-chunk>|remove <tmp|subscription> <safe-basename>|apply-subscription <safe-basename>|apply-subscription-source <safe-basename>}}";
@@ -153,7 +153,11 @@ pub(crate) fn needs_state_reconcile(args: &[String]) -> bool {
         ("sysroute", "list" | "snapshot") => false,
         ("config-editor", "get" | "path") => false,
         ("config-editor", "repo") => !matches!(action, "get" | "get-json"),
-        ("sub", "list" | "get" | "status" | "file" | "copy-path" | "resolve-host") => false,
+        (
+            "sub",
+            "list" | "get" | "status" | "file" | "copy-path" | "resolve-host" | "resolve-source"
+            | "check-source",
+        ) => false,
         ("sub", "schedule") => !matches!(action, "" | "status"),
         ("sub", "user-agent") => !matches!(action, "" | "get"),
         ("sub", "filter") => !matches!(action, "" | "list"),
@@ -246,6 +250,9 @@ fn subscription_command(app: &App, args: &[String]) -> Result<(), String> {
         Some("user-agent") => sub_user_agent(app, &full_args),
         Some("filter") => sub_filter(app, &full_args),
         Some("resolve-host") => sub_resolve_host(&full_args),
+        Some("resolve-source") => sub_resolve_source(app, &full_args),
+        Some("check-source") => sub_check_source(app, &full_args),
+        Some("trust") => sub_trust(app, &full_args),
         Some("file" | "copy-path") => {
             println!(
                 "{}",
@@ -254,7 +261,7 @@ fn subscription_command(app: &App, args: &[String]) -> Result<(), String> {
             Ok(())
         }
         _ => Err(
-            "usage: cli sub {list|get|set|set-file|apply-file|update|update-all|status|schedule|user-agent|filter|resolve-host|file}"
+            "usage: cli sub {list|get|set|set-file|apply-file|update|update-all|status|schedule|user-agent|filter|trust|resolve-host|resolve-source|check-source|file}"
                 .to_string(),
         ),
     }
@@ -351,6 +358,8 @@ mod tests {
             "sub schedule status",
             "sub user-agent get",
             "sub filter list",
+            "sub check-source http nas.example 25500",
+            "sub resolve-source http nas.example 25500 http nas.example 25500",
             "config-editor repo get-json",
             "state",
             "state reconcile",
@@ -372,6 +381,8 @@ mod tests {
     #[test]
     fn mutations_keep_post_command_reconciliation() {
         for text in [
+            "sub trust set encoded-policy",
+            "sub trust clear",
             "service start",
             "tailscale disable revision",
             "tailscale enable revision",

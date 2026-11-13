@@ -230,7 +230,7 @@ class PackagedConfigLifecycleTest(unittest.TestCase):
                 (module / "bin" / utility).symlink_to(executable)
         previous = b'{"outbounds":[{"type":"trojan","tag":"US saved","server":"node.invalid","server_port":443,"password":"fixture-secret"}]}'
         if upgrade:
-            (active / ".config/sing-box").mkdir(parents=True)
+            (active / ".config/sing-box").mkdir(parents=True, exist_ok=True)
             (active / ".config/sing-box/config.json").write_bytes(previous)
             (active / ".config/sing-box/subscription.url").write_bytes(b"https://subscription.invalid/example\n")
         script = root / "customize.sh"
@@ -442,6 +442,10 @@ cp() {
                     history = previous / "subscription-status"
                     history.write_bytes(b"phase=complete\nresult=success\nattempt_epoch=123\nsuccess_epoch=123\nsource_mode=local\n")
                     history.chmod(0o600)
+                    trust = root / "modules/MagicNet/.config/sing-box/subscription-trust.list"
+                    trust.parent.mkdir(parents=True)
+                    trust.write_bytes(b"http://nas.example.invalid:25500 100.100.1.2/32\n")
+                    trust.chmod(0o600)
                     (previous / "subscription-update.lock").mkdir()
                     (previous / "subscription-update.lock/owner").write_text("999999:1:old\n")
                     self.install(root, name, shell, upgrade=True)
@@ -449,6 +453,9 @@ cp() {
                     self.assertEqual((restored / history.name).read_bytes(), history.read_bytes())
                     self.assertEqual((restored / history.name).stat().st_mode & 0o777, 0o600)
                     self.assertFalse((restored / "subscription-update.lock").exists())
+                    restored_trust = root / "modules_update/MagicNet/.config/sing-box" / trust.name
+                    self.assertEqual(restored_trust.read_bytes(), trust.read_bytes())
+                    self.assertEqual(restored_trust.stat().st_mode & 0o777, 0o600)
 
     def test_upgrade_refuses_linked_catalog_without_touching_target(self):
         for shell in SHELLS:

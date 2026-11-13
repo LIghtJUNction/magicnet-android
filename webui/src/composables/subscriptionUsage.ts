@@ -152,7 +152,7 @@ export function buildSubscriptionUsageOverview(
     let hostname = "";
     try {
       const url = new URL(value);
-      if (url.protocol === "https:" && !url.username && !url.password) hostname = safeHostname(url.hostname);
+      if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) hostname = safeHostname(url.hostname);
     } catch { /* The editor reports malformed URLs; overview keeps a private fallback. */ }
     return {
       id: `unknown-${index}`, index, hostname, state: "unknown" as const,

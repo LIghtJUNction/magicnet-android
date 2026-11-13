@@ -17,7 +17,7 @@ Switching uses a transaction with rollback and attempts to restore the previous 
 
 ## What you get
 
-- **Bring the subscription you already have.** Paste public HTTPS subscription URLs (up to five sources), or import local Clash/Mihomo YAML, base64, sharing links, sing-box JSON or plain text. You don't need a "sing-box-only" subscription.
+- **Bring the subscription you already have.** Paste public HTTPS subscription URLs (up to five sources), or explicitly authorize a [trusted NAS or local HTTP/HTTPS source](docs/trusted-subscriptions.md). You can also import local Clash/Mihomo YAML, base64, sharing links, sing-box JSON or plain text. You don't need a "sing-box-only" subscription.
 - **Per-app, Wi-Fi and hotspot policies.** Set each app to Proxy, Direct or Bypass. Switch policy automatically by Wi-Fi network, and choose Direct or Proxy for hotspot clients.
 - **A WebUI that shows what's going on.** Check subscriptions, proxy groups, node latency, traffic and diagnostics in one place. The overview draws a live traffic constellation (device → dataplane → sing-box → exit) from verified status only. Press `Ctrl/⌘ + K` or `/` to jump to any page.
 - **Honest status reporting.** TUN is judged by `magicnet0`. eBPF is judged by capability, cgroup and TC attachment state. If MagicNet can't confirm something, it says so instead of pretending all is well.

@@ -36,7 +36,7 @@
 
 ## 为什么你可能会喜欢它
 
-**订阅随便丢进来就行。** 不用再到处找“sing-box 专用订阅”了。一行一个 HTTPS 链接，最多五个来源；Clash/Mihomo YAML、base64、一堆分享链接、sing-box JSON、纯文本，它都认得。手上那个 Clash 订阅直接贴进来，MagicNet 会自己解析节点，生成一份受控的 sing-box 配置。
+**订阅随便丢进来就行。** 不用再到处找“sing-box 专用订阅”了。一行一个公网 HTTPS 链接，最多五个来源；自己的 NAS 或本地 HTTP/HTTPS 来源可先通过 [CLI 精确授权](docs/trusted-subscriptions.md)。Clash/Mihomo YAML、base64、一堆分享链接、sing-box JSON、纯文本，它都认得。手上那个 Clash 订阅直接贴进来，MagicNet 会自己解析节点，生成一份受控的 sing-box 配置。
 
 **常见协议基本都覆盖了。** VLESS、VMess、Trojan、Shadowsocks、SOCKS、Hysteria2、AnyTLS、TUIC 都能原生导入；更冷门的格式可以交给可选的转换器处理。
 

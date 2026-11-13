@@ -21,6 +21,10 @@ use crate::{
     write_text_file, App, MAX_PROC_STAT_BYTES,
 };
 
+#[path = "subscription_trust.rs"]
+mod trust;
+pub use trust::{sub_check_source, sub_resolve_source, sub_trust};
+
 pub(crate) const MAX_SINGBOX_SUBSCRIPTION_URLS: usize = 5;
 const MAX_SUBSCRIPTION_USER_AGENT_BYTES: usize = 256;
 const MAX_SUBSCRIPTION_FILTERS: usize = 32;
@@ -112,7 +116,7 @@ pub fn setup_subscription(app: &App, url: &str) -> Result<(), String> {
     if url.is_empty() {
         return Err("Usage: cli setup <subscription-url>".to_string());
     }
-    validate_subscription_url(url)?;
+    validate_subscription_source_url(app, url)?;
     apply_subscription_text(app, &format!("{url}\n"))
 }
 
@@ -125,7 +129,7 @@ pub fn sub_set(app: &App, args: &[String]) -> Result<(), String> {
     if url.is_empty() {
         return Err("Usage: cli sub set sing-box <url>".to_string());
     }
-    validate_subscription_url(url)?;
+    validate_subscription_source_url(app, url)?;
     apply_subscription_text(app, &format!("{url}\n"))
 }
 
@@ -139,7 +143,7 @@ pub fn sub_set_file(app: &App, args: &[String]) -> Result<(), String> {
         "sing-box" | "singbox" => {}
         _ => return Err("set-file supports sing-box only".to_string()),
     }
-    let text = normalized_subscription_payload(payload)?;
+    let text = normalized_subscription_payload(app, payload)?;
     apply_subscription_text(app, &text)
 }
 
@@ -390,7 +394,7 @@ pub fn sub_apply_file(app: &App, args: &[String]) -> Result<(), String> {
     if !matches!(target, "sing-box" | "singbox") {
         return Err("apply-file supports sing-box only".to_string());
     }
-    let text = normalized_subscription_payload(payload)?;
+    let text = normalized_subscription_payload(app, payload)?;
     apply_subscription_text(app, &text)
 }
 
@@ -401,7 +405,7 @@ pub fn sub_apply_file(app: &App, args: &[String]) -> Result<(), String> {
 pub(crate) fn apply_webui_subscription_payload(app: &App, bytes: &[u8]) -> Result<(), String> {
     let payload = std::str::from_utf8(bytes)
         .map_err(|_| "WebUI subscription payload is not valid UTF-8".to_string())?;
-    let text = normalized_subscription_text(payload)?;
+    let text = normalized_subscription_text(app, payload)?;
     apply_subscription_text(app, &text)
 }
 
@@ -659,14 +663,14 @@ fn is_regular_file(metadata: &libc::stat) -> bool {
     (metadata.st_mode & libc::S_IFMT) == libc::S_IFREG
 }
 
-fn normalized_subscription_payload(payload: &str) -> Result<String, String> {
+fn normalized_subscription_payload(app: &App, payload: &str) -> Result<String, String> {
     let bytes = decode_base64(payload)?;
     let text =
         String::from_utf8(bytes).map_err(|err| format!("subscription text is not UTF-8: {err}"))?;
-    normalized_subscription_text(&text)
+    normalized_subscription_text(app, &text)
 }
 
-fn normalized_subscription_text(text: &str) -> Result<String, String> {
+fn normalized_subscription_text(app: &App, text: &str) -> Result<String, String> {
     let mut seen = HashSet::new();
     let mut lines = Vec::new();
     for line in text
@@ -674,7 +678,7 @@ fn normalized_subscription_text(text: &str) -> Result<String, String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
-        let canonical = canonical_subscription_url(line)?;
+        let canonical = canonical_subscription_source_url(app, line)?;
         if seen.insert(canonical.clone()) {
             lines.push(canonical);
             if lines.len() > MAX_SINGBOX_SUBSCRIPTION_URLS {
@@ -961,13 +965,36 @@ pub(crate) fn canonical_subscription_url(url: &str) -> Result<String, String> {
     let request_url = url.split_once('#').map_or(url, |(prefix, _)| prefix);
     validate_subscription_url(request_url)?;
     let authority = parse_subscription_authority(request_url)?;
+    canonical_subscription_url_parts(request_url, &authority)
+}
+
+fn validate_subscription_source_url(app: &App, url: &str) -> Result<(), String> {
+    let authority = parse_subscription_source_authority(url)?;
+    trust::SubscriptionTrust::load(app)?.check_source(&authority)
+}
+
+pub(crate) fn canonical_subscription_source_url(app: &App, url: &str) -> Result<String, String> {
+    let request_url = url.split_once('#').map_or(url, |(prefix, _)| prefix);
+    let authority = parse_subscription_source_authority(request_url)?;
+    let policy = trust::SubscriptionTrust::load(app)?;
+    policy.check_source(&authority)?;
+    if !policy.has_origin(&authority) {
+        return canonical_subscription_url(request_url);
+    }
+    canonical_subscription_url_parts(request_url, &authority)
+}
+
+fn canonical_subscription_url_parts(
+    request_url: &str,
+    authority: &SubscriptionAuthority<'_>,
+) -> Result<String, String> {
     let host = authority.host.to_ascii_lowercase();
     let host = if host.contains(':') {
         format!("[{host}]")
     } else {
         host
     };
-    let port = if authority.port == 443 {
+    let port = if authority.port == default_subscription_port(authority.scheme) {
         String::new()
     } else {
         format!(":{}", authority.port)
@@ -992,10 +1019,11 @@ pub(crate) fn canonical_subscription_url(url: &str) -> Result<String, String> {
         }
         encoded
     });
-    Ok(format!("https://{host}{port}{path_query}"))
+    Ok(format!("{}://{host}{port}{path_query}", authority.scheme))
 }
 
 struct SubscriptionAuthority<'a> {
+    scheme: &'static str,
     host: &'a str,
     port: u16,
 }
@@ -1003,12 +1031,35 @@ struct SubscriptionAuthority<'a> {
 /// Parse only the authority needed for URL policy. DNS resolution and pinning
 /// happen immediately before the privileged device-side curl invocation.
 fn parse_subscription_authority(url: &str) -> Result<SubscriptionAuthority<'_>, String> {
+    let authority = parse_subscription_source_authority(url)?;
+    if authority.scheme != "https" {
+        return Err("Subscription URL must use HTTPS".to_string());
+    }
+    validate_subscription_host(authority.host)?;
+    Ok(authority)
+}
+
+fn default_subscription_port(scheme: &str) -> u16 {
+    if scheme == "http" {
+        80
+    } else {
+        443
+    }
+}
+
+/// Syntax parsing is independent of authorization; only subscription-specific
+/// callers may consult the local trust policy. Other downloads stay public HTTPS.
+fn parse_subscription_source_authority(url: &str) -> Result<SubscriptionAuthority<'_>, String> {
     let (scheme, remainder) = url
         .split_once("://")
         .ok_or_else(|| "Subscription URL must use HTTPS".to_string())?;
-    if !scheme.eq_ignore_ascii_case("https") {
-        return Err("Subscription URL must use HTTPS".to_string());
-    }
+    let scheme = if scheme.eq_ignore_ascii_case("https") {
+        "https"
+    } else if scheme.eq_ignore_ascii_case("http") {
+        "http"
+    } else {
+        return Err("Subscription URL must use HTTP or HTTPS".to_string());
+    };
     if url.chars().any(char::is_whitespace) || url.chars().any(char::is_control) {
         return Err(
             "Subscription URL must not contain whitespace or control characters".to_string(),
@@ -1031,7 +1082,11 @@ fn parse_subscription_authority(url: &str) -> Result<SubscriptionAuthority<'_>, 
         if !suffix.is_empty() && !suffix.starts_with(':') {
             return Err("Subscription URL has an invalid IPv6 authority".to_string());
         }
-        let port = parse_subscription_port(suffix)?;
+        let port = if suffix.is_empty() {
+            default_subscription_port(scheme)
+        } else {
+            parse_subscription_port(suffix)?
+        };
         if !matches!(IpAddr::from_str(host), Ok(IpAddr::V6(_))) {
             return Err("Subscription URL has an invalid IPv6 address".to_string());
         }
@@ -1043,17 +1098,25 @@ fn parse_subscription_authority(url: &str) -> Result<SubscriptionAuthority<'_>, 
         if host.contains(':') {
             return Err("Subscription URL has an invalid authority".to_string());
         }
-        validate_subscription_host(host)?;
-        (host, parse_subscription_port(port_suffix)?)
+        validate_subscription_host_syntax(host)?;
+        let port = if port_suffix.is_empty() && !authority.contains(':') {
+            default_subscription_port(scheme)
+        } else {
+            if port_suffix.is_empty() {
+                return Err("Subscription URL has an invalid port".to_string());
+            }
+            parse_subscription_port(port_suffix)?
+        };
+        (host, port)
     };
 
-    Ok(SubscriptionAuthority { host, port })
+    Ok(SubscriptionAuthority { scheme, host, port })
 }
 
 /// Only the authority needed by the explicit private subscription inspector.
 /// Generic status responses must not call this or reveal provider identities.
 pub(crate) fn subscription_display_hostname(url: &str) -> Option<String> {
-    let authority = parse_subscription_authority(url).ok()?;
+    let authority = parse_subscription_source_authority(url).ok()?;
     Some(if authority.host.contains(':') {
         format!("[{}]", authority.host.to_ascii_lowercase())
     } else {
@@ -1190,6 +1253,13 @@ fn validate_subscription_host(host: &str) -> Result<(), String> {
         } else {
             Err("Subscription URL must not target a private or special-use address".to_string())
         };
+    }
+    validate_subscription_host_syntax(host)
+}
+
+fn validate_subscription_host_syntax(host: &str) -> Result<(), String> {
+    if IpAddr::from_str(host).is_ok() {
+        return Ok(());
     }
     if host.is_empty()
         || host.len() > 253
