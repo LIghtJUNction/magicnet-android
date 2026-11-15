@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { t } from "@/i18n";
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import { Bug, Route, ShieldCheck, Sparkles, X } from "lucide-vue-next";
+import { Bug, Route, ShieldCheck, X } from "lucide-vue-next";
 import Button from "@/components/ui/Button.vue";
 import Field from "@/components/ui/Field.vue";
 import Textarea from "@/components/ui/Textarea.vue";
@@ -120,7 +120,7 @@ onUnmounted(() => {
                   v-if="option.value === 'route-feedback'"
                   class="inline-flex items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--mn-cactus)_28%,transparent)] bg-[color-mix(in_srgb,var(--mn-cactus)_10%,transparent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--mn-cactus-deep)]"
                 >
-                  <Sparkles :size="12" aria-hidden="true" />{{ t("推荐") }}
+                  {{ t("推荐") }}
                 </span>
               </span>
               <span class="mt-0.5 block text-xs leading-5 text-[var(--mn-ink-muted)]">{{ t(option.description) }}</span>

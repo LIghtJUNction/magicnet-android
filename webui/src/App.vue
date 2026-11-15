@@ -207,48 +207,6 @@ watch(() => state.issueReporter.open, (open) => {
   }
 }, { flush: "sync" });
 
-const easterEggVisitors = [
-  {
-    name: "GPT-6",
-    title: "GPT-6 到此一游",
-    body: "少画几个框，多留一点位置给内容。",
-  },
-  {
-    name: "SOL",
-    title: "准备好你的太阳镜 😎",
-    body: "SOL 到此一游 · 光太亮，别直视内核。",
-  },
-  {
-    name: "Grok 4.5",
-    title: "Grok 4.5 到此一游 ✨",
-    body: "xAI 路过 MagicNet · 路由已嗅探，彩蛋已落盘。",
-  },
-  {
-    name: "Kimi K3",
-    title: "Kimi K3 到此一游 🌙",
-    body: "月之暗面打卡成功 · 上下文很长，短签也行。",
-  },
-  {
-    name: "Fable 5",
-    title: "Fable 5 到此一游 📖",
-    body: "Claude Fable 5 翻过这页 · 故事继续，彩蛋已签收。",
-  },
-  {
-    name: "Opus 5.5",
-    title: "Opus 5.5 到此一游 ✦",
-    body: "Claude Opus 5.5 连起了这片星座 · 虚线是路，星星是你的数据包。",
-  },
-] as const;
-
-const easterEggVisible = ref(false);
-const easterEggShownIndex = ref(0);
-let easterEggNextIndex = 0;
-const easterEggPayload = computed(
-  () => easterEggVisitors[easterEggShownIndex.value] ?? easterEggVisitors[0],
-);
-let brandClickCount = 0;
-let brandClickWindowStartedAt = 0;
-let easterEggTimer: number | undefined;
 let bodyOverflowBeforeDialog = "";
 let idleWarmup: number | undefined;
 let delayedWarmup: number | undefined;
@@ -487,27 +445,6 @@ function handlePaletteShortcut(event: KeyboardEvent): void {
   openPalette();
 }
 
-function closeEasterEgg(): void {
-  easterEggVisible.value = false;
-  if (easterEggTimer !== undefined) window.clearTimeout(easterEggTimer);
-  easterEggTimer = undefined;
-}
-
-function handleBrandMarkClick(): void {
-  const now = Date.now();
-  if (now - brandClickWindowStartedAt > 2400) brandClickCount = 0;
-  if (brandClickCount === 0) brandClickWindowStartedAt = now;
-  brandClickCount += 1;
-  if (brandClickCount < 5) return;
-
-  brandClickCount = 0;
-  easterEggShownIndex.value = easterEggNextIndex % easterEggVisitors.length;
-  easterEggNextIndex = (easterEggShownIndex.value + 1) % easterEggVisitors.length;
-  easterEggVisible.value = true;
-  if (easterEggTimer !== undefined) window.clearTimeout(easterEggTimer);
-  easterEggTimer = window.setTimeout(closeEasterEgg, 5200);
-}
-
 function dismissActionMenus(event: PointerEvent): void {
   if (!(event.target instanceof Node)) return;
   for (const menu of document.querySelectorAll<HTMLDetailsElement>(".config-action-menu[open]")) {
@@ -533,7 +470,6 @@ function handleEscape(event: KeyboardEvent): void {
     menu.querySelector("summary")?.focus();
     return;
   }
-  closeEasterEgg();
 }
 
 function prefetchTab(tab: TabKey): void {
@@ -619,7 +555,6 @@ onUnmounted(() => {
   window.removeEventListener("popstate", syncTabFromLocation);
   window.removeEventListener("hashchange", syncTabFromLocation);
   window.removeEventListener("beforeunload", warnBeforeDiscardingConfig);
-  if (easterEggTimer !== undefined) window.clearTimeout(easterEggTimer);
   if (showUtilityMenu.value) document.body.style.overflow = bodyOverflowBeforeDialog;
 });
 </script>
@@ -632,9 +567,9 @@ onUnmounted(() => {
         <button
           class="mn-brand-mark brand-mark"
           type="button"
-          :aria-label="t('MagicNet 品牌标记')"
+          :aria-label="`MagicNet · ${t('返回运行总览')}`"
           title="MagicNet"
-          @click="handleBrandMarkClick"
+          @click="setTab('control')"
         >
           <img
             :src="MAGICNET_LOGO_URL"
@@ -646,7 +581,6 @@ onUnmounted(() => {
         </button>
         <div class="mn-brand-copy">
           <h1>MagicNet</h1>
-          <p>{{ t("透明网络工作台") }}</p>
         </div>
       </div>
 
@@ -685,34 +619,6 @@ onUnmounted(() => {
           @click="refreshAll"
         >
           <RefreshCw :size="17" aria-hidden="true" />
-        </Button>
-        <Button
-          class="mn-desktop-action"
-          variant="outline"
-          size="sm"
-          :aria-label="t('打开新手引导')"
-          @click="requestOnboarding"
-        >
-          <ScrollText :size="16" aria-hidden="true" />{{ t('引导') }}
-        </Button>
-        <Button
-          class="mn-desktop-action"
-          variant="outline"
-          size="sm"
-          :loading="state.task === '创建 GitHub issue'"
-          :aria-label="t('创建 GitHub Issue')"
-          @click="createIssue"
-        >
-          <Bug :size="16" aria-hidden="true" />{{ t('反馈') }}
-        </Button>
-        <Button
-          class="mn-desktop-action"
-          variant="outline"
-          size="sm"
-          :aria-label="t('打开 GitHub')"
-          @click="openExternal(REPO, 'GitHub')"
-        >
-          <Github :size="16" aria-hidden="true" />GitHub
         </Button>
         <Button
           class="mn-more-action"
@@ -931,27 +837,6 @@ onUnmounted(() => {
       @confirm="submitIssue"
     />
 
-    <Transition name="toast">
-      <aside v-if="easterEggVisible" class="mn-easter-egg" role="status" aria-live="polite">
-        <div class="mn-easter-mark">
-          <img :src="MAGICNET_LOGO_URL" alt="" width="38" height="38" decoding="async" />
-        </div>
-        <div class="mn-easter-copy">
-          <strong>{{ t(easterEggPayload.title) }}</strong>
-          <p>{{ t(easterEggPayload.body) }}</p>
-          <p class="mn-visitor-line">
-            <span>{{ t('来访') }}</span>
-            <template v-for="(visitor, index) in easterEggVisitors" :key="visitor.name">
-              <span aria-hidden="true">/</span>
-              <span :class="index === easterEggShownIndex ? 'is-current' : undefined">{{ visitor.name }}</span>
-            </template>
-          </p>
-        </div>
-        <button type="button" :aria-label="t('关闭彩蛋')" @click="closeEasterEgg">
-          <X :size="16" aria-hidden="true" />
-        </button>
-      </aside>
-    </Transition>
   </div>
 </template>
 
@@ -988,9 +873,6 @@ onUnmounted(() => {
 }
 
 .mn-rail-status__meta > span {
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--mn-surface-raised);
   color: var(--mn-ink-muted);
   font-family: var(--font-mono);
   font-size: 12px;

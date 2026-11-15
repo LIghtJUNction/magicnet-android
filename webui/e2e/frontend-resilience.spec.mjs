@@ -202,12 +202,9 @@ test("skip navigation preserves the route and titles follow the active language"
 test("closing feedback restores the visible invoking control", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".mn-control")).toBeVisible();
-  const desktop = page.getByRole("button", { name: "创建 GitHub Issue", exact: true });
-  const trigger = await desktop.isVisible() ? desktop : page.locator(".mn-more-action");
+  const trigger = page.getByRole("button", { name: "打开系统工具", exact: true });
   await trigger.click();
-  if (!(await desktop.isVisible())) {
-    await page.locator(".mn-utility-sheet").getByRole("button", { name: "反馈问题" }).click();
-  }
+  await page.locator(".mn-utility-sheet").getByRole("button", { name: "反馈问题" }).click();
   await expect(page.getByRole("dialog").getByRole("button", { name: "取消创建 Issue" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
