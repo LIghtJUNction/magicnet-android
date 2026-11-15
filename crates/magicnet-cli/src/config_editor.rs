@@ -22,7 +22,7 @@ struct SingboxRepository {
 
 use crate::service::apply_config;
 use crate::webui_payload::MAX_WEBUI_PAYLOAD_BYTES;
-use crate::{cstring_from_os_str, decode_base64, write_secret_file, write_text_file, App};
+use crate::{cstring_from_os_str, decode_base64, write_secret_file, App};
 
 const VALIDATOR_TIMEOUT: Duration = Duration::from_secs(20);
 const TEMPLATE_FETCH_TIMEOUT: Duration = Duration::from_secs(45);
@@ -137,15 +137,18 @@ fn commit_standalone_config(
     let _lifecycle = crate::service::config_apply_lock(app)?;
     let _subscription = acquire_editor_subscription_guard(app)?;
     let protected = protect_tailscale_auth_keys(app, text)?;
+    let mut metadata = vec![(Path::new(STANDALONE_CONFIG_MARKER), "validated\n")];
+    if let Some(keys) = protected.keys.as_deref() {
+        metadata.push((Path::new(TAILSCALE_AUTH_PATH), keys));
+    }
     commit_config_text(
         app,
         target,
         path,
         protected.text.as_bytes(),
         "input",
-        protected.keys.as_deref(),
-    )?;
-    mark_standalone_config(app)
+        &metadata,
+    )
 }
 
 fn acquire_editor_subscription_guard(
@@ -223,10 +226,6 @@ fn protect_tailscale_auth_keys(app: &App, text: &str) -> Result<ProtectedConfig,
         text,
         keys: Some(protected_keys),
     })
-}
-
-fn mark_standalone_config(app: &App) -> Result<(), String> {
-    write_text_file(app, Path::new(STANDALONE_CONFIG_MARKER), "validated\n")
 }
 
 /// Open an externally supplied config source only from the WebUI-owned
@@ -433,7 +432,7 @@ fn validate_and_commit_open_config_file(
     path: &Path,
     source: &File,
 ) -> Result<(), String> {
-    validate_and_commit_open_config_file_with(app, target, path, source, || Ok(()))
+    validate_and_commit_open_config_file_with(app, target, path, source, &[])
 }
 
 fn validate_and_commit_open_config_file_with(
@@ -441,7 +440,7 @@ fn validate_and_commit_open_config_file_with(
     target: &str,
     path: &Path,
     source: &File,
-    before_commit: impl FnOnce() -> Result<(), String>,
+    metadata: &[(&Path, &str)],
 ) -> Result<(), String> {
     let name = OsStr::new(config_target_filename(target)?);
     let directory = open_config_destination_directory(app, target)?;
@@ -457,16 +456,55 @@ fn validate_and_commit_open_config_file_with(
         // under .config/sing-box. Validate against that final directory so
         // the check sees the same resources as the runtime.
         validate_config_from_open_file(app, target, &snapshot, &directory)?;
-        before_commit()?;
+        if !metadata.is_empty() {
+            // Config, its backup, private keys and the standalone marker are
+            // one logical edit. Preflight every target and roll back a later
+            // rename failure through the existing module transaction.
+            return commit_config_with_metadata(app, &directory, name, &snapshot, metadata);
+        }
         backup_config_at(&directory, name)?;
         commit_staged_config_file(&staging, &directory, &staged_name, name, path)
     })();
-    let cleanup = if result.is_err() {
+    let cleanup = if result.is_err() || !metadata.is_empty() {
         remove_staged_config_file(&staging, &staged_name)
     } else {
         Ok(())
     };
     finish_with_cleanup(result, cleanup, "config snapshot")
+}
+
+fn commit_config_with_metadata(
+    app: &App,
+    directory: &File,
+    name: &OsStr,
+    snapshot: &File,
+    metadata: &[(&Path, &str)],
+) -> Result<(), String> {
+    let relative = Path::new(".config/sing-box").join(name);
+    let backup = relative.with_file_name(backup_name(name));
+    let read_bytes = |mut file: &File| -> Result<Vec<u8>, String> {
+        file.seek(SeekFrom::Start(0))
+            .map_err(|err| format!("seek config snapshot: {err}"))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|err| format!("read config snapshot: {err}"))?;
+        Ok(bytes)
+    };
+    let contents = read_bytes(snapshot)?;
+    let previous = match open_no_follow_file_at_raw(directory, name) {
+        Ok(file) => {
+            require_regular_file(&file, "refusing to back up a non-regular config file")?;
+            Some(read_bytes(&file)?)
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => return Err(format!("open existing config for backup: {err}")),
+    };
+    let mut replacements = vec![(relative.as_path(), contents.as_slice())];
+    if let Some(bytes) = previous.as_deref() {
+        replacements.push((backup.as_path(), bytes));
+    }
+    replacements.extend(metadata.iter().map(|(path, text)| (*path, text.as_bytes())));
+    crate::utils::replace_module_files_transactionally(app, &replacements, directory)
 }
 
 fn commit_staged_config_file(
@@ -594,15 +632,10 @@ fn commit_config_text(
     path: &Path,
     bytes: &[u8],
     role: &str,
-    protected_keys: Option<&str>,
+    metadata: &[(&Path, &str)],
 ) -> Result<(), String> {
     with_generated_config_input(app, role, bytes, |source, _directory| {
-        validate_and_commit_open_config_file_with(app, target, path, source, || {
-            if let Some(keys) = protected_keys {
-                write_secret_file(app, Path::new(TAILSCALE_AUTH_PATH), keys)?;
-            }
-            Ok(())
-        })
+        validate_and_commit_open_config_file_with(app, target, path, source, metadata)
     })?;
     println!(
         "[info] Saved and validated {target} config: {}\n[info] Runtime policy changes can be applied from the control/app pages.",
@@ -1073,7 +1106,7 @@ fn sync_template_one(app: &App, target: &str) -> Result<(), String> {
         let _subscription = acquire_editor_subscription_guard(app)?;
         let current = read_current_config(app, target)?.unwrap_or_default();
         let merged = prepare_template(target, &template, &current)?;
-        commit_config_text(app, target, &path, merged.as_bytes(), "template", None)?;
+        commit_config_text(app, target, &path, merged.as_bytes(), "template", &[])?;
     }
     apply_config(app)?;
     println!(
@@ -1487,6 +1520,118 @@ mod tests {
         fs::write(directory.join("config.json"), "{\"outbounds\":[]}\n").unwrap();
         fs::write(directory.join("config.json.bak"), "previous backup").unwrap();
         app
+    }
+
+    #[test]
+    fn standalone_save_failure_preserves_config_keys_and_backup() {
+        for failed_path in [STANDALONE_CONFIG_MARKER, ".config/sing-box/config.json.bak"] {
+            let app = subscription_editor_fixture();
+            let path = config_path(&app, "sing-box").unwrap();
+            let original = fs::read(&path).unwrap();
+            let keys = app.moddir.join(TAILSCALE_AUTH_PATH);
+            let original_keys = br#"{"tailscale":"tskey-original"}"#;
+            fs::write(&keys, original_keys).unwrap();
+            let failed_path = app.moddir.join(failed_path);
+            if failed_path.exists() {
+                fs::remove_file(&failed_path).unwrap();
+            }
+            fs::create_dir(&failed_path).unwrap();
+            let result = commit_standalone_config(
+                &app,
+                "sing-box",
+                &path,
+                r#"{"outbounds":[],"endpoints":[{"type":"tailscale","tag":"tailscale","auth_key":"tskey-replacement"}]}"#,
+            );
+            assert!(result.is_err(), "unwritable metadata must fail");
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                original,
+                "config changed after failure"
+            );
+            assert_eq!(
+                fs::read(&keys).unwrap(),
+                original_keys,
+                "keys changed after failure"
+            );
+            assert!(failed_path.is_dir());
+            if failed_path.ends_with("standalone-config") {
+                assert_eq!(
+                    fs::read(path.with_file_name("config.json.bak")).unwrap(),
+                    b"previous backup"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn standalone_save_commits_private_metadata_and_preserves_backup_bytes() {
+        let app = subscription_editor_fixture();
+        let path = config_path(&app, "sing-box").unwrap();
+        let previous = b"legacy non-UTF8 config\xff";
+        fs::write(&path, previous).unwrap();
+        commit_standalone_config(
+            &app,
+            "sing-box",
+            &path,
+            r#"{"outbounds":[],"endpoints":[{"type":"tailscale","tag":"tailscale","auth_key":"tskey-replacement"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(path.with_file_name("config.json.bak")).unwrap(),
+            previous
+        );
+        assert!(!fs::read_to_string(&path)
+            .unwrap()
+            .contains("tskey-replacement"));
+        assert_eq!(
+            fs::read_to_string(app.moddir.join(STANDALONE_CONFIG_MARKER)).unwrap(),
+            "validated\n"
+        );
+        let keys: JsonValue =
+            serde_json::from_slice(&fs::read(app.moddir.join(TAILSCALE_AUTH_PATH)).unwrap())
+                .unwrap();
+        assert_eq!(keys["tailscale"], "tskey-replacement");
+        for relative in [
+            ".config/sing-box/config.json",
+            ".config/sing-box/config.json.bak",
+            STANDALONE_CONFIG_MARKER,
+            TAILSCALE_AUTH_PATH,
+        ] {
+            assert_eq!(
+                fs::metadata(app.moddir.join(relative))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn standalone_save_rejects_replaced_validation_directory() {
+        let app = subscription_editor_fixture();
+        let path = config_path(&app, "sing-box").unwrap();
+        fs::write(
+            app.moddir.join("bin/sing-box"),
+            "#!/bin/sh\nset -eu\nconfig=${0%/*}/../.config/sing-box\nmv \"$config\" \"${config}.previous\"\nmkdir \"$config\"\nprintf '%s' replacement-config >\"$config/config.json\"\nprintf '%s' replacement-backup >\"$config/config.json.bak\"\n",
+        )
+        .unwrap();
+        let result = commit_standalone_config(&app, "sing-box", &path, "{\"outbounds\":[{}]}");
+        assert!(
+            result.is_err(),
+            "the destination must remain bound to the validated directory"
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"replacement-config");
+        assert_eq!(
+            fs::read(path.with_file_name("config.json.bak")).unwrap(),
+            b"replacement-backup"
+        );
+        assert!(!app.moddir.join(STANDALONE_CONFIG_MARKER).exists());
+        assert_eq!(
+            fs::read(app.moddir.join(".config/sing-box.previous/config.json")).unwrap(),
+            b"{\"outbounds\":[]}\n"
+        );
     }
 
     #[test]
@@ -1921,7 +2066,7 @@ test "$#" -eq 1 && test -f "$1"
         fs::set_permissions(&validator, fs::Permissions::from_mode(0o700))
             .expect("make validator executable");
 
-        let error = commit_config_text(&app, "sing-box", &target, b"{", "input", None)
+        let error = commit_config_text(&app, "sing-box", &target, b"{", "input", &[])
             .expect_err("invalid config must not commit");
         assert!(error.starts_with("config validation failed"));
         assert_eq!(fs::read_to_string(&target).unwrap(), "old config");
