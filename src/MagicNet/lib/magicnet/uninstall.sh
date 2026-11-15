@@ -19,21 +19,23 @@ magicnet_uninstall_busybox() (
 magicnet_uninstall_run() {
     _mn_timeout=$1
     shift
+    # The caller holds the uninstall guard while waiting. Timeout watchdogs
+    # must not retain that descriptor after the CLI has already returned.
     if [ -n "${MN_UNINSTALL_BB:-}" ]; then
-        "$MN_UNINSTALL_BB" timeout -k 2 "$_mn_timeout" "$@"
+        "$MN_UNINSTALL_BB" timeout -k 2 "$_mn_timeout" "$@" 8>&-
     elif command -v timeout >/dev/null 2>&1; then
-        timeout -k 2 "$_mn_timeout" "$@"
+        timeout -k 2 "$_mn_timeout" "$@" 8>&-
     else
         # Managers normally provide BusyBox. Do not skip network cleanup in
         # damaged installations just because that optional binary is absent.
-        "$@"
+        "$@" 8>&-
     fi
 }
 
 magicnet_uninstall_cleanup() (
     _rc=0
     if [ -x "$MODDIR/certificate-policy" ]; then
-        "$MODDIR/certificate-policy" restore || _rc=1
+        "$MODDIR/certificate-policy" restore 8>&- || _rc=1
     fi
     # This is a final uninstall hook, not a reversible UI "remove" request.
     # Prevent a supervisor from restarting the core during teardown.
@@ -61,6 +63,14 @@ magicnet_uninstall_cleanup() (
         '[MagicNet] Some cleanup failed. Reboot and verify networking; no global rules were flushed.' >&2
     exit "$_rc"
 )
+
+magicnet_uninstall_guarded_cleanup() {
+    # Old releases used an ownerless directory that survived SIGKILL. The
+    # shared kernel guard now owns exclusion; remove only an empty old marker.
+    rmdir "$MODDIR/.state/uninstall.lock" 2>/dev/null || :
+    # Keep cleanup failure distinct from the guard's contention return code.
+    magicnet_uninstall_cleanup || return 3
+}
 
 magicnet_farewell_parent() {
     # Android mounts /dev in RAM. Normal exits remove the worker; a reboot
@@ -211,14 +221,26 @@ magicnet_uninstall_main() (
     [ -f "$MODDIR/module.prop" ] && grep -qx 'id=MagicNet' "$MODDIR/module.prop" || exit 1
     [ ! -L "$MODDIR/.state" ] || exit 1
     mkdir -p "$MODDIR/.state" || exit 1
-    # At most one concurrent teardown, and at most one browser attempt per
-    # module removal. No permanent markers are written outside MODDIR.
-    mkdir "$MODDIR/.state/uninstall.lock" 2>/dev/null || exit 0
-    trap 'rmdir "$MODDIR/.state/uninstall.lock" 2>/dev/null || :' 0
-    trap 'exit 1' 1 2 3 15
+    . "$MODDIR/lib/magicnet/primitives.sh" || exit 1
     MN_UNINSTALL_BB=$(magicnet_uninstall_busybox) || MN_UNINSTALL_BB=''
     _cleanup_rc=0
-    magicnet_uninstall_cleanup || _cleanup_rc=1
+    # Retain the existing guard inode. Kernel ownership ends with the cleanup
+    # process, so a killed uninstall cannot make later retries skip teardown.
+    if magicnet_metadata_guard "$MODDIR/.state/uninstall.lock.guard" \
+        0 magicnet_uninstall_guarded_cleanup; then
+        :
+    else
+        case "$?" in
+        1) exit 0 ;; # Another cleanup currently owns the guard.
+        3) _cleanup_rc=1 ;;
+        *)
+            printf '%s\n' '[MagicNet] Uninstall lock unavailable; cleanup was not started.' >&2
+            exit 1
+            ;;
+        esac
+    fi
+    # Start the detached farewell only after the guard has closed, and attempt
+    # it at most once per module removal. All markers remain inside MODDIR.
     if magicnet_farewell_allowed &&
         mkdir "$MODDIR/.state/uninstall-farewell.attempted" 2>/dev/null; then
         magicnet_farewell_stage || printf '%s\n' \
