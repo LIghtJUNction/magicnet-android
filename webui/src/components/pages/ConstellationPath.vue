@@ -15,7 +15,7 @@ const summaryText = computed(() => ({
 }[model.value.summary]));
 
 function stateText(state: StarState): string {
-  return state === "ok" ? t("已就绪") : state === "off" ? t("未运行") : t("未确认");
+  return state === "ok" ? t("已就绪") : state === "off" ? t("未就绪") : t("未确认");
 }
 </script>
 

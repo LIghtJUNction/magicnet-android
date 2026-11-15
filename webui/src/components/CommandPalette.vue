@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CornerDownLeft, Search, Sparkles, X } from "lucide-vue-next";
+import { CornerDownLeft, Search, X } from "lucide-vue-next";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from "vue";
 import { t } from "@/i18n";
 import Button from "@/components/ui/Button.vue";
@@ -157,7 +157,7 @@ onUnmounted(() => {
           </div>
         </template>
         <p v-if="!results.length" class="mn-palette__empty" role="status">
-          <Sparkles :size="18" aria-hidden="true" />{{ t("没有匹配的页面或操作") }}
+          <Search :size="18" aria-hidden="true" />{{ t("没有匹配的页面或操作") }}
         </p>
       </div>
 

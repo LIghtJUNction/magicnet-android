@@ -42,6 +42,4 @@ export default {
   "本机已就绪 · 共享待就绪": ["Local ready · sharing pending","Локальный доступ готов · общий доступ ожидает"],
   "按规则分流": ["Routed by rules","Маршрутизация по правилам"],
   "未连接": ["Not connected","Не подключено"],
-  "Opus 5.5 到此一游 ✦": ["Opus 5.5 was here ✦","Здесь был Opus 5.5 ✦"],
-  "Claude Opus 5.5 连起了这片星座 · 虚线是路，星星是你的数据包。": ["Claude Opus 5.5 joined this constellation · dashes are routes, stars are your packets.","Claude Opus 5.5 соединил это созвездие · пунктир — маршруты, звёзды — ваши пакеты."],
 };
