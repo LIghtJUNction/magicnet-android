@@ -17,8 +17,8 @@ const focus = readFileSync(
 
 for (const required of [
   "订阅链接",
-  "HTTPS 订阅链接",
-  `:placeholder="t('每行一个 HTTPS 订阅链接')"`,
+  "订阅链接",
+  `:placeholder="t('每行一个订阅链接')"`,
   'emit("submit", trimmed)',
   '@submit="handleOnboardingSubmit"',
   "setPendingSubscriptionDraft(value)",

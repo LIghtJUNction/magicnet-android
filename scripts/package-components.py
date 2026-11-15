@@ -219,6 +219,9 @@ def split(source: Path, helper: Path, output: Path, repository: str, arch: str) 
             seen.add(name)
             if DEVELOPMENT_DIRECTORY.search(info.filename):
                 raise ValueError(f"Input contains development files; run the archive sanitizer: {name}")
+            if name == ".config/sing-box/subscription-trust.list" or name.startswith(
+                    ".config/sing-box/subscription-trust.list/"):
+                raise ValueError("Input contains device subscription trust policy; run the archive sanitizer")
             if info.is_dir():
                 continue
             if name in (MANIFEST, HELPER) or "# Component bootstrap:" in (

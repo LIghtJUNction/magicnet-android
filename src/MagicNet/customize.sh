@@ -76,6 +76,7 @@ MAGICNET_INSTALL_MIGRATION_ITEMS='.config/sing-box/config.json
 .config/sing-box/subscription.url
 .config/sing-box/subscription.local
 .config/sing-box/subscription.user-agent
+.config/sing-box/subscription-trust.list
 .config/sing-box/standalone-config
 .config/sing-box/subscription-filter.list
 .config/sing-box/subscription-1.yaml

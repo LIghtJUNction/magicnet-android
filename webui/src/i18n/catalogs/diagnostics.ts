@@ -249,7 +249,7 @@ export default {
   "取消": ["Cancel", "Отмена"],
   "收集并创建": ["Collect and create", "Собрать и создать"],
   "订阅链接": ["Subscription URLs", "Ссылки подписок"],
-  "每行一个 HTTPS 订阅链接": ["One HTTPS subscription URL per line", "Одна HTTPS-ссылка подписки на строку"],
+  "每行一个订阅链接": ["One subscription URL per line", "Одна ссылка подписки на строку"],
   "打开订阅": ["Open subscriptions", "Открыть подписки"],
   "MagicNet 开源支持说明": ["Supporting MagicNet open source", "Поддержка открытого проекта MagicNet"],
   "支持项目": ["Support the project", "Поддержать проект"],

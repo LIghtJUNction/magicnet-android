@@ -102,6 +102,9 @@ check python3 scripts/test-clash-subscriptions.py
 check bash scripts/test-service-selectors.sh
 check bash scripts/test-subscription-fetch-policy.sh
 check python3 scripts/test-subscription-network.py
+# Fingerprint both the production Rust policy and shell fetch implementation.
+python3 scripts/ci-test-cache.py rust subscription-trusted-source -- \
+    python3 scripts/test-subscription-trusted-source.py
 check bash scripts/test-subscription-usage.sh
 check bash scripts/test-singbox-pid-discovery.sh
 check bash scripts/test-singbox-ownership.sh
