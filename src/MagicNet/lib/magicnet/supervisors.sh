@@ -609,13 +609,26 @@ magicnet_wifi_policy_pid_file() {
 magicnet_wifi_policy_pid_matches() (
     _wifi_policy_match_pid="$1"
     case "$_wifi_policy_match_pid" in '' | *[!0-9]*) return 1 ;; esac
-    [ -d "/proc/${_wifi_policy_match_pid}" ] || return 1
+    if magicnet_supervisor_pid_live "$_wifi_policy_match_pid"; then
+        _wifi_policy_match_live_rc=0
+    else
+        _wifi_policy_match_live_rc=$?
+    fi
+    [ "$_wifi_policy_match_live_rc" -eq 0 ] || return "$_wifi_policy_match_live_rc"
     if _wifi_policy_match_argv=$(magicnet_proc_cmdline_lines "$_wifi_policy_match_pid" /proc); then
         _wifi_policy_match_read_rc=0
     else
         _wifi_policy_match_read_rc=$?
     fi
-    [ "$_wifi_policy_match_read_rc" -eq 0 ] || return "$_wifi_policy_match_read_rc"
+    if [ "$_wifi_policy_match_read_rc" -ne 0 ]; then
+        # An exited watcher has an empty cmdline until its parent reaps it.
+        # Preserve unknown only while the process could still be alive.
+        if magicnet_supervisor_pid_live "$_wifi_policy_match_pid"; then
+            return 2
+        else
+            return $?
+        fi
+    fi
     awk -v cli="${MODDIR}/cli" -v alt_cli="${MODDIR}/bin/magicnet-cli" '
         { argv[++count] = $0 }
         END {

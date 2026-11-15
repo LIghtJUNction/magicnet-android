@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise stop with a real unreaped child and indeterminate process reads."""
+import itertools
 import os
 from pathlib import Path
 import shutil
@@ -27,10 +28,12 @@ class SupervisorExitTests(unittest.TestCase):
             for shell in ("dash", "bash"):
                 if not shutil.which(shell):
                     continue
-                for mode in ("zombie", "stat-denied", "cmdline-denied", "exit-race"):
-                    with self.subTest(shell=shell, mode=mode), tempfile.TemporaryDirectory() as temp:
+                for target, mode in itertools.product(
+                    ("watchdog", "wifi"), ("zombie", "stat-denied", "cmdline-denied", "exit-race")
+                ):
+                    with self.subTest(shell=shell, target=target, mode=mode), tempfile.TemporaryDirectory() as temp:
                         env = dict(os.environ, ROOT=str(ROOT), SOURCE=SOURCE, MODDIR=temp,
-                                   TEST_PID=str(zombie), TEST_MODE=mode)
+                                   TEST_PID=str(zombie), TEST_TARGET=target, TEST_MODE=mode)
                         result = subprocess.run([shell, "-c", r'''
 set -eu
 set_i18n() { :; }
@@ -40,10 +43,15 @@ magicnet_proc_reader_test_hook() {
     [ "$1" = stat ] || return 2
     python3 -S -c 'import pathlib,sys; fields=pathlib.Path(sys.argv[1]).read_text().rsplit(") ",1)[1].split(); print(fields[0],fields[19])' "$2/$3/stat"
 }
-mkdir -p "$MODDIR/.state/watchdog"
-pidfile="$MODDIR/.state/watchdog/magicnet-hotspot-route.pid"
+case "$TEST_TARGET" in
+  watchdog) pidfile="$MODDIR/.state/watchdog/magicnet-hotspot-route.pid" ;;
+  wifi) pidfile="$(magicnet_wifi_policy_pid_file)" ;;
+esac
+mkdir -p "${pidfile%/*}"
 printf '%s\n' "$TEST_PID" >"$pidfile"
 kill() { printf '%s\n' "$*" >>"$MODDIR/signals"; return 1; }
+# This case isolates the tracked PID; there are no orphan fixture workers.
+magicnet_supervisor_kill_orphans() { return 0; }
 case "$TEST_MODE" in
   zombie)
     magicnet_proc_cmdline_lines() { echo unexpected-cmdline-read >&2; return 2; }
@@ -63,7 +71,10 @@ case "$TEST_MODE" in
     expected=0 ;;
 esac
 rc=0
-magicnet_supervisor_stop_pidfile "$pidfile" || rc=$?
+case "$TEST_TARGET" in
+  watchdog) magicnet_supervisor_stop_pidfile "$pidfile" || rc=$? ;;
+  wifi) magicnet_wifi_policy_stop || rc=$? ;;
+esac
 [ "$rc" -eq "$expected" ] || { echo "expected $expected, got $rc" >&2; exit 1; }
 [ ! -e "$MODDIR/signals" ] || { echo "signalled an unverified/dead PID" >&2; exit 1; }
 if [ "$expected" -eq 2 ]; then
