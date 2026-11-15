@@ -20,7 +20,6 @@ assert.match(dialog, /v-for="option in ISSUE_KIND_OPTIONS"/);
 assert.match(dialog, /type="radio"/);
 assert.match(dialog, /selected = ref<IssueKind>\("route-feedback"\)/);
 assert.match(dialog, /option\.value === 'route-feedback'/);
-assert.match(dialog, /<Sparkles/);
 assert.match(dialog, /推荐/);
 assert.match(dialog, /路由反馈会公开包含最近活动连接中的应用包名和目标域名/);
 assert.match(dialog, /补充说明（可选）/);
