@@ -486,8 +486,16 @@ fn commit_config_with_metadata(
         file.seek(SeekFrom::Start(0))
             .map_err(|err| format!("seek config snapshot: {err}"))?;
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
+        // Existing config files need the same bound as editor payloads: they
+        // may have been replaced or grown outside the editor since validation.
+        file.take(MAX_WEBUI_PAYLOAD_BYTES + 1)
+            .read_to_end(&mut bytes)
             .map_err(|err| format!("read config snapshot: {err}"))?;
+        if bytes.len() as u64 > MAX_WEBUI_PAYLOAD_BYTES {
+            return Err(format!(
+                "config snapshot exceeds the {MAX_WEBUI_PAYLOAD_BYTES} byte limit"
+            ));
+        }
         Ok(bytes)
     };
     let contents = read_bytes(snapshot)?;
@@ -1605,6 +1613,55 @@ mod tests {
                     & 0o777,
                 0o600
             );
+        }
+    }
+
+    #[test]
+    fn standalone_save_bounds_previous_config_before_changing_any_target() {
+        for length in [MAX_WEBUI_PAYLOAD_BYTES, MAX_WEBUI_PAYLOAD_BYTES + 1] {
+            let app = subscription_editor_fixture();
+            let path = config_path(&app, "sing-box").unwrap();
+            let mut previous = File::create(&path).unwrap();
+            previous.write_all(b"legacy config\xff").unwrap();
+            previous.set_len(length).unwrap();
+            drop(previous);
+            let original = fs::read(&path).unwrap();
+            let marker = app.moddir.join(STANDALONE_CONFIG_MARKER);
+            let keys = app.moddir.join(TAILSCALE_AUTH_PATH);
+            fs::write(&marker, "previous marker\n").unwrap();
+            let original_keys = br#"{"tailscale":"tskey-original"}"#;
+            fs::write(&keys, original_keys).unwrap();
+
+            let result = commit_standalone_config(
+                &app,
+                "sing-box",
+                &path,
+                r#"{"outbounds":[],"endpoints":[{"type":"tailscale","tag":"tailscale","auth_key":"tskey-replacement"}]}"#,
+            );
+            if length == MAX_WEBUI_PAYLOAD_BYTES {
+                result.expect("an existing config at the limit must remain recoverable");
+                assert_eq!(
+                    fs::read(path.with_file_name("config.json.bak")).unwrap(),
+                    original
+                );
+            } else {
+                let error = result.expect_err("an oversized backup must fail before commit");
+                assert!(error.contains("exceeds"), "{error}");
+                assert_eq!(fs::read(&path).unwrap(), original);
+                assert_eq!(
+                    fs::read(path.with_file_name("config.json.bak")).unwrap(),
+                    b"previous backup"
+                );
+                assert_eq!(fs::read(&marker).unwrap(), b"previous marker\n");
+                assert_eq!(fs::read(&keys).unwrap(), original_keys);
+                assert_eq!(
+                    fs::read_dir(path.parent().unwrap().join(".magicnet-staging"))
+                        .unwrap()
+                        .count(),
+                    0,
+                    "failed saves must remove their private snapshots"
+                );
+            }
         }
     }
 
