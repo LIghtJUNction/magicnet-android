@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-async function mount(page, conflict = false) {
+async function mount(page, conflict = false, patch = {log:{level:"warn"}}) {
   await page.route("**/e2e/routing-fixture.html", route => route.fulfill({contentType:"text/html",body:'<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><body><main id="fixture" style="padding:16px"></main></body></html>'}));
   await page.goto("/e2e/routing-fixture.html");
-  await page.evaluate(async conflict => {
-    window.__routing={payload:"",patch:{log:{level:"warn"}},revision:0,saves:0,applies:0,removals:0,conflict};
+  await page.evaluate(async ({conflict, patch}) => {
+    window.__routing={payload:"",patch,revision:0,saves:0,applies:0,removals:0,conflict};
     window.ksu={spawn(command,_args,_options,callbackName) {
       setTimeout(()=> {
         const f=window.__routing, cb=window[callbackName];let output="",errno=0;
@@ -28,7 +28,7 @@ async function mount(page, conflict = false) {
     const {setLocale}=await import("/src/i18n/index.ts");setLocale("zh-CN");
     const {state}=(await import("/src/composables/useMagicNet.ts")).useMagicNet();state.hasKsu=true;
     const {default:Component}=await import("/src/components/pages/RoutingEditor.vue");createApp(Component).mount("#fixture");
-  },conflict);
+  },{conflict, patch});
   await expect(page.getByLabel("匹配类型",{exact:true})).toBeEnabled();
 }
 
@@ -99,4 +99,42 @@ test("edits a credential-bearing outbound without exposing it in shared output",
   expect(privateValue.server_port).toBe(8443);expect(privateValue.password).toBe(secret);
   const shared=await page.evaluate(async()=>{const {state}=(await import("/src/composables/useMagicNet.ts")).useMagicNet();return JSON.stringify({output:state.output,lastCommand:state.lastCommand,capture:state.operationCapture});});
   expect(shared).not.toContain(secret);expect(await page.locator("body").innerText()).not.toContain(secret);
+});
+
+test("switching outbound protocol excludes hidden credentials from the submitted draft",async({page})=> {
+  await mount(page);
+  await page.getByText("自定义策略组与出口",{exact:false}).click();
+  await page.getByLabel("出口类型",{exact:true}).selectOption("http");
+  await page.getByLabel("名称",{exact:true}).fill("vless-outbound");
+  await page.getByLabel("服务器",{exact:true}).fill("proxy.example.invalid");
+  await page.getByLabel("端口",{exact:true}).fill("443");
+  await page.getByLabel("用户名",{exact:true}).fill("http-only-user");
+  await page.getByLabel("密码",{exact:true}).fill("http-only-password");
+  await page.getByLabel("出口类型",{exact:true}).selectOption("vless");
+  await page.getByLabel("UUID",{exact:true}).fill("5c8e8752-e1d2-45b6-b028-35b002a8c4ef");
+  await page.getByRole("button",{name:"加入或更新出口",exact:true}).click();
+  await page.getByRole("button",{name:"预览变更",exact:true}).click();
+  await expect(page.getByText("分流预览通过。确认列表后保存并应用。",{exact:true})).toBeVisible();
+  const outbound=await page.evaluate(()=>JSON.parse(window.__routing.payload).patch.$magicnet_routing.outbounds[0]);
+  expect(outbound.type).toBe("vless");
+  expect(outbound.uuid).toBe("5c8e8752-e1d2-45b6-b028-35b002a8c4ef");
+  expect(outbound).not.toHaveProperty("username");
+  expect(outbound).not.toHaveProperty("password");
+});
+
+test("editing URL-test group members preserves the existing probe settings",async({page})=> {
+  await mount(page,false,{$magicnet_routing:{schema:1,rules:[],outbounds:[{
+    tag:"custom-urltest",type:"urltest",outbounds:["proxy"],
+    url:"https://probe.example.invalid/check",interval:"10m",
+  }]}});
+  await page.getByText("自定义策略组与出口",{exact:false}).click();
+  await page.getByRole("button",{name:"修改出口",exact:true}).click();
+  await page.getByLabel("组成员（原始名称，逗号分隔）",{exact:true}).fill("proxy, direct");
+  await page.getByRole("button",{name:"加入或更新出口",exact:true}).click();
+  await page.getByRole("button",{name:"预览变更",exact:true}).click();
+  await expect(page.getByText("分流预览通过。确认列表后保存并应用。",{exact:true})).toBeVisible();
+  const outbound=await page.evaluate(()=>JSON.parse(window.__routing.payload).patch.$magicnet_routing.outbounds[0]);
+  expect(outbound.outbounds).toEqual(["proxy","direct"]);
+  expect(outbound.url).toBe("https://probe.example.invalid/check");
+  expect(outbound.interval).toBe("10m");
 });
