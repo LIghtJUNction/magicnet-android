@@ -109,7 +109,8 @@ magicnet_migrate_install_config_repository() (
         6da399473a1ab3f99661556886e0b6701581af24:6365ee9b4144974ced6012dc99b9712ceef3f721f58ae9eb0943024373b81d81 | \
         b1fa62b6912861292c895db58a88b8c5bdff3451:50585d94942620e569ae0569dd475977a35d45797bfe2bfbd6afc6cb14da2355 | \
         dacc776dad4bd2519d5dd0dfbf3839713f9e438c:08996a10e24adc6ffb6a75f96d436a543264734d95f50f9952a7a265bb58213e | \
-        6b5f68a261818a4ffda6eb9a11b21eef9b755650:cda86a582c15e6976e6b9eb1e3c7a00811b6efea4e604bcf3f44ecae443a3db3) ;;
+        6b5f68a261818a4ffda6eb9a11b21eef9b755650:cda86a582c15e6976e6b9eb1e3c7a00811b6efea4e604bcf3f44ecae443a3db3 | \
+        ba5793b41fd06704102116fe2536eef5988f2905:e269e2303cf1e23d3b4ce69dcb7cca39f0f53dc647c5d03aace4c4bd7f986be0) ;;
     *) return 0 ;;
     esac
 
@@ -123,9 +124,9 @@ magicnet_migrate_install_config_repository() (
     printf '%s\n' \
         '# Managed by MagicNet; edit through the config repository controls.' \
         'MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/LIghtJUNction/MagicSingBox.git' \
-        'MAGICNET_SINGBOX_CONFIG_REPO_REF=ba5793b41fd06704102116fe2536eef5988f2905' \
+        'MAGICNET_SINGBOX_CONFIG_REPO_REF=da3d375d024e0982265bc67c48a87de7bb4f9424' \
         'MAGICNET_SINGBOX_CONFIG_REPO_PATH=config.json' \
-        'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=e269e2303cf1e23d3b4ce69dcb7cca39f0f53dc647c5d03aace4c4bd7f986be0' >"$_tmp" || return 1
+        'MAGICNET_SINGBOX_CONFIG_REPO_SHA256=fe741b83040191dfeca2543c6bd630d92b06a3e6e373506a2ee32cc87fc8c9b8' >"$_tmp" || return 1
     chmod 600 "$_tmp" || return 1
     mv -f "$_tmp" "$_repo" || return 1
 )

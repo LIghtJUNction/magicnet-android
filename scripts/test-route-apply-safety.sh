@@ -54,5 +54,37 @@ if ! magicnet_route_apply_singbox; then
   exit 1
 fi
 grep -q '"__magicnet_route__"' "$MODDIR/.config/sing-box/config.json"
+jq -e '.route.rules[0].action == "sniff"
+  and .route.rules[1].domain_suffix == ["__magicnet_route__", "old.example"]' \
+  "$MODDIR/.config/sing-box/config.json" >/dev/null
+
+# A valid candidate must not replace the live file if publication fails.
+before=$(<"$MODDIR/.config/sing-box/config.json")
+printf '%s\n' replacement.example >"$MODDIR/.config/magicnet/route-proxy-domain-suffix.list"
+mv() { return 1; }
+if magicnet_route_apply_singbox; then
+  printf '%s\n' 'route apply must report a failed atomic publish' >&2
+  exit 1
+fi
+unset -f mv
+[[ $(<"$MODDIR/.config/sing-box/config.json") == "$before" ]]
+
+# Domain rules cannot run before the metadata-producing sniff action. A
+# missing sniff action must leave the old managed rule and live JSON intact.
+jq '.route.rules |= map(select(.action != "sniff"))' \
+  "$MODDIR/.config/sing-box/config.json" >"$tmp/no-sniff.json"
+cp "$tmp/no-sniff.json" "$MODDIR/.config/sing-box/config.json"
+if magicnet_route_apply_singbox; then
+  printf '%s\n' 'nonempty domain policy must reject a config without sniff' >&2
+  exit 1
+fi
+cmp "$tmp/no-sniff.json" "$MODDIR/.config/sing-box/config.json"
+
+# Clearing policy still removes its own rules when no sniff action remains.
+: >"$MODDIR/.config/magicnet/route-proxy-domain-suffix.list"
+magicnet_route_apply_singbox
+jq -e '.route.rules == []' "$MODDIR/.config/sing-box/config.json" >/dev/null
+[[ ! -e "$MODDIR/.config/sing-box/config.json.magicnet-route.new" ]]
+[[ ! -e "$MODDIR/.cache/magicnet-route-singbox.rules" ]]
 
 printf '%s\n' 'route apply safety test passed'

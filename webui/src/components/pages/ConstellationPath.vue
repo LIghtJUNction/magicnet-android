@@ -128,6 +128,8 @@ function stateText(state: StarState): string {
 }
 
 .mn-constellation__state {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: var(--mn-ink-muted);
   font-size: 12px;
   line-height: 1.5;

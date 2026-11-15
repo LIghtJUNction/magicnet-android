@@ -44,7 +44,8 @@ for previous in \
     6da399473a1ab3f99661556886e0b6701581af24:6365ee9b4144974ced6012dc99b9712ceef3f721f58ae9eb0943024373b81d81 \
     b1fa62b6912861292c895db58a88b8c5bdff3451:50585d94942620e569ae0569dd475977a35d45797bfe2bfbd6afc6cb14da2355 \
     dacc776dad4bd2519d5dd0dfbf3839713f9e438c:08996a10e24adc6ffb6a75f96d436a543264734d95f50f9952a7a265bb58213e \
-    6b5f68a261818a4ffda6eb9a11b21eef9b755650:cda86a582c15e6976e6b9eb1e3c7a00811b6efea4e604bcf3f44ecae443a3db3; do
+    6b5f68a261818a4ffda6eb9a11b21eef9b755650:cda86a582c15e6976e6b9eb1e3c7a00811b6efea4e604bcf3f44ecae443a3db3 \
+    ba5793b41fd06704102116fe2536eef5988f2905:e269e2303cf1e23d3b4ce69dcb7cca39f0f53dc647c5d03aace4c4bd7f986be0; do
     printf '%s\n' \
         'MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/LIghtJUNction/MagicSingBox.git' \
         "MAGICNET_SINGBOX_CONFIG_REPO_REF=${previous%%:*}" \
@@ -53,13 +54,14 @@ for previous in \
     magicnet_migrate_install_config_repository
     grep -Fqx "MAGICNET_SINGBOX_CONFIG_REPO_REF=$expected_ref" "$REPO_FILE"
     grep -Fqx "MAGICNET_SINGBOX_CONFIG_REPO_SHA256=$expected_sha" "$REPO_FILE"
+    [ "$(stat -c '%a' "$REPO_FILE")" = 600 ]
     migrated_before="$(cat "$REPO_FILE")"
     magicnet_migrate_install_config_repository
     [ "$(cat "$REPO_FILE")" = "$migrated_before" ]
 done
 
 # A familiar repository/ref with an operator-supplied digest is still custom.
-for previous_ref in dacc776dad4bd2519d5dd0dfbf3839713f9e438c 6b5f68a261818a4ffda6eb9a11b21eef9b755650; do
+for previous_ref in dacc776dad4bd2519d5dd0dfbf3839713f9e438c 6b5f68a261818a4ffda6eb9a11b21eef9b755650 ba5793b41fd06704102116fe2536eef5988f2905; do
     printf '%s\n' \
         'MAGICNET_SINGBOX_CONFIG_REPO_URL=https://github.com/LIghtJUNction/MagicSingBox.git' \
         "MAGICNET_SINGBOX_CONFIG_REPO_REF=$previous_ref" \

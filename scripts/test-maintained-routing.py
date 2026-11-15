@@ -10,8 +10,10 @@ import functools
 import ipaddress
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +36,10 @@ EDUCATION_SUFFIXES = {
     "edu.cn", "moe.gov.cn", "chsi.com.cn", "smartedu.cn", "neea.cn", "ncss.cn",
     "icourse163.org", "icourses.cn", "xuetangx.com", "yuketang.cn", "chaoxing.com",
     "zhihuishu.com", "eol.cn", "cnki.net", "wanfangdata.com.cn", "cqvip.com",
+}
+MDNS_SUFFIXES = {
+    "local", "254.169.in-addr.arpa",
+    "8.e.f.ip6.arpa", "9.e.f.ip6.arpa", "a.e.f.ip6.arpa", "b.e.f.ip6.arpa",
 }
 
 
@@ -79,7 +85,6 @@ for rule in routes + dns:
     )
     if "domain_suffix" in rule and set(rule["domain_suffix"]) != EDUCATION_SUFFIXES:
         assert set(rule["domain_suffix"]) <= {
-            "local",
             "home.arpa",
             "lan",
             "tailscale.net",
@@ -91,7 +96,7 @@ for rule in routes + dns:
             "xn--io0a7i",
             # Explicitly proxy lmm.best and all of its subdomains.
             "lmm.best",
-        }
+        } | MDNS_SUFFIXES
     if "ip_cidr" in rule:
         assert rule.get("outbound") in ("lan", "block"), (
             "service IP lists belong upstream"
@@ -135,9 +140,9 @@ for tag in (
 for tag in ("ai-chatgpt", "ai-gemini", "ai-grok", "ai-claude", "ai-proxy"):
     assert outbounds[tag]["default"] != "direct", tag
 
-# Every domain classifier has the same match conditions and relative order in
-# DNS. Protocol/IP-only routing is deliberately not projected into DNS. The
-# mixed WeChat classifier maps to its maintained domain-only DNS classifier below.
+# Domain classifiers retain their relative order in DNS. The exceptions are
+# domain-only WeChat projection and .local, which uses mDNS before public DNS
+# modes. Link-local PTR namespaces are DNS-only and have no data route classifier.
 expected = []
 for rule in routes:
     if "outbound" not in rule or any(
@@ -160,18 +165,112 @@ def expand_rule_sets(rules):
     ]
 
 
-expected_domains = [
-    {"rule_set": [WECHAT_DNS_TAG]}
-    if rule == {"rule_set": [WECHAT_ROUTE_TAG]}
-    else rule
-    for rule in expand_rule_sets(expected)
-]
+def dns_projection(rule):
+    if rule == {"rule_set": [WECHAT_ROUTE_TAG]}:
+        return {"rule_set": [WECHAT_DNS_TAG]}
+    if rule == {"domain_suffix": ["local", "home.arpa", "lan"]}:
+        return {"domain_suffix": ["home.arpa", "lan"]}
+    return rule
+
+
+expected_domains = [dns_projection(rule) for rule in expand_rule_sets(expected)]
 assert expected_domains == expand_rule_sets(
-    [{k: v for k, v in r.items() if k != "server"} for r in dns if "protocol" not in r]
-), "DNS domain classifiers must retain routing order and the WeChat projection"
+    [{k: v for k, v in r.items() if k != "server"} for r in dns
+     if "protocol" not in r and r.get("server") != "lan-mdns"]
+), "DNS classifiers must retain routing order after the WeChat and mDNS projections"
+
+
+def inline_dns_target(candidate, domain, mode):
+    """First DNS match with no rule-set membership, including the final pipeline."""
+    for rule in candidate["dns"]["rules"]:
+        unknown = set(rule) - {
+            "domain", "domain_suffix", "clash_mode", "server", "rule_set", "protocol",
+            "action", "tag", "match_response",
+        }
+        assert not unknown, f"unsupported DNS matcher: {unknown}"
+        if any(field in rule for field in ("protocol", "rule_set", "match_response")):
+            continue
+        if "clash_mode" in rule and rule["clash_mode"] != mode:
+            continue
+        if "domain" in rule and domain not in values(rule["domain"]):
+            continue
+        if "domain_suffix" in rule and not any(
+            domain == suffix or domain.endswith("." + suffix)
+            for suffix in values(rule["domain_suffix"])
+        ):
+            continue
+        if "server" in rule:
+            return rule["server"]
+    return candidate["dns"]["final"]
+
+
+def check_mdns(candidate):
+    # An exact native transport has no proxy detour, system resolver, or public
+    # fallback. An unanswered multicast query must remain a local DNS failure.
+    mdns_servers = [server for server in candidate["dns"]["servers"] if server["tag"] == "lan-mdns"]
+    assert mdns_servers == [{"type": "mdns", "tag": "lan-mdns"}], mdns_servers
+    mdns_rules = [rule for rule in candidate["dns"]["rules"] if rule.get("server") == "lan-mdns"]
+    assert len(mdns_rules) == 1
+    assert set(mdns_rules[0]) == {"domain_suffix", "server"}
+    assert set(mdns_rules[0]["domain_suffix"]) == MDNS_SUFFIXES
+    assert len(mdns_rules[0]["domain_suffix"]) == len(MDNS_SUFFIXES)
+    names = list(MDNS_SUFFIXES) + ["printer.local", "_ipp._tcp.local"]
+    names += [ipaddress.ip_address(address).reverse_pointer for address in (
+        "169.254.0.1", "169.254.255.254", "fe80::1", "fe90::1", "fea0::1", "febf:ffff::1",
+    )]
+    for mode in ("Rule", "Direct", "Global"):
+        for domain in names:
+            assert inline_dns_target(candidate, domain, mode) == "lan-mdns", (domain, mode)
+        for suffix in MDNS_SUFFIXES:
+            for domain in ("not" + suffix, suffix + ".example.invalid"):
+                expected = "bootstrap-local-dns" if mode == "Direct" else candidate["dns"]["final"]
+                # Global's explicit resolver is intentionally independent of the profile final.
+                if mode == "Global":
+                    expected = "doh-cloudflare"
+                assert inline_dns_target(candidate, domain, mode) == expected, (domain, mode)
+
+
+check_mdns(config)
+
+# Exercise the real materializers on a synthetic module tree, without a core,
+# subscription, network query, TUN or firewall. Profiles must preserve mDNS, and
+# Tailscale must still put its more specific MagicDNS rule before generic modes.
+with tempfile.TemporaryDirectory(prefix="magicnet-mdns-policy-") as directory:
+    module = Path(directory) / "module"
+    config_path = module / ".config/sing-box/config.json"
+    config_path.parent.mkdir(parents=True)
+    (module / "bin").mkdir()
+    jq = shutil.which("jq")
+    assert jq is not None, "jq is required for DNS materialization contracts"
+    (module / "bin/jq").symlink_to(jq)
+    for profile in ("default", "cloudflare-doh", "cloudflare-dot", "cloudflare-udp"):
+        for tailnet in (False, True):
+            fixture = json.loads(json.dumps(config))
+            if tailnet:
+                fixture["endpoints"] = [{"type": "tailscale", "tag": "fixture-tailnet"}]
+            config_path.write_text(json.dumps(fixture))
+            environment = dict(os.environ, ROOT=str(ROOT), MODDIR=str(module),
+                               MAGICNET_SUB_CONFIG_FILE=str(config_path),
+                               MAGICNET_DNS_PROFILE=profile, MAGICNET_IPV6_MODE="prefer_ipv4")
+            subprocess.run(["sh", "-c", '''set -eu
+. "$ROOT/src/MagicNet/lib/magicnet/primitives.sh"
+. "$ROOT/src/MagicNet/lib/magicnet/singbox_subscribe/bootstrap.sh"
+. "$ROOT/src/MagicNet/lib/magicnet/dns.sh"
+. "$ROOT/src/MagicNet/lib/magicnet/runtime_config.sh"
+magicnet_tailscale_apply_unlocked
+magicnet_dns_apply_singbox
+'''], env=environment, check=True, timeout=15)
+            materialized = json.loads(config_path.read_text())
+            check_mdns(materialized)
+            if tailnet:
+                assert materialized["dns"]["rules"][0] == {
+                    "domain_suffix": ["ts.net"], "server": "fixture-tailnet-dns",
+                }
+                for mode in ("Rule", "Direct", "Global"):
+                    assert inline_dns_target(materialized, "host.ts.net", mode) == "fixture-tailnet-dns"
 
 if "--assets" not in sys.argv:
-    print("Maintained routing structural contracts passed")
+    print("Maintained routing structural, mDNS boundary and 8 DNS/Tailnet materialization contracts passed")
     sys.exit(0)
 
 
@@ -259,6 +358,7 @@ cases = [
     ("oauth2.googleapis.com", "google-proxy", "doh-google"),
     ("mtalk.google.com", "google-proxy", "doh-google"),
 
+    ("printer.local", "lan", "lan-mdns"),
     ("router.lan", "lan", "bootstrap-local-dns"),
     ("host.ts.net", "lan", "bootstrap-local-dns"),
     ("mmbiz.qpic.cn", "cn-direct", "bootstrap-local-dns"),
