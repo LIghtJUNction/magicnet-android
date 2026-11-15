@@ -144,7 +144,7 @@ assert_proxy_rule_and_order() {
   ' "$MODDIR/.config/sing-box/config.json" >/dev/null
 
   # shellcheck disable=SC2016
-  "$JQ_BIN" -e '
+  "$JQ_BIN" -e --slurpfile original "$MODDIR/base-config.json" '
     ([.route.rules | to_entries[]
        | select((.value.package_name // []) | index("__magicnet_app_proxy__"))] | length) == 1
     and ([.route.rules[]
@@ -156,7 +156,8 @@ assert_proxy_rule_and_order() {
          | .package_name == ["__magicnet_app_direct__", "com.example.directforce"]
            and .outbound == "direct")
     and (([.route.rules | to_entries[]
-            | select(.value | (has("action") or (.protocol == "icmp" and .outbound == "block")))
+            | select(.value | (.action == "sniff" or .action == "hijack-dns"
+                or .outbound == "lan" or (.protocol == "icmp" and .outbound == "block")))
             | .key] | max) as $guard
          | ([.route.rules | to_entries[]
               | select((.value.package_name // []) | index("__magicnet_app_direct__"))
@@ -171,7 +172,13 @@ assert_proxy_rule_and_order() {
                   and ((.value.package_name // .value.domain_suffix // []) | length) > 0
                 )
               | .key] | min) as $business
-         | $guard < $direct and $direct < $proxy and $proxy < $business)
+         # This original fixture interleaves business rules with later guards.
+         # Stable insertion preserves that user order; it cannot also move an
+         # app override ahead of the earlier business without moving a guard.
+         | $direct == $guard + 1 and $proxy == $direct + 1 and $business < $direct)
+    and ([.route.rules[] | select(((.package_name // [])
+          | any(. == "__magicnet_app_direct__" or . == "__magicnet_app_proxy__")) | not)]
+         == $original[0].route.rules)
     and (([.route.rules | to_entries[]
             | select(.value == {"domain_suffix": ["local", "home.arpa", "lan"], "outbound": "lan"})
             | .key]) as $lan
@@ -216,6 +223,7 @@ run_case() {
   mkdir -p "$MODDIR/bin"
   ln -sf "$JQ_BIN" "$MODDIR/bin/jq"
   write_base_config
+  cp "$MODDIR/.config/sing-box/config.json" "$MODDIR/base-config.json"
 
   printf '%s\n' 'MAGICNET_APP_MODE=blacklist' >"$MODDIR/.config/magicnet/app-mode.conf"
   cat >"$MODDIR/.config/magicnet/app-proxy.list" <<'EOF'

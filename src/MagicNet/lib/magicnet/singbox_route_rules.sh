@@ -11,18 +11,29 @@ magicnet_singbox_insert_route_rules() (
         def managed:
             if $mode == "block" then marked(["__magicnet_ad_allow__", "__magicnet_block__"])
             else ((.domain_suffix // []) | index("__magicnet_route__") != null) end;
-        def anchor:
-            if $mode == "block" then
-                has("action") or (.protocol == "icmp" and .outbound == "block")
-                or marked(["__magicnet_app_proxy__"])
-            else .action == "sniff" end;
+        # Non-final metadata actions must run before managed terminal routes.
+        def protected_rule($tailnets):
+            has("clash_mode") or has("preferred_by")
+            or .ip_is_private == true or .outbound == "lan"
+            or (.outbound as $tag | $tailnets | index($tag) != null)
+            or .action == "sniff" or .action == "hijack-dns" or .action == "reject"
+            or .action == "resolve" or .action == "route-options"
+            or (.outbound == "block" and (.protocol == "icmp" or has("ip_cidr")));
+        def precedes_managed($tailnets):
+            protected_rule($tailnets)
+            or marked(["__magicnet_app_direct__", "__magicnet_app_proxy__"])
+            or ($mode == "block" and marked(["__magicnet_route__"]));
         if (.route.rules | type) != "array" then error("route.rules must be an array") else . end
+        | [.endpoints[]? | select(.type == "tailscale") | .tag] as $tailnets
         | ($additions | sub(",[[:space:]]*$"; "") | "[" + . + "]" | fromjson) as $new
         | (.route.rules | map(select(managed | not))) as $rules
-        | ([$rules | to_entries[] | select(.value | anchor) | .key] | first) as $at
-        | if $at == null and $mode == "route" and ($new | length) > 0 then
+        | if $mode == "route" and ($new | length) > 0
+            and (any($rules[]; .action == "sniff") | not) then
             error("custom route insertion requires a sniff rule")
-          else ($at // ($rules | length)) as $at
+          # Domain policy needs the metadata produced by sniffing. Keep base
+          # rules in their original order, including interleaved user rules.
+          else ((([$rules | to_entries[] | select(.value | precedes_managed($tailnets)) | .key]
+              | last) // -1) + 1) as $at
             | .route.rules = ($rules[:$at] + $new + $rules[$at:])
           end
     ' "$_insert_config" >"$_insert_tmp"
