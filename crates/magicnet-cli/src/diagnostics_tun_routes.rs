@@ -144,6 +144,7 @@ pub(super) fn routes_cover(
     required: &[AddressRange],
 ) -> Result<bool, &'static str> {
     let mut observed = Vec::new();
+    let mut conflicting = Vec::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let fields: Vec<_> = line.split_whitespace().collect();
         let (destination, unicast) = match fields[0] {
@@ -166,9 +167,48 @@ pub(super) fn routes_cover(
                 return Err("route-selectors-unobserved");
             }
             observed.push(range);
+        } else {
+            conflicting.push(range);
         }
     }
-    let observed = merge_ranges(observed);
+    if !ranges_cover(&merge_ranges(observed.clone()), required) {
+        return Ok(false);
+    }
+    for conflict in conflicting {
+        let affected: Vec<_> = required
+            .iter()
+            .filter_map(|range| {
+                let first = range.first.max(conflict.first);
+                let last = range.last.min(conflict.last);
+                (first <= last).then_some(AddressRange { first, last })
+            })
+            .collect();
+        if affected.is_empty() {
+            continue;
+        }
+        // A broader fallback cannot shadow a more specific TUN route. For
+        // equal or more-specific competing routes, metrics, source selectors
+        // and multipath selection need evidence this observer does not have.
+        // Never turn the union of TUN prefixes into a green FIB result then.
+        let preferred = merge_ranges(
+            observed
+                .iter()
+                .copied()
+                .filter(|route| {
+                    route.first >= conflict.first
+                        && route.last <= conflict.last
+                        && (route.first != conflict.first || route.last != conflict.last)
+                })
+                .collect(),
+        );
+        if !ranges_cover(&preferred, &affected) {
+            return Err("route-conflict-unobserved");
+        }
+    }
+    Ok(true)
+}
+
+fn ranges_cover(observed: &[AddressRange], required: &[AddressRange]) -> bool {
     let mut index = 0;
     for required in required {
         while index < observed.len() && observed[index].last < required.first {
@@ -178,8 +218,8 @@ pub(super) fn routes_cover(
             .get(index)
             .is_some_and(|route| route.first <= required.first && route.last >= required.last)
         {
-            return Ok(false);
+            return false;
         }
     }
-    Ok(true)
+    true
 }

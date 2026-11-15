@@ -598,6 +598,75 @@ fn fib_evidence_requires_a_live_unicast_route_on_the_exact_tun_device() {
 }
 
 #[test]
+fn fib_conflicting_routes_cannot_hide_behind_a_covering_tun_route() {
+    for (address, family, base, conflicting) in [
+        (
+            "172.19.0.1/30",
+            Family::V4,
+            ROUTES4,
+            "203.0.113.0/24 dev wlan0\n",
+        ),
+        (
+            "172.19.0.1/30",
+            Family::V4,
+            ROUTES4,
+            "blackhole 203.0.113.0/24\n",
+        ),
+        (
+            "fdfe:dcba:9876::1/126",
+            Family::V6,
+            ROUTES6,
+            "2001:db8::/32 dev wlan0\n",
+        ),
+        (
+            "fdfe:dcba:9876::1/126",
+            Family::V6,
+            ROUTES6,
+            "unreachable 2001:db8::/32\n",
+        ),
+    ] {
+        let mut config = inbound();
+        config["address"] = json!([address]);
+        let rules = normal_rules(2022, 9000, family);
+        let routes = format!("{base}{conflicting}");
+        let observed = super::auto_route_observation_with(&config, true, |args| {
+            Ok(if args.contains(&"rule") {
+                rule_snapshot(args, &rules)
+            } else {
+                routes.clone()
+            })
+        });
+        assert_eq!(observed.ready, None, "{}", observed.detail);
+        assert!(
+            !observed.fully_observed,
+            "a conflicting route must not authorize recovery"
+        );
+        assert!(observed
+            .detail
+            .contains("unknown:route-conflict-unobserved"));
+    }
+}
+
+#[test]
+fn fib_conflicts_outside_required_ranges_and_less_specific_fallbacks_are_ignored() {
+    let mut config = inbound();
+    config["route_address"] = json!(["203.0.113.0/24"]);
+    config["route_exclude_address"] = json!(["203.0.113.0/25"]);
+    let rules = normal_rules(2022, 9000, Family::V4);
+    let routes = "default dev wlan0\n203.0.113.128/25 dev magicnet0\nblackhole 203.0.113.0/25\n";
+    assert!(check(&config, true, &rules, routes).0);
+    assert!(
+        check(
+            &inbound(),
+            true,
+            &rules,
+            &format!("{ROUTES4}unreachable default\n")
+        )
+        .0
+    );
+}
+
+#[test]
 fn default_exclusions_accept_fragmented_fib_and_detect_missing_coverage() {
     // Independent oracle: these fixtures were generated with Python ipaddress
     // address_exclude from the pinned MagicSingBox template, not this parser.
