@@ -46,6 +46,21 @@ for (const [browserLocale, language, overview] of [
           return found;
         });
         expect(untranslated, `${language}: ${tab}`).toEqual([]);
+        if (tab === 'control') {
+          await expect(page.locator('.mn-constellation__path')).toBeVisible();
+          const overflowingLabels = await page.locator('.mn-constellation__star').evaluateAll((nodes) =>
+            nodes.flatMap((node) => {
+              const bounds = node.getBoundingClientRect();
+              return [...node.querySelectorAll('strong, .mn-constellation__state, small')]
+                .filter((label) => {
+                  const box = label.getBoundingClientRect();
+                  return box.left < bounds.left - 1 || box.right > bounds.right + 1;
+                })
+                .map((label) => label.textContent.trim());
+            }),
+          );
+          expect(overflowingLabels, `${language}: traffic-path labels stay within their node`).toEqual([]);
+        }
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
         expect(overflow, `${language}: ${tab} horizontal overflow`).toBe(false);
       }
