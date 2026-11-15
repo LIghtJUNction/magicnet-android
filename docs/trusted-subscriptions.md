@@ -39,7 +39,7 @@ https://nas.example:8443 fd12:3456:789a::/64
 | 代理，可选 | 仅允许显式端口的 literal loopback `socks5://`，例如 `socks5://127.0.0.1:7892`。禁止 SOCKS5h、HTTP、远端代理、认证字段、path/query。 |
 | 多行 | 同一来源可列出多个 CIDR，组成该来源允许的地址集合，但必须使用同一代理路线；不同主机、端口或 scheme 的授权相互独立。 |
 
-公网、link-local、云元数据、multicast、unspecified 等地址范围不能通过这份清单放行。HTTP 授权不包含 HTTPS，HTTPS 授权也不包含 HTTP。使用 HTTPS 时仍验证服务器证书和主机名。
+公网、link-local（含 `169.254.169.254`）、multicast、unspecified 等地址范围不能通过这份清单放行。允许范围内的目标按明确配置的 CIDR 判定授权。HTTP 授权不包含 HTTPS，HTTPS 授权也不包含 HTTP。使用 HTTPS 时仍验证服务器证书和主机名。
 
 `sub trust set` 替换整份清单，先完整校验，再保存；错误输入保留旧授权。撤销全部例外：
 
