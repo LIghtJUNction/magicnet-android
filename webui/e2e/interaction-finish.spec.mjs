@@ -18,13 +18,15 @@ async function setTask(page, task) {
 }
 
 test("busy buttons keep their geometry, labels and disabled state", async ({ page }) => {
+  await page.getByRole("button", { name: "打开系统工具", exact: true }).click();
+  const tools = page.getByRole("dialog", { name: "系统工具", exact: true });
   const buttons = [
-    ["刷新面板", "刷新面板", true],
-    ["创建 GitHub Issue", "创建 GitHub issue", false],
+    ["刷新面板", "刷新面板"],
+    ["反馈问题", "创建 GitHub issue"],
   ];
-  for (const [label, task, iconOnly] of buttons) {
-    const button = page.getByRole("button", { name: label, exact: true });
-    if (!(await button.isVisible())) continue; // Feedback lives in the desktop toolbar.
+  for (const [label, task] of buttons) {
+    const button = tools.getByRole("button", { name: label, exact: true });
+    await expect(button).toBeVisible();
     const before = await button.boundingBox();
     const text = await button.innerText();
     await setTask(page, task);
@@ -34,10 +36,8 @@ test("busy buttons keep their geometry, labels and disabled state", async ({ pag
     for (const key of ["x", "y", "width", "height"])
       expect(Math.abs(during[key] - before[key])).toBeLessThan(1);
     expect(await button.innerText()).toBe(text);
-    await expect(button.locator(".mn-button__content")).toHaveCSS("opacity", iconOnly ? "0" : "1");
-    if (!iconOnly) {
-      expect(await button.evaluate((el) => getComputedStyle(el, "::after").animationName)).toBe("none");
-    }
+    await expect(button.locator(".mn-button__content")).toHaveCSS("opacity", "1");
+    expect(await button.evaluate((el) => getComputedStyle(el, "::after").animationName)).toBe("none");
     await setTask(page, "");
     await expect(button).toBeEnabled();
     await expect(button.locator(".mn-button__content")).toHaveCSS("opacity", "1");

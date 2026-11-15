@@ -561,7 +561,7 @@ onMounted(() => {
       <button type="button" @click="emit('goto-tab', 'proxies')"><Route :size="19" /><span>{{ t("切换节点") }}<small>{{ t("选择节点与代理组") }}</small></span><ArrowUpRight :size="16" /></button>
     </nav>
     <ModuleUpdateCard />
-    <div class="mn-control-section-title"><h3>{{ t("网络设置") }}</h3><span>{{ t("按需调整，无需反复重启") }}</span></div>
+    <div class="mn-control-section-title"><h3>{{ t("网络设置") }}</h3></div>
 
     <div class="mn-control-settings">
       <Card class="grid gap-5">
@@ -842,10 +842,10 @@ onMounted(() => {
 .mn-control-state-heading { min-width: 0; }
 .mn-control-label { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 16px 0 0; color: var(--mn-ink-muted); font-size: 13px; font-weight: 500; }
 .mn-control-mode { padding: 2px 8px; border-radius: 6px; background: var(--mn-surface-sunken); color: var(--mn-ink-soft); font-family: var(--font-mono); font-size: 12px; }
-.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-sans); font-size: clamp(32px, 7vw, 48px); font-weight: 550; line-height: 1.15; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-sans); font-size: clamp(28px, 6vw, 36px); font-weight: 550; line-height: 1.2; letter-spacing: -.025em; overflow-wrap: anywhere; }
 .mn-control-hero[data-service-state="ready"] .mn-control-status h2 { color: var(--mn-ink); }
 .mn-control-description { margin: 12px 0 0; max-width: 46ch; color: var(--mn-ink-muted); font-size: 15px; line-height: 1.7; }
-.mn-control-memory { display: inline-flex; width: fit-content; align-items: baseline; gap: 12px; margin: 0; padding: 8px 14px; border-radius: 999px; background: var(--mn-surface-sunken); }
+.mn-control-memory { display: inline-flex; width: fit-content; align-items: baseline; gap: 12px; margin: 0; padding: 4px 0; }
 .mn-control-memory dt { color: var(--mn-ink-muted); font-size: 12px; }
 .mn-control-memory dd { margin: 0; color: var(--mn-ink); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mn-control-memory dd > span { color: var(--mn-ink-muted); font-size: 12px; font-weight: 400; }
@@ -864,25 +864,24 @@ onMounted(() => {
 .mn-control-notice h3 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .mn-control-notice p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
 .mn-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.mn-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin: 0 0 24px; padding: 24px; border-radius: var(--mn-radius-lg); background: var(--mn-accent-soft); }
+.mn-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 0 0 32px; padding: 4px 0 4px 16px; border-inline-start: 2px solid var(--mn-primary); }
 .mn-next-step > div { flex: 1 1 260px; min-width: 0; }
 .mn-next-step-label { color: var(--mn-primary-strong); font-size: 12px; font-weight: 600; }
 .mn-next-step h3 { margin: 8px 0 0; color: var(--mn-ink); font-size: 20px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
 .mn-next-step p { margin: 8px 0 0; color: var(--mn-ink-soft); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
 .mn-next-step > button { max-width: 100%; }
-.mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 24px 0 40px; }
-.mn-control-destinations > button { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 80px; padding: 16px; border: 0; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); color: var(--mn-ink); text-align: left; cursor: pointer; transition: background-color 160ms ease-out; }
+.mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 24px 0 40px; padding-block: 12px; border-block: 1px solid var(--mn-border); }
+.mn-control-destinations > button { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 64px; padding: 8px; border: 0; border-radius: var(--mn-radius-md); background: transparent; color: var(--mn-ink); text-align: left; cursor: pointer; transition: background-color 160ms ease-out; }
 .mn-control-destinations > button:hover:not(:disabled) { background: var(--mn-surface-sunken); }
 .mn-control-destinations > button:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 3px; }
 .mn-control-destinations > button:disabled { cursor: not-allowed; opacity: .55; }
 .mn-control-destinations svg { flex-shrink: 0; }
-.mn-control-destinations > button > svg:first-child { box-sizing: content-box; padding: 9px; border-radius: 12px; background: var(--mn-accent-soft); color: var(--mn-primary-strong); }
+.mn-control-destinations > button > svg:first-child { color: var(--mn-ink-muted); }
 .mn-control-destinations span { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .mn-control-destinations small { display: block; margin-top: 4px; color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; line-height: 1.5; }
 .mn-control-section-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin: 8px 0 20px; }
 .mn-control-section-title h3 { margin: 0; color: var(--mn-ink); font-family: var(--font-serif); font-size: 22px; font-weight: 500; letter-spacing: -.02em; }
-.mn-control-section-title > span { color: var(--mn-ink-muted); font-size: 13px; }
-.mn-control-settings { display: grid; gap: 24px; }
+.mn-control-settings { display: grid; gap: 32px; }
 @media (min-width: 760px) {
   .mn-control-overview { grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 36px; }
   .mn-control-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }

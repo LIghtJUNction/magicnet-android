@@ -31,7 +31,7 @@ const titleClass = computed(() =>
 <template>
   <div :class="cn('flex flex-wrap items-start justify-between gap-3', props.class)">
     <div class="min-w-0">
-      <Eyebrow v-if="overline || $slots.overline" :tone="overlineTone" class="mb-1">
+      <Eyebrow v-if="!title && !$slots.title && (overline || $slots.overline)" :tone="overlineTone">
         <slot name="overline">{{ overline }}</slot>
       </Eyebrow>
       <h3 v-if="title || $slots.title" :class="titleClass">

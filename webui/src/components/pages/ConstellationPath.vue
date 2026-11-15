@@ -29,14 +29,10 @@ function stateText(state: StarState): string {
         :data-state="star.state"
         :data-edge="index > 0 ? model.edges[index - 1] : undefined"
       >
-        <span class="mn-constellation__mark" aria-hidden="true">
-          <svg v-if="star.key === 'egress'" viewBox="0 0 24 24" width="16" height="16">
-            <path d="M12 2.5l2.1 6.6 6.9.4-5.4 4.3 1.9 6.7L12 16.7l-5.5 3.8 1.9-6.7L3 9.5l6.9-.4z" />
-          </svg>
-        </span>
+        <span class="mn-constellation__mark" aria-hidden="true" />
         <strong>{{ t(star.label) }}</strong>
+        <span class="mn-constellation__state">{{ stateText(star.state) }}</span>
         <small>{{ t(star.detail) }}</small>
-        <span class="sr-only">{{ stateText(star.state) }}</span>
       </li>
     </ol>
     <figcaption>{{ summaryText }}</figcaption>
@@ -46,7 +42,7 @@ function stateText(state: StarState): string {
 <style scoped>
 .mn-constellation {
   margin: 0;
-  padding: 32px 0 4px;
+  padding: 24px 0 4px;
 }
 
 .mn-constellation__path {
@@ -58,7 +54,7 @@ function stateText(state: StarState): string {
 }
 
 .mn-constellation__star {
-  --star-size: 30px;
+  --point-size: 10px;
   --line: var(--mn-border-strong);
   position: relative;
   display: grid;
@@ -70,82 +66,47 @@ function stateText(state: StarState): string {
   text-align: center;
 }
 
-/* Edge from the previous star's centre to this one. */
+/* Connect adjacent state markers without suggesting live packet activity. */
 .mn-constellation__star + .mn-constellation__star::before {
   position: absolute;
   z-index: 0;
-  top: calc(var(--star-size) / 2 - 1px);
-  right: calc(50% + var(--star-size) / 2 + 4px);
-  left: calc(-50% + var(--star-size) / 2 + 4px);
-  height: 2px;
-  background-image: linear-gradient(90deg, var(--line) 55%, transparent 0);
-  background-size: 9px 2px;
+  top: calc(var(--point-size) / 2);
+  right: calc(50% + var(--point-size) / 2 + 8px);
+  left: calc(-50% + var(--point-size) / 2 + 8px);
+  border-top: 1px dashed var(--line);
   content: "";
 }
 
 .mn-constellation__star[data-edge="flowing"]::before {
   --line: var(--mn-primary);
-  animation: mn-constellation-flow 900ms linear infinite;
+  border-top-style: solid;
 }
 
 .mn-constellation__star[data-edge="idle"]::before {
   --line: color-mix(in srgb, var(--mn-ink-faint) 45%, transparent);
-  background-size: 4px 2px;
+  border-top-style: dotted;
 }
 
 .mn-constellation__mark {
   position: relative;
   z-index: 1;
-  display: grid;
-  width: var(--star-size);
-  height: var(--star-size);
-  margin-bottom: 8px;
-  place-items: center;
-  border: 1.5px dashed var(--mn-border-strong);
-  border-radius: 999px;
-  background: var(--mn-surface-raised);
-  color: var(--mn-ink-faint);
-  transition: background-color 240ms ease-out, border-color 240ms ease-out, box-shadow 240ms ease-out;
-}
-
-.mn-constellation__mark::after {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: currentColor;
-  content: "";
-  opacity: 0.55;
-}
-
-.mn-constellation__mark svg {
-  fill: currentColor;
-}
-
-.mn-constellation__mark:has(svg)::after {
-  display: none;
+  width: var(--point-size);
+  height: var(--point-size);
+  margin-bottom: 10px;
+  border: 1px dashed var(--mn-ink-muted);
+  border-radius: 50%;
+  background: var(--mn-ivory);
 }
 
 .mn-constellation__star[data-state="ok"] .mn-constellation__mark {
-  border: 0;
-  background: var(--mn-star);
-  box-shadow: var(--mn-glow);
-  color: var(--mn-ivory);
-}
-
-.mn-constellation__star[data-state="ok"] .mn-constellation__mark::after {
-  opacity: 1;
-}
-
-.mn-constellation__star[data-key="egress"][data-state="ok"] .mn-constellation__mark,
-.mn-constellation__star:last-child[data-state="ok"] .mn-constellation__mark {
-  background: var(--mn-primary);
-  color: var(--mn-on-accent);
-  animation: mn-constellation-twinkle 2.8s ease-in-out infinite;
+  border-style: solid;
+  border-color: var(--mn-success);
+  background: var(--mn-success);
 }
 
 .mn-constellation__star[data-state="off"] .mn-constellation__mark {
-  border-style: dotted;
-  color: var(--mn-danger);
+  border-style: solid;
+  border-color: var(--mn-ink-muted);
 }
 
 .mn-constellation__star strong {
@@ -166,6 +127,12 @@ function stateText(state: StarState): string {
   line-height: 1.35;
 }
 
+.mn-constellation__state {
+  color: var(--mn-ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .mn-constellation__star[data-state="off"] strong,
 .mn-constellation__star[data-state="unknown"] strong {
   color: var(--mn-ink-soft);
@@ -178,30 +145,7 @@ figcaption {
   line-height: 1.6;
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
-@keyframes mn-constellation-flow {
-  from { background-position-x: 0; }
-  to { background-position-x: 9px; }
-}
-
-@keyframes mn-constellation-twinkle {
-  0%, 100% { box-shadow: var(--mn-glow); }
-  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--mn-accent) 12%, transparent); }
-}
-
 @media (min-width: 640px) {
-  .mn-constellation__star {
-    --star-size: 36px;
-  }
-
   .mn-constellation__star strong {
     font-size: 14px;
   }
@@ -211,21 +155,19 @@ figcaption {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mn-constellation__star::before,
-  .mn-constellation__mark {
-    animation: none !important;
-  }
-}
-
 @media (forced-colors: active) {
   .mn-constellation__star + .mn-constellation__star::before {
-    background: CanvasText;
+    border-color: CanvasText;
+  }
+
+  .mn-constellation__mark {
+    border-color: CanvasText;
+    background: Canvas;
   }
 
   .mn-constellation__star[data-state="ok"] .mn-constellation__mark {
+    border-color: Highlight;
     background: Highlight;
-    color: HighlightText;
   }
 }
 </style>

@@ -234,7 +234,7 @@ assert.match(
 assert.match(
   app,
   /createIssue|refreshAll|openExternal/,
-  "header actions must remain wired",
+  "utility actions must remain wired",
 );
 const header = app.slice(
   app.indexOf("<header"),
@@ -260,16 +260,6 @@ assert.doesNotMatch(
   headerButton("refreshAll"),
   /mn-desktop-action/,
   "refresh must remain visible on mobile",
-);
-assert.match(
-  headerButton("openExternal(REPO, 'GitHub')"),
-  /mn-desktop-action/,
-  "GitHub belongs to desktop chrome and the mobile utility sheet",
-);
-assert.match(
-  headerButton("createIssue"),
-  /mn-desktop-action/,
-  "feedback must move to the utility sheet on mobile",
 );
 assert.match(
   app,

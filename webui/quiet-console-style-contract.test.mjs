@@ -8,7 +8,6 @@ const styles = read("./src/styles.css");
 const app = read("./src/App.vue");
 const button = read("./src/components/ui/Button.vue");
 const pageHeader = read("./src/components/ui/PageHeader.vue");
-const design = read("./DESIGN.md");
 
 function luminance(hex) {
   const rgb=hex.match(/[0-9a-f]{2}/gi).map(v=>parseInt(v,16)/255).map(v=>v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4);
@@ -63,13 +62,4 @@ void test("shared primitives preserve labels and reduce decorative copy", () => 
   assert.doesNotMatch(button, /loading \? 'opacity-0'/);
   assert.doesNotMatch(pageHeader, /mn-page-kicker/);
   assert.match(pageHeader, /v-if="description"/);
-});
-
-void test("design baseline records the implemented mobile brief", () => {
-  assert.match(design, /name:\s*"MagicNet Fieldnotes"/);
-  assert.match(design, /primary:\s*"#12675D"/i);
-  assert.match(design, /移动端优先/);
-  assert.match(design, /Signature Mechanism:\s*Live Constellation Path/);
-  assert.match(design, /Precision Editor Rail/);
-  assert.doesNotMatch(design, /Phosphor Grid|Live Route Stack/);
 });

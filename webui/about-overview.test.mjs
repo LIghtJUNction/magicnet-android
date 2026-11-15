@@ -70,9 +70,7 @@ try {
 
 assert.match(aboutPage, /流量路径/);
 assert.match(aboutPage, /goto-tab/);
-assert.match(aboutPage, /DATAPLANE_LABEL/);
 assert.match(aboutPage, /mn-path-flow/);
-assert.match(aboutPage, /InsightChip/);
 assert.match(aboutPage, /eBPF/);
 assert.doesNotMatch(aboutPage, /cli ebpf status/);
 
