@@ -11,6 +11,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -205,6 +206,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('scripts/prepare-android-fixture-tools.sh', step['run'])
         self.assertEqual(self.step('Restore pristine Android AVD')['with']['key'],
                          self.step('Save pristine Android AVD')['with']['key'])
+
+    def test_fixture_yq_uses_production_release_lock(self):
+        command = self.step('Prepare x86_64 fixture utilities')['run']
+        self.assertIn('. hooks/lib/release_locks.sh', command)
+        self.assertIn('release_lock_lookup yq', command)
+        self.assertIn('RELEASE_LOCK_REPO" == mikefarah/yq', command)
+        self.assertIn('RELEASE_LOCK_ASSET" == yq_linux_arm64', command)
+        install = 'go install "github.com/mikefarah/yq/v4@$RELEASE_LOCK_TAG"'
+        self.assertIn(install, command)
+        self.assertLess(command.index('release_lock_lookup yq'), command.index(install))
+        self.assertNotRegex(command, r'github\.com/mikefarah/yq/v4@v[0-9]')
 
     def test_exact_serial_pinned_kernel_and_enforcing_not_disabled(self):
         self.assertEqual(self.flow['env']['ANDROID_SERIAL'], 'emulator-5554')
@@ -523,6 +535,80 @@ elif args == ['shell', 'ip link show magicnet0']:
         self.assertIn('MAGICNET_KSUD_HOST is required', result.stderr)
         self.assertFalse(any('helper' in event for event in self.events()))
         self.assertEqual(self.cli_calls(), [])
+
+
+
+class FixtureToolsPinTests(unittest.TestCase):
+    """Exercise fixture pin and digest checks before any network or build work."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for name in ('scripts/prepare-android-fixture-tools.sh',
+                     'hooks/lib/release_locks.sh'):
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, target)
+        self.lock = self.root / 'hooks/lib/release_locks.sh'
+        values = subprocess.check_output([
+            'bash', '-c', '. "$1"; release_lock_lookup ecapture; '
+            'printf "%s\\n" "$RELEASE_LOCK_REPO" "$RELEASE_LOCK_TAG" "$RELEASE_LOCK_ASSET"',
+            'fixture-pin', str(self.lock),
+        ], text=True).splitlines()
+        self.repo, self.tag, self.asset = values
+        self.bin = self.root / 'bin'
+        self.bin.mkdir()
+        curl = self.bin / 'curl'
+        curl.write_text(f"""#!{sys.executable}
+import json, os, sys
+from pathlib import Path
+Path(os.environ['FIXTURE_CURL_LOG']).write_text(json.dumps(sys.argv[1:]))
+if os.environ['FIXTURE_DOWNLOAD_MODE'] == 'bad-digest':
+    Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'unverified download')
+else:
+    sys.exit(73)
+""")
+        curl.chmod(0o755)
+        git = self.bin / 'git'
+        git.write_text('#!/bin/sh\n: > "$FIXTURE_GIT_LOG"\nexit 99\n')
+        git.chmod(0o755)
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
+                        FIXTURE_CURL_LOG=str(self.root / 'curl.json'),
+                        FIXTURE_GIT_LOG=str(self.root / 'git-called'),
+                        LC_ALL='C')
+
+    def run_prepare(self, mode='boundary'):
+        return subprocess.run([
+            'bash', str(self.root / 'scripts/prepare-android-fixture-tools.sh'),
+            str(self.root / 'output'),
+        ], env=dict(self.env, FIXTURE_DOWNLOAD_MODE=mode),
+            text=True, capture_output=True, timeout=15)
+
+    def test_reviewed_fixture_pin_matches_current_production_release(self):
+        result = self.run_prepare()
+        self.assertEqual(result.returncode, 73, result.stderr)
+        self.assertTrue(self.asset.endswith('-android-arm64.tar.gz'))
+        expected = (f'https://github.com/{self.repo}/releases/download/{self.tag}/'
+                    + self.asset.replace('-android-arm64.tar.gz', '-android-amd64.tar.gz'))
+        arguments = json.loads((self.root / 'curl.json').read_text())
+        self.assertIn(expected, arguments)
+        self.assertFalse((self.root / 'git-called').exists())
+
+    def test_production_pin_change_refuses_before_download(self):
+        self.lock.write_text(self.lock.read_text().replace(self.tag, 'v0.0.0'))
+        result = self.run_prepare()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('fixture pin must be reviewed alongside the production pin', result.stderr)
+        self.assertFalse((self.root / 'curl.json').exists())
+        self.assertFalse((self.root / 'git-called').exists())
+
+    def test_unverified_download_refuses_before_extraction_or_build(self):
+        result = self.run_prepare('bad-digest')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAILED', result.stdout)
+        self.assertFalse((self.root / 'git-called').exists())
+        self.assertEqual(list((self.root / 'output').iterdir()), [])
 
 
 if __name__ == '__main__':

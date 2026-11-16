@@ -26,23 +26,23 @@ const planCopied = ref(false);
 const pendingWebuiAction = ref<PendingToolAction | null>(null);
 const panel = ref({
   name: "zashboard",
-  url: "https://github.com/Zephyruso/zashboard/releases/download/v3.16.0/dist-no-fonts.zip",
-  sha256: "1d8c7aca69e6ddead5e4fe6e92ceda23a499105f675d053362f7c9b53a9730f9",
+  url: "https://github.com/Zephyruso/zashboard/releases/download/v3.30.0/dist-no-fonts.zip",
+  sha256: "ec794e7c4daf4c839ecbc0a1292fdaf7bc7a6e3e4a4ce284db2b32379145c278",
   metadata: ""
 });
 const panelPresets = [
   {
     label: "zashboard no-fonts",
     name: "zashboard",
-    url: "https://github.com/Zephyruso/zashboard/releases/download/v3.16.0/dist-no-fonts.zip",
-    sha256: "1d8c7aca69e6ddead5e4fe6e92ceda23a499105f675d053362f7c9b53a9730f9",
+    url: "https://github.com/Zephyruso/zashboard/releases/download/v3.30.0/dist-no-fonts.zip",
+    sha256: "ec794e7c4daf4c839ecbc0a1292fdaf7bc7a6e3e4a4ce284db2b32379145c278",
     note: "MagicNet 默认本地面板，包体更小，适合设备侧后台下载。"
   },
   {
     label: "zashboard full",
     name: "zashboard",
-    url: "https://github.com/Zephyruso/zashboard/releases/download/v3.16.0/dist.zip",
-    sha256: "d103652ee04e9d73017230f483e0cb8875bf4bdf2c139faae47300ba7f5dfd16",
+    url: "https://github.com/Zephyruso/zashboard/releases/download/v3.30.0/dist.zip",
+    sha256: "1f91c014e61e768240a86ad0a9bd565b247ec5a0e26b125fb5d19076682905b7",
     note: "完整字体包体积更大；下载包会在安装前校验 SHA-256。"
   }
 ];
