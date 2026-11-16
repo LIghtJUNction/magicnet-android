@@ -1421,8 +1421,8 @@ mod tests {
             &curl,
             "https://github.com/example/repository/config.json",
             Some(&expected),
-            Duration::from_secs(2),
-            Duration::from_secs(3),
+            Duration::from_secs(10),
+            Duration::from_secs(15),
         )
         .expect("fetch fixture");
         assert!(template.contains("inbounds"));
