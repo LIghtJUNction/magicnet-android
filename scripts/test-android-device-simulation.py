@@ -507,11 +507,12 @@ class InstalledControlsTests(unittest.TestCase):
 
     def test_export_curl_requires_real_capabilities_and_shared_build_metadata(self):
         original = curl_diagnostic_fixture(self.capture_header)
+        curl_version = SIM.curl_artifact_verifier().lock()['versions']['curl']
         for old, new in (('selection=module_bin', 'selection=system'), ('available=true', 'available=false'),
                          ('"tls": true', '"tls": false'), ('"gzip": true', '"gzip": 1'),
                          ('"api": 21', '"api": 21.0'), ('"schema": 1', '"schema": true'),
                          ('"runtime_bundle": false', '"runtime_bundle": 0'),
-                         ('"curl_version": "8.22.0"', '"curl_version": "0.0.0"'),
+                         (f'"curl_version": "{curl_version}"', '"curl_version": "0.0.0"'),
                          ('"abi": "x86_64"', '"abi": "arm64-v8a"')):
             with self.subTest(old=old):
                 self.replace_report_section('curl executor', original.replace(old, new))

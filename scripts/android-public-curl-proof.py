@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import gzip
 import hashlib
 import http.server
+import json
 import os
 from pathlib import Path
 import re
@@ -34,8 +35,10 @@ CLEANUP_SECONDS = 8
 MAX_OUTPUT = 65536
 CERT_BACKDATE_SECONDS = 300
 CERT_LIFETIME_SECONDS = 86400
-EMBEDDED_CA_SIZE = 188900
-EMBEDDED_CA_SHA256 = 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505'
+_CURL_LOCK = json.loads(Path(__file__).with_name('android-curl-lock.json').read_text())
+EMBEDDED_CA_SIZE = _CURL_LOCK['ca']['bytes']
+EMBEDDED_CA_SHA256 = _CURL_LOCK['sources']['ca']['sha256']
+EMBEDDED_CA_CERT_COUNT = _CURL_LOCK['ca']['cert_count']
 # Fixed names only. Match trusted curl's proxy/loader/shell-hook clearing and
 # additionally remove CA overrides so the last control tests embedded trust.
 UNSET = (
@@ -151,7 +154,7 @@ def inspect_embedded_ca(device, budget):
                               timeout=budget.remaining(5), check=False),
                  code='curl_embedded_ca_unknown', max_output=256 * 1024).encode('utf-8')
     require(len(ca) == EMBEDDED_CA_SIZE and hashlib.sha256(ca).hexdigest() == EMBEDDED_CA_SHA256
-            and ca.count(b'-----BEGIN CERTIFICATE-----') == 121,
+            and ca.count(b'-----BEGIN CERTIFICATE-----') == EMBEDDED_CA_CERT_COUNT,
             'curl_embedded_ca_mismatch')
 
 
@@ -430,6 +433,6 @@ def verify(device, diagnostics=None):
             'gzip': True, 'tls_positive': True, 'hostname_reject': True,
             'default_trust_reject': True, 'cleanup': True,
             'embedded_ca_identity': True, 'embedded_ca_bytes': EMBEDDED_CA_SIZE,
-            'embedded_ca_sha256': EMBEDDED_CA_SHA256, 'embedded_ca_cert_count': 121,
+            'embedded_ca_sha256': EMBEDDED_CA_SHA256, 'embedded_ca_cert_count': EMBEDDED_CA_CERT_COUNT,
             'versions': versions,
             'positive_gets': counts[0], 'hostname_reject_gets': counts[1], 'default_reject_gets': counts[2]}

@@ -49,16 +49,19 @@ NDK_SHA="$(sha256sum "$NDK/source.properties" | cut -d ' ' -f 1)"
 [[ -z "${MAGICNET_CURL_NDK_SHA256:-}" || "$NDK_SHA" == "$MAGICNET_CURL_NDK_SHA256" ]] ||
     fail 'Android NDK differs from the workflow fingerprint'
 fetch() {
-    local name="$1" url="$2" expected="$3" cache="${MAGICNET_CURL_SOURCE_CACHE:-}"
-    if [[ -n "$cache" && -f "$cache/$name" ]]; then
+    local name="$1" url="$2" expected="$3" cache="${MAGICNET_CURL_SOURCE_CACHE:-}" cached=0
+    if [[ -n "$cache" && -f "$cache/$name" ]] &&
+        printf '%s  %s\n' "$expected" "$cache/$name" | sha256sum --check --strict --status; then
         cp "$cache/$name" "$WORK/$name"
+        cached=1
     else
         timeout --kill-after=5s 240s curl -q --fail --location --silent --show-error \
             --proto '=https' --proto-redir '=https' --connect-timeout 20 --max-time 180 \
             --retry 2 "$url" -o "$WORK/$name"
     fi
-    printf '%s  %s\n' "$expected" "$WORK/$name" | sha256sum --check --strict
-    if [[ -n "$cache" && ! -f "$cache/$name" ]]; then
+    printf '%s  %s\n' "$expected" "$WORK/$name" | sha256sum --check --strict ||
+        fail "source checksum mismatch: $name (refusing unverified content)"
+    if [[ -n "$cache" && "$cached" -eq 0 ]]; then
         mkdir -p "$cache"
         cp "$WORK/$name" "$cache/$name.partial.$$"
         mv -f "$cache/$name.partial.$$" "$cache/$name"
