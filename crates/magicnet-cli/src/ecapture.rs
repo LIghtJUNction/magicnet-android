@@ -86,7 +86,7 @@ fn text_capture(app: &App, command: &str, args: &[String]) -> Result<(), String>
     let event_arg = events.to_string_lossy().to_string();
     let pid_arg = format!("--pid={pid}");
     let uid_arg = format!("--uid={uid}");
-    let capture_args = [
+    let mut capture_args = vec![
         command,
         "-l",
         &log_arg,
@@ -96,6 +96,9 @@ fn text_capture(app: &App, command: &str, args: &[String]) -> Result<(), String>
         &pid_arg,
         &uid_arg,
     ];
+    if matches!(command, "tls" | "gotls") {
+        capture_args.extend(["--text-source", "hook"]);
+    }
     println!("running ecapture {command} for {seconds}s (pid={pid}, uid={uid})");
     let outcome = run_with_timeout(&bin, &capture_args, Duration::from_secs(seconds));
     print_command_output(&outcome);
@@ -345,6 +348,57 @@ mod tests {
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn mock_ecapture(app: &App) {
+        let bin = bin_path(app);
+        fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        fs::write(&bin, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n").unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn text_commands_keep_hook_events_and_process_filters() {
+        let app = crate::test_support::temp_app();
+        mock_ecapture(&app);
+        for command in ["tls", "gotls", "nspr"] {
+            for (pid, uid, expected_pid, expected_uid) in
+                [("123", "456", "123", "456"), ("all", "all", "0", "0")]
+            {
+                ecapture_cmd(&app, &strings(&[command, "1", pid, uid])).unwrap();
+                let source = if command == "nspr" {
+                    ""
+                } else {
+                    "--text-source\nhook\n"
+                };
+                assert_eq!(
+                    fs::read_to_string(app.moddir.join("bin/ecapture.args")).unwrap(),
+                    format!(
+                        "{command}\n-l\n{}\n--eventaddr\n{}\n--tsize=4096\n--pid={expected_pid}\n--uid={expected_uid}\n{source}",
+                        app.log_dir.join(format!("ecapture-{command}.log")).display(),
+                        app.log_dir.join(format!("ecapture-{command}-events.log")).display(),
+                    ),
+                );
+            }
+        }
+        assert_eq!(fs::read_dir(&app.log_dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn invalid_text_capture_arguments_do_not_launch_or_create_logs() {
+        let app = crate::test_support::temp_app();
+        mock_ecapture(&app);
+        for command in ["tls", "gotls", "nspr"] {
+            for args in [
+                strings(&[command, "invalid"]),
+                strings(&[command, "1", "--pid=1"]),
+                strings(&[command, "1", "all", "-1"]),
+            ] {
+                assert!(ecapture_cmd(&app, &args).is_err());
+            }
+        }
+        assert!(!app.moddir.join("bin/ecapture.args").exists());
+        assert!(!app.log_dir.exists());
     }
 
     #[test]

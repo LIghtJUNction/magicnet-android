@@ -302,10 +302,10 @@ assert_lock() {
     [ "$RELEASE_LOCK_SHA256" = "$sha256" ] || fail "wrong $component sha256"
 }
 
-assert_lock yq v4.53.3 yq_linux_arm64 578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea
+assert_lock yq v4.54.3 yq_linux_arm64 89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67
 assert_lock jq jq-1.8.2 jq-linux-arm64 8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309
-assert_lock ecapture v2.5.2 ecapture-v2.5.2-android-arm64.tar.gz 3531f47f60a45c02662188fb151fa8bbf9c40e5c245ff293e5a50477b99df2d1
-assert_lock zashboard v3.16.0 dist-no-fonts.zip 1d8c7aca69e6ddead5e4fe6e92ceda23a499105f675d053362f7c9b53a9730f9
+assert_lock ecapture v2.11.0 ecapture-v2.11.0-android-arm64.tar.gz f962faafc0f715ffb016b86ddb841c6844c27bdb4f177b43c3e72d89c260234a
+assert_lock zashboard v3.30.0 dist-no-fonts.zip ec794e7c4daf4c839ecbc0a1292fdaf7bc7a6e3e4a4ce284db2b32379145c278
 
 singbox_url="$(git -C "$ROOT" config --file .gitmodules --get submodule.sing-box.url)"
 singbox_branch="$(git -C "$ROOT" config --file .gitmodules --get submodule.sing-box.branch)"
