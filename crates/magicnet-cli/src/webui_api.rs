@@ -450,18 +450,14 @@ pub(crate) fn api_response(
     limit: usize,
 ) -> Result<Vec<u8>, String> {
     if !crate::process::trusted_curl_path(app).is_file() {
-        let body = crate::local_http::request_with_timeout(
+        return crate::local_http::request_with_timeout(
             &app.api,
             method,
             path,
             payload,
             Duration::from_secs(seconds),
-        )?;
-        return if body.len() <= limit {
-            Ok(body)
-        } else {
-            Err("local API response exceeds the read limit".into())
-        };
+            limit,
+        );
     }
     let endpoint = format!("{}{path}", app.api);
     let timeout = seconds.to_string();

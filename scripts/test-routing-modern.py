@@ -104,6 +104,66 @@ class ModernRoutingTests(unittest.TestCase):
         result = self.optimize(fixture(route=rules))["route"]["rules"]
         self.assertEqual(result[0], {"inbound": "tun-in", "port": 53, "action": "hijack-dns"})
 
+    def test_existing_port_53_terminal_rule_covers_the_fast_path(self):
+        hijack = {"protocol": "dns", "action": "hijack-dns"}
+        for inbounds in ("tun-in", ["mixed-in", "tun-in"]):
+            sniff = {"inbound": inbounds, "action": "sniff"}
+            for previous in (
+                {"port": 53, "action": "hijack-dns"},
+                {"port": [53, 5353], "action": "hijack-dns"},
+                {"port": [53], "inbound": ["tun-in", "mixed-in", "custom"],
+                 "action": "hijack-dns"},
+                {"port": 53, "inbound": inbounds, "action": "hijack-dns"},
+            ):
+                with self.subTest(inbounds=inbounds, previous=previous):
+                    rules = [previous, sniff, hijack]
+                    self.assertEqual(self.optimize(fixture(route=rules))["route"]["rules"], rules)
+
+    def test_redundant_generated_dns_fast_path_is_removed(self):
+        sniff = {"inbound": ["mixed-in", "tun-in"], "action": "sniff"}
+        hijack = {"protocol": "dns", "action": "hijack-dns"}
+        fast = {"inbound": sniff["inbound"], "port": 53, "action": "hijack-dns"}
+        previous = {"port": 53, "action": "hijack-dns"}
+        rules = [previous, fast, sniff, hijack]
+        result = self.optimize(fixture(route=rules))["route"]["rules"]
+        self.assertEqual(result, [previous, sniff, hijack])
+
+    def test_partial_or_conditional_port_53_coverage_keeps_the_fast_path(self):
+        sniff = {"inbound": ["mixed-in", "tun-in"], "action": "sniff"}
+        hijack = {"protocol": "dns", "action": "hijack-dns"}
+        fast = {"inbound": sniff["inbound"], "port": 53, "action": "hijack-dns"}
+        for extra in (
+            {"inbound": "tun-in"}, {"inbound": ["custom"]},
+            {"network": "udp"}, {"invert": True}, {"domain": ["example.test"]},
+            {"port": [5353]}, {"port": ["53"]},
+            {"action": "reject"}, {"action": "route-options"},
+        ):
+            with self.subTest(extra=extra):
+                previous = {"port": 53, "action": "hijack-dns", **extra}
+                rules = [previous, sniff, hijack]
+                self.assertEqual(self.optimize(fixture(route=rules))["route"]["rules"],
+                                 [previous, fast, sniff, hijack])
+
+    def test_dns_coverage_does_not_cross_a_stateful_predecessor(self):
+        previous = {"port": 53, "action": "hijack-dns"}
+        sniff = {"inbound": ["tun-in"], "action": "sniff"}
+        hijack = {"protocol": "dns", "action": "hijack-dns"}
+        fast = {"inbound": sniff["inbound"], "port": 53, "action": "hijack-dns"}
+        for action in ("resolve", "route-options", "sniff"):
+            with self.subTest(action=action):
+                barrier = {"action": action}
+                rules = [previous, barrier, sniff, hijack]
+                self.assertEqual(self.optimize(fixture(route=rules))["route"]["rules"],
+                                 [previous, barrier, fast, sniff, hijack])
+
+    def test_packaged_template_has_only_one_port_53_fast_path(self):
+        template = json.loads((ROOT / "src/MagicNet/.config/sing-box/config.json").read_text())
+        optimized = OPTIMIZER.optimize_config(template)
+        port_53 = [rule for rule in optimized["route"]["rules"]
+                   if rule.get("port") == 53 and rule.get("action") == "hijack-dns"]
+        self.assertEqual(len(port_53), 1)
+        self.assertEqual(port_53[0], {"port": 53, "action": "hijack-dns"})
+
     def test_custom_sniff_or_missing_hijack_does_not_gain_fast_path(self):
         hijack = {"protocol": "dns", "action": "hijack-dns"}
         for sniff in (
@@ -170,6 +230,38 @@ class ModernRoutingTests(unittest.TestCase):
                      {"rule_set": ["c"], key: "target", "network": "tcp"}]
             result = self.optimize(fixture(**{section: rules}))[section]["rules"]
             self.assertEqual(result, [{"rule_set": ["a", "b"], key: "target", "action": "route"}, rules[2]])
+
+    def test_scalar_and_list_rule_sets_compact_in_stable_order(self):
+        for section, key in (("dns", "server"), ("route", "outbound")):
+            for first, second in (("a", "b"), ("a", ["b", "a"]), (["a", "b"], "a")):
+                with self.subTest(section=section, first=first, second=second):
+                    rules = [{"rule_set": first, key: "target", "action": "route"},
+                             {"rule_set": second, key: "target"}]
+                    result = self.optimize(fixture(**{section: rules}))[section]["rules"]
+                    self.assertEqual(result, [{"rule_set": ["a", "b"], key: "target",
+                                               "action": "route"}])
+
+    def test_scalar_compaction_preserves_scopes_targets_and_barriers(self):
+        for section, key in (("dns", "server"), ("route", "outbound")):
+            first = {"rule_set": "a", key: "target"}
+            last = {"rule_set": ["b"], key: "target"}
+            for middle in (
+                {"rule_set": "c", key: "other"},
+                {"rule_set": "c", key: "target", "network": "udp"},
+                {"rule_set": "c", key: "target", "invert": True},
+                {"action": "evaluate", "server": "resolver"},
+            ):
+                with self.subTest(section=section, middle=middle):
+                    rules = [first, middle, last]
+                    self.assertEqual(self.optimize(fixture(**{section: rules}))[section]["rules"],
+                                     rules)
+
+    def test_invalid_rule_set_values_are_not_hidden_by_compaction(self):
+        for invalid in (None, False, 53, "", [], ["a", None]):
+            with self.subTest(invalid=invalid):
+                rules = [{"rule_set": invalid, "outbound": "target"},
+                         {"rule_set": ["b"], "outbound": "target"}]
+                self.assertEqual(self.optimize(fixture(route=rules))["route"]["rules"], rules)
 
     def test_explicit_wechat_priority_keeps_tencent_behind_ads(self):
         rules = [{"rule_set": ["lyc-geosite-ads"], "server": "doh-cloudflare"},

@@ -16,7 +16,7 @@ enum ResponseMode {
 
 #[cfg(test)]
 pub(crate) fn request(api: &str, method: &str, path: &str, body: &str) -> Result<Vec<u8>, String> {
-    request_with_timeout(api, method, path, body, Duration::from_secs(3))
+    request_with_timeout(api, method, path, body, Duration::from_secs(3), MAX_BODY)
 }
 
 pub(crate) fn request_with_timeout(
@@ -25,8 +25,17 @@ pub(crate) fn request_with_timeout(
     path: &str,
     body: &str,
     timeout: Duration,
+    limit: usize,
 ) -> Result<Vec<u8>, String> {
-    request_response(api, method, path, body, timeout, ResponseMode::Complete)
+    request_response(
+        api,
+        method,
+        path,
+        body,
+        timeout,
+        ResponseMode::Complete,
+        limit,
+    )
 }
 
 pub(crate) fn first_line(api: &str, path: &str) -> Result<Vec<u8>, String> {
@@ -37,6 +46,7 @@ pub(crate) fn first_line(api: &str, path: &str) -> Result<Vec<u8>, String> {
         "",
         Duration::from_secs(4),
         ResponseMode::FirstLine,
+        MAX_BODY,
     )
 }
 
@@ -47,7 +57,9 @@ fn request_response(
     body: &str,
     timeout: Duration,
     mode: ResponseMode,
+    limit: usize,
 ) -> Result<Vec<u8>, String> {
+    let limit = limit.min(MAX_BODY);
     let authority = api
         .strip_prefix("http://")
         .ok_or("local API requires loopback HTTP")?
@@ -92,8 +104,17 @@ fn request_response(
         stream
             .set_read_timeout(Some(remaining(deadline)?))
             .map_err(|_| "local API timeout failed")?;
+        // Once the headers are known, read only the remaining body budget
+        // plus one byte to detect overflow. Do not grow the retained buffer
+        // with that extra byte; a small API request must not first collect
+        // the transport-wide 8 MiB ceiling before rejecting its response.
+        let read_limit = if framing.is_some() {
+            buffer.len().min(limit.saturating_sub(response.len()) + 1)
+        } else {
+            buffer.len()
+        };
         let count = stream
-            .read(&mut buffer)
+            .read(&mut buffer[..read_limit])
             .map_err(|error| match error.kind() {
                 std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
                     "local API deadline exceeded"
@@ -106,6 +127,9 @@ fn request_response(
                 return Err("incomplete local API response".into());
             }
             return Ok(response);
+        }
+        if framing.is_some() && count > limit.saturating_sub(response.len()) {
+            return Err("local API response exceeds the read limit".into());
         }
         // Only the three bytes adjoining this read can begin a delimiter
         // missed by the previous scan. Header parsing therefore stays linear.
@@ -125,7 +149,11 @@ fn request_response(
             if end + 4 > MAX_HEAD {
                 return Err("local API headers too large".into());
             }
-            framing = Some(parse_head(&response[..end])?);
+            let length = parse_head(&response[..end])?;
+            if length.is_some_and(|length| length > limit) {
+                return Err("local API response exceeds the read limit".into());
+            }
+            framing = Some(length);
             // Retain the receive allocation for the body. split_off copied
             // the full response while both large buffers were still live.
             let start = end + 4;
@@ -133,7 +161,10 @@ fn request_response(
             response.truncate(response.len() - start);
         }
         let length = framing.expect("parsed response head");
-        if response.len() > MAX_BODY || length.is_some_and(|length| response.len() > length) {
+        if response.len() > limit {
+            return Err("local API response exceeds the read limit".into());
+        }
+        if length.is_some_and(|length| response.len() > length) {
             return Err("local API response too large or incorrectly framed".into());
         }
         if let ResponseMode::FirstLine = mode {
@@ -206,6 +237,15 @@ mod tests {
     use std::thread;
 
     fn exchange(response: &[u8], method: &str, body: &str) -> Result<Vec<u8>, String> {
+        exchange_limited(response, method, body, MAX_BODY)
+    }
+
+    fn exchange_limited(
+        response: &[u8],
+        method: &str,
+        body: &str,
+        limit: usize,
+    ) -> Result<Vec<u8>, String> {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let api = format!("http://{}", listener.local_addr().unwrap());
         let response = response.to_vec();
@@ -234,7 +274,14 @@ mod tests {
             assert!(received.ends_with(&expected_body));
             let _ = stream.write_all(&response);
         });
-        let result = request(&api, method, "/configs", body);
+        let result = request_with_timeout(
+            &api,
+            method,
+            "/configs",
+            body,
+            Duration::from_secs(3),
+            limit,
+        );
         server.join().unwrap();
         result
     }
@@ -343,7 +390,8 @@ mod tests {
             "/traffic",
             "",
             Duration::from_millis(80),
-            ResponseMode::FirstLine
+            ResponseMode::FirstLine,
+            MAX_BODY,
         )
         .is_err());
         server.join().unwrap();
@@ -375,10 +423,98 @@ mod tests {
             }
         });
         let start = Instant::now();
-        assert!(
-            request_with_timeout(&api, "GET", "/configs", "", Duration::from_millis(80)).is_err()
-        );
+        assert!(request_with_timeout(
+            &api,
+            "GET",
+            "/configs",
+            "",
+            Duration::from_millis(80),
+            MAX_BODY,
+        )
+        .is_err());
         assert!(start.elapsed() < Duration::from_secs(1));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn caller_response_limit_accepts_exact_bytes_and_rejects_one_more() {
+        for limit in [0, 1, 8192, 1024 * 1024] {
+            for content_length in [false, true] {
+                for extra in [0, 1] {
+                    let body = vec![b'x'; limit + extra];
+                    let head = if content_length {
+                        format!("HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+                    } else {
+                        "HTTP/1.0 200 OK\r\n\r\n".to_string()
+                    };
+                    let mut response = head.into_bytes();
+                    response.extend_from_slice(&body);
+                    let result = exchange_limited(&response, "GET", "", limit);
+                    if extra == 0 {
+                        assert_eq!(result.unwrap(), body);
+                    } else {
+                        assert_eq!(
+                            result.unwrap_err(),
+                            "local API response exceeds the read limit"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn caller_response_limit_rejects_without_waiting_for_body_or_eof() {
+        let limit = 1024 * 1024;
+        for declared_length in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let api = format!("http://{}", listener.local_addr().unwrap());
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut received = Vec::new();
+                while !received.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    assert_eq!(stream.read(&mut byte).unwrap(), 1);
+                    received.push(byte[0]);
+                }
+                if declared_length {
+                    // No body follows: the header alone must reject the size.
+                    write!(
+                        stream,
+                        "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n",
+                        limit + 1
+                    )
+                    .unwrap();
+                } else {
+                    // No EOF follows: exceeding the caller budget must finish
+                    // the request without waiting for the server to close.
+                    stream.write_all(b"HTTP/1.0 200 OK\r\n\r\n").unwrap();
+                    let _ = stream.write_all(&vec![b'x'; limit + 1]);
+                }
+                let _ = stream.read(&mut [0]);
+            });
+            let result =
+                request_with_timeout(&api, "GET", "/configs", "", Duration::from_secs(1), limit);
+            server.join().unwrap();
+            assert_eq!(
+                result.unwrap_err(),
+                "local API response exceeds the read limit"
+            );
+        }
+    }
+
+    #[test]
+    fn caller_response_limit_cannot_raise_the_transport_ceiling() {
+        let response = format!(
+            "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n",
+            MAX_BODY + 1
+        );
+        assert_eq!(
+            exchange_limited(response.as_bytes(), "GET", "", usize::MAX).unwrap_err(),
+            "local API response too large"
+        );
     }
 }

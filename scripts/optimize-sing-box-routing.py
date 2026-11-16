@@ -190,6 +190,14 @@ def _move_rule_set_tag_before(
     return rules
 
 
+def _string_list(value: Any) -> list[str] | None:
+    """Accept valid scalar/list tags without hiding malformed configuration."""
+    values = value if isinstance(value, list) else [value]
+    if values and all(isinstance(tag, str) and tag for tag in values):
+        return values
+    return None
+
+
 def _compact_adjacent_rule_sets(rules: list[Any], dispatch_key: str) -> list[Any]:
     """Merge only adjacent `rule_set -> same target` rules.
 
@@ -205,15 +213,30 @@ def _compact_adjacent_rule_sets(rules: list[Any], dispatch_key: str) -> list[Any
             and _pure_dispatch(rule, dispatch_key)
             and _pure_dispatch(result[-1], dispatch_key)
             and rule.get(dispatch_key) == result[-1].get(dispatch_key)
-            and isinstance(rule.get("rule_set"), list)
-            and isinstance(result[-1].get("rule_set"), list)
+            and (tags := _string_list(rule.get("rule_set"))) is not None
+            and (previous_tags := _string_list(result[-1].get("rule_set"))) is not None
         ):
-            result[-1]["rule_set"] = _stable_unique(
-                result[-1]["rule_set"] + rule["rule_set"]
-            )
+            result[-1]["rule_set"] = _stable_unique(previous_tags + tags)
             continue
         result.append(copy.deepcopy(rule))
     return result
+
+
+def _covers_dns_fast_path(rule: Any, inbounds: list[str]) -> bool:
+    """Only an adjacent pure terminal port-53 rule proves full coverage."""
+    if (
+        not isinstance(rule, dict)
+        or set(rule) - {"inbound"} != {"port", "action"}
+        or rule["action"] != "hijack-dns"
+    ):
+        return False
+    ports = rule["port"] if isinstance(rule["port"], list) else [rule["port"]]
+    if 53 not in ports or any(type(port) is not int or not 1 <= port <= 65535 for port in ports):
+        return False
+    if "inbound" not in rule:
+        return True
+    covered = _string_list(rule["inbound"])
+    return covered is not None and all(tag in covered for tag in inbounds)
 
 
 def _dns_fast_path(rules: list[Any]) -> list[Any]:
@@ -235,7 +258,12 @@ def _dns_fast_path(rules: list[Any]) -> list[Any]:
             tags = inbounds if isinstance(inbounds, list) else [inbounds]
             if tags and all(tag in ("mixed-in", "tun-in") for tag in tags):
                 fast = {"inbound": copy.deepcopy(inbounds), "port": 53, "action": "hijack-dns"}
-                if not result or result[-1] != fast:
+                # Older builds may already contain this generated rule after
+                # an unscoped hijack. Remove it only when its immediate terminal
+                # predecessor covers every port/inbound it could match.
+                if len(result) > 1 and result[-1] == fast and _covers_dns_fast_path(result[-2], tags):
+                    result.pop()
+                if not result or not _covers_dns_fast_path(result[-1], tags):
                     result.append(fast)
         result.append(rule)
     return result
