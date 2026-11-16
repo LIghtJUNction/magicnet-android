@@ -21,7 +21,7 @@ require_entry() {
     grep -Fx "$entry" "$entries_file" >/dev/null || fail "missing zip entry: $entry"
 }
 
-for tool in file flock go grep jq python3 readelf sed unzip zipinfo; do
+for tool in flock go grep jq python3 sed unzip zipinfo; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing required command: $tool"
 done
 
@@ -81,17 +81,9 @@ require_android_arm64_elf() {
     local entry="$1"
     local output
     unzip -oq "$ZIP_PATH" "$entry" -d "$elf_tmp"
-    output="$(LC_ALL=C file -L "$elf_tmp/$entry")"
-    grep -F 'ELF 64-bit' <<<"$output" >/dev/null ||
-        fail "$entry is not an ELF64 binary: $output"
-    grep -F 'ARM aarch64' <<<"$output" >/dev/null ||
-        fail "$entry is not AArch64: $output"
-    if ! grep -F 'interpreter /system/bin/linker64' <<<"$output" >/dev/null &&
-        ! grep -F 'statically linked' <<<"$output" >/dev/null; then
-        fail "$entry is neither linked for Android linker64 nor static: $output"
+    if ! output="$(python3 "$ROOT/scripts/android-elf.py" "$elf_tmp/$entry" 2>&1)"; then
+        fail "$entry is not an Android ARM64 executable: $output"
     fi
-    LC_ALL=C readelf -h "$elf_tmp/$entry" | grep -F 'Machine:                           AArch64' >/dev/null ||
-        fail "$entry ELF machine is not AArch64"
 }
 
 for entry in cli bin/magicnet-cli bin/sing-box bin/ecapture bin/jq bin/curl; do
