@@ -31,18 +31,19 @@ async function mount(page) {
   await page.evaluate(async () => {
     const {state} = (await import('/src/composables/useMagicNet.ts')).useMagicNet();
     Object.assign(state, {hasKsu:true,busy:false,phase:'idle',queueDepth:0,output:'',notice:''});
-    Object.assign(state.connectivity, {status:'offline',reason:'timeout',warning:true,
+    Object.assign(state.connectivity, {path:'selected_proxy',mixedStatus:'failed',status:'offline',reason:'timeout',warning:true,
       checkedAt:1234,nextCheckAt:1714,latencyMs:null,retryInSeconds:480,failures:4,
       lastAction:'refresh',actionStatus:'failed'});
   });
 }
 
-test('warning explains failed Google check and exports one complete device file', async ({page}, info) => {
+test('warning explains the failed selected proxy and exports one complete device file', async ({page}, info) => {
   await mount(page);
   const notice = page.getByTestId('connectivity-notice');
   await expect(notice).toHaveAttribute('role', 'alert');
-  await expect(notice).toContainText('⚠️ Google 连接失败');
+  await expect(notice).toContainText('⚠️ 当前代理连接失败');
   await expect(notice).toContainText('480 秒');
+  await expect(notice).toContainText('上次检查：');
   await expect(notice).toContainText('已尝试更新订阅');
   const button = page.getByRole('button', {name:'一键导出诊断包',exact:true});
   // Immediate duplicate events must share the same in-flight export.
@@ -80,9 +81,32 @@ test('overview separates core readiness from Google availability and clears reco
   await expect(page.getByTestId('connectivity-notice').getByRole('button',{name:'打开诊断',exact:true})).toBeVisible();
   await page.evaluate(async () => {
     const {state} = (await import('/src/composables/useMagicNet.ts')).useMagicNet();
-    Object.assign(state.connectivity, {status:'online',warning:false,latencyMs:52,failures:0});
+    Object.assign(state.connectivity, {status:'online',mixedStatus:'online',warning:false,latencyMs:52,failures:0});
   });
   await expect(page.getByTestId('connectivity-notice')).toHaveAttribute('role','status');
   await expect(page.getByTestId('connectivity-notice')).toContainText('Google 连接正常');
   await expect(page.getByTestId('connectivity-notice')).not.toContainText('已尝试更新订阅');
+});
+
+test('independent application failure and an unsupported core stay visibly unresolved', async ({page}, info) => {
+  await mount(page);
+  const notice = page.getByTestId('connectivity-notice');
+  await page.evaluate(async () => {
+    const {state} = (await import('/src/composables/useMagicNet.ts')).useMagicNet();
+    Object.assign(state.connectivity, {status:'degraded',reason:'mixed_path_failed',
+      mixedStatus:'failed',warning:true,lastAction:'failover',actionStatus:'rollback_failed'});
+  });
+  await expect(notice).toContainText('应用代理入口异常');
+  await expect(notice).toContainText('恢复原选择未完成');
+  await expect(notice).not.toContainText('均已验证');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  await page.screenshot({path:info.outputPath('mixed-path-failure.png'),fullPage:true,timeout:20000});
+  await page.evaluate(async () => {
+    const {state} = (await import('/src/composables/useMagicNet.ts')).useMagicNet();
+    Object.assign(state.connectivity, {status:'unknown',reason:'probe_unsupported',
+      mixedStatus:'unknown',warning:true,lastAction:'none',actionStatus:'none'});
+  });
+  await expect(notice).toContainText('无法执行联网检查');
+  await expect(notice).toContainText('核心版本不支持严格检查');
+  await expect(notice).not.toContainText('连接正常');
 });

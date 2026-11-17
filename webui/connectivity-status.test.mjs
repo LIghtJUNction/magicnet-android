@@ -39,3 +39,30 @@ test("file export accepts only completed structured results and bounded metadata
   assert.equal(parseSupportExport(envelope("support.export", good) + "\n" + envelope("support.export", good)), null);
   assert.equal(parseSupportExport(JSON.stringify({schema:1,ok:false,command:"support.export",error:{code:"support.export_failed"}})), null);
 });
+
+
+test("selected proxy requires independent mixed verification before green status", () => {
+  const selected = {...online, path:"selected_proxy", mixed_status:"online"};
+  assert.equal(parseConnectivity(selected).status, "online");
+  assert.equal(parseConnectivity(selected).path, "selected_proxy");
+  for (const mixed_status of [undefined, "failed", "not_run", "unknown"])
+    assert.equal(parseConnectivity({...selected, mixed_status}), null);
+  const degraded = parseConnectivity({...selected, status:"degraded", reason:"mixed_path_failed",
+    mixed_status:"failed", warning:false});
+  assert.equal(degraded.warning, true);
+  assert.equal(degraded.mixedStatus, "failed");
+});
+
+test("unsupported strict core stays unknown and is actionable", () => {
+  const result = parseConnectivity({...online, path:"selected_proxy", mixed_status:"not_run",
+    status:"unknown", reason:"probe_unsupported", http_status:null, latency_ms:null});
+  assert.equal(result.status, "unknown");
+  assert.equal(result.warning, true);
+});
+
+test("bounded failover status survives the machine boundary", () => {
+  const result = parseConnectivity({...online, path:"selected_proxy", mixed_status:"online",
+    last_action:"failover", action_status:"ok"});
+  assert.equal(result.lastAction, "failover");
+  assert.equal(result.actionStatus, "ok");
+});
