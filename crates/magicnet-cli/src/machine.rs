@@ -266,6 +266,9 @@ fn capabilities_value() -> Value {
                 "transparent_plane_readiness",
                 "dns_capture_preflight",
                 "low_frequency_connectivity",
+                "strict_selected_proxy_probe",
+                "bounded_selector_failover",
+                "manual_connectivity_check",
                 "bounded_tun_auto_route_recovery",
                 "additive_routing_overlay"
             ],
@@ -992,7 +995,7 @@ mod tests {
             value["data"]["connectivity"]["target"],
             crate::connectivity::TARGET
         );
-        assert_eq!(value["data"]["connectivity"]["path"], "mixed_proxy");
+        assert_eq!(value["data"]["connectivity"]["path"], "selected_proxy");
         assert!(value["data"]["connectivity"]["probe_count"].is_u64());
         assert!(!root.join(".state/machines/connectivity.state").exists());
         assert!(!root.join(".state/connectivity.lock").exists());

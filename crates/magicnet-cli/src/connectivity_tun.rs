@@ -308,7 +308,11 @@ pub(super) fn recover(
         state.tun.action_status = "busy";
         return state.publish(app);
     };
-    if cancelled() || super::live(app) != Ok(true) {
+    if cancelled()
+        || super::live(app) != Ok(true)
+        || !super::selected::automatic_mode(app)
+        || !super::selected::same_request(app, state, clock)
+    {
         return Ok(());
     }
     // Re-read configuration, journals, generation and every RPDB/FIB snapshot
@@ -323,6 +327,8 @@ pub(super) fn recover(
     }
     if cancelled()
         || super::live(app) != Ok(true)
+        || !super::selected::automatic_mode(app)
+        || !super::selected::same_request(app, state, clock)
         || crate::service::automatic_tun_recovery_allowed(app) != Ok(true)
         || !state.tun.recovery_due(clock, state.action_uptime)
     {

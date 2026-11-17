@@ -387,6 +387,10 @@ fn real_route_recovery_rechecks_evidence_restarts_only_owned_core_and_respects_s
     let core_script = "trap 'exit 0' TERM INT\nprintf '%s' $$ >\"$MODDIR/${MAGICNET_TEST_TUN_PIDFILE:-core.pid}\"\nwhile :; do sleep 30 & wait; done";
     script("bin/sing-box", core_script);
     script("foreign/sing-box", core_script);
+    script(
+        "bin/curl",
+        r#"case "$*" in */configs*) printf '{"mode":"rule"}' ;; *) exit 22 ;; esac"#,
+    );
     script("bin/pidof", "test \"$1\" = sing-box || exit 1\ncat \"$MODDIR/core.pid\"; printf '\\n'; cat \"$MODDIR/foreign.pid\"");
     script(
         "bin/ip",

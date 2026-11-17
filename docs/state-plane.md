@@ -1,6 +1,6 @@
 # MagicNet file-backed state plane
 
-The connectivity producer owns `.state/machines/connectivity.state`: bounded schema-1 phase/reason/counters, monotonic retry deadlines and recovery cooldowns, atomically published by the low-frequency watchdog. Generic reconciliation must not overwrite its retry budget. JSON status and support exports omit the internal boot token. See [connectivity and diagnostics](connectivity-diagnostics.md).
+The connectivity producer owns `.state/machines/connectivity.state`: bounded schema-1 phase/reason/counters, monotonic retry deadlines and recovery cooldowns, atomically published by the low-frequency watchdog. Generic reconciliation must not overwrite its retry budget. Manual selector changes coalesce a private check request; the connectivity producer consumes it under its existing lock, records actual probes, and keeps action/refresh/TUN recovery budgets. The private request is a scheduling input, not a second public status file. Canonical mixed-status fields distinguish the application listener from the explicitly selected proxy; missing strict-probe support remains unknown. JSON status and support exports omit the internal boot token. See [connectivity and diagnostics](connectivity-diagnostics.md).
 
 MagicNet treats files as the durable device-state boundary. Runtime code may keep short-lived local variables while performing an operation, but a state that another process, a later invocation, WebUI, MCP, diagnostics, or crash recovery needs to observe must have one canonical file representation.
 

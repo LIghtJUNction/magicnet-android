@@ -57,19 +57,20 @@ fn failures_back_off_and_online_resets_without_a_recovery_burst() {
 
 #[test]
 fn missing_or_invalid_executor_is_not_reported_as_an_upstream_failure() {
-    for reason in ["probe_unavailable", "probe_invalid"] {
+    for reason in ["probe_unavailable", "probe_invalid", "probe_unsupported"] {
         let mut state = State::new(&clock(100));
         let failed = Observation::failed(reason);
         for now in [100, 500] {
             state.record(&clock(now), &failed, Some(&failed), Some(&failed));
-            assert_eq!(state.phase, "offline");
+            assert_eq!(state.phase, "unknown");
             assert_eq!(state.reason, reason);
             assert_eq!(state.primary_reason, reason);
             assert_eq!(state.http, None);
             assert_eq!(state.millis, None);
             assert_eq!(state.action(&clock(now), true), None);
         }
-        assert_eq!(state.next_uptime, 620);
+        assert_eq!(state.next_uptime, 800);
+        assert_eq!(state.failures, 0);
         // Even if the executor changes between requests and the direct control
         // later works, a malformed primary result cannot authorize recovery.
         state.record(&clock(1000), &failed, Some(&failed), Some(&online()));
@@ -255,7 +256,8 @@ fn duplicate_ticks_share_one_lock_and_sleeping_ticks_do_not_probe() {
     drop(first);
     let clock = Clock::now().unwrap();
     let mut state = State::new(&clock);
-    state.record(&clock, &online(), None, None);
+    state.record(&clock, &online(), Some(&online()), None);
+    state.record_mixed(Some(&online()));
     state.tun.record(&clock, "not_required");
     state.publish(&app).unwrap();
     let before = fs::read(app.moddir.join(STATE)).unwrap();
@@ -340,9 +342,10 @@ fn actual_curl_child_has_fixed_deadline_and_no_direct_fallback_or_insecure_flags
     ] {
         assert!(args.windows(2).any(|p| p == pair));
     }
-    assert!(!args
-        .iter()
-        .any(|a| matches!(*a, "-k" | "--insecure" | "-L" | "--location")));
+    assert!(!args.iter().any(|a| matches!(
+        *a,
+        "-k" | "--insecure" | "-L" | "--location" | "-I" | "--head"
+    )));
     assert!(probe(&app, TARGET, Some("http://127.0.0.1:9876"), true).ok);
     fs::write(&path, "#!/bin/sh\nprintf '204 0.012'; exit 6\n").unwrap();
     assert_eq!(
@@ -359,7 +362,118 @@ fn a_stopped_core_cancels_a_planned_repair_under_the_lifecycle_lock() {
     failed_cycle(&mut state, &now);
     failed_cycle(&mut state, &now);
     assert_eq!(state.action(&now, true), Some("repair"));
-    recover(&app, &mut state, &now, "repair").unwrap();
+    recover(&app, &mut state, &now, "repair", None).unwrap();
     assert_eq!(state.last_action, "none");
     assert!(!app.moddir.join(STATE).exists());
+}
+
+#[test]
+fn mixed_success_cannot_mask_selected_failure_and_selected_success_needs_working_ingress() {
+    let now = clock(100);
+    let mut state = State::new(&now);
+    failed_cycle(&mut state, &now);
+    state.record_mixed(Some(&online()));
+    assert_eq!(state.phase, "offline");
+    assert_eq!(state.primary_reason, "timeout");
+    assert_eq!(state.mixed, "online");
+
+    state.record(&now, &online(), Some(&online()), None);
+    state.record_mixed(Some(&Observation::failed("proxy_refused")));
+    assert_eq!(state.phase, "degraded");
+    assert_eq!(state.reason, "mixed_path_failed");
+    assert_eq!(state.primary_reason, "ok");
+    assert_eq!(state.action(&now, true), None);
+
+    state.record(&now, &online(), Some(&online()), None);
+    state.record_mixed(Some(&Observation::failed("probe_unavailable")));
+    assert_eq!(state.phase, "unknown");
+    assert_eq!(state.mixed, "unknown");
+}
+
+#[test]
+fn manual_requests_coalesce_without_resetting_recovery_budgets_or_publishing_fake_results() {
+    let app = temp_app();
+    let now = Clock::now().unwrap();
+    let mut state = State::new(&now);
+    failed_cycle(&mut state, &now);
+    state.reserve_action(&now, "refresh");
+    state.tun.attempts = 2;
+    state.tun.action_uptime = now.uptime;
+    state.publish(&app).unwrap();
+    let before = fs::read(app.moddir.join(STATE)).unwrap();
+    request_check(&app).unwrap();
+    let first = requests::generation(&app, &now).unwrap();
+    request_check(&app).unwrap();
+    let second = requests::generation(&app, &now).unwrap();
+    assert_ne!(first, second);
+    assert!(requests::pending(&state, second));
+    assert_eq!(fs::read(app.moddir.join(STATE)).unwrap(), before);
+    assert_eq!(status_with_core(&app, "123")["status"], "pending");
+    let restored = State::read(&app, &now);
+    assert_eq!(restored.action_uptime, state.action_uptime);
+    assert_eq!(restored.refresh_uptime, state.refresh_uptime);
+    assert_eq!(restored.recovery_stage, state.recovery_stage);
+    assert_eq!(restored.tun.attempts, 2);
+    assert_eq!(restored.tun.action_uptime, state.tun.action_uptime);
+    state.manual_checked_uptime = now.uptime;
+    assert!(!requests::available(&state, &now));
+    let mut later = now.clone();
+    later.uptime += requests::MIN_INTERVAL;
+    assert!(requests::available(&state, &later));
+    state.request_generation = second;
+    assert!(!requests::pending(&state, second));
+}
+
+#[test]
+fn fresh_legacy_online_cache_is_read_only_unknown_and_due_without_replenishing_budgets() {
+    let app = temp_app();
+    let now = Clock::now().unwrap();
+    let mut state = State::new(&now);
+    state.record(&now, &online(), Some(&online()), None);
+    state.record_mixed(Some(&online()));
+    state.action_uptime = now.uptime;
+    state.refresh_uptime = now.uptime;
+    state.recovery_stage = 2;
+    state.tun.attempts = 2;
+    state.tun.action_uptime = now.uptime;
+    state.publish(&app).unwrap();
+    let path = app.moddir.join(STATE);
+    let current = fs::read_to_string(&path).unwrap();
+    let legacy = current
+        .lines()
+        .filter(|line| !line.starts_with("probe_path=") && !line.starts_with("mixed"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    fs::write(&path, &legacy).unwrap();
+    let old = State::read(&app, &now);
+    assert_eq!(old.phase, "unknown");
+    assert_eq!(old.reason, "not_checked");
+    assert!(old.due(&now));
+    assert_eq!(old.action_uptime, state.action_uptime);
+    assert_eq!(old.refresh_uptime, state.refresh_uptime);
+    assert_eq!(old.recovery_stage, 2);
+    assert_eq!(old.tun.attempts, 2);
+    assert_eq!(old.tun.action_uptime, state.tun.action_uptime);
+    let status = status_with_core(&app, "123");
+    assert_eq!(status["status"], "unknown");
+    assert_eq!(status["http_status"], Value::Null);
+    assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    assert!(!app.moddir.join(".state/connectivity.lock").exists());
+
+    for damaged in [
+        current.replace("http_code=204", "http_code=200"),
+        current.replace("mixed=online", "mixed=failed"),
+        current.replace("secondary=online", "secondary=not_run"),
+        current.replace("latency_ms=42", "latency_ms=unknown"),
+    ] {
+        fs::write(&path, &damaged).unwrap();
+        let read = State::read(&app, &now);
+        assert_eq!(read.phase, "unknown");
+        assert_eq!(read.reason, "probe_invalid");
+        assert!(read.due(&now));
+        assert_eq!(read.tun.attempts, 2);
+        assert_eq!(status_with_core(&app, "123")["status"], "unknown");
+        assert_eq!(fs::read_to_string(&path).unwrap(), damaged);
+    }
 }

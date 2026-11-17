@@ -2,7 +2,7 @@
 
 Low-frequency `connectivity.status` and the explicitly scoped `support.export` file writer follow [connectivity and diagnostic contracts](connectivity-diagnostics.md). `service.status.data.connectivity` carries the same cached observation. Read operations never probe the Internet; exports replace one local diagnostic file and do not change service or configuration state.
 
-The `bounded_tun_auto_route_recovery` capability adds `connectivity.tun_auto_route` for independent cached TUN route observations and bounded recovery attempts. Top-level Google/mixed-proxy fields keep their original meaning. Missing observation timestamps are `null`; route status, action status and budgets follow the linked contract. Reads never perform recovery, and public fields omit process identities and raw routes.
+The `bounded_tun_auto_route_recovery` capability adds `connectivity.tun_auto_route` for independent cached TUN route observations and bounded recovery attempts. The `strict_selected_proxy_probe` capability changes the top-level path to `selected_proxy`: both HTTPS targets are checked through the currently selected `proxy` outbound, with verified HTTP 204 responses. `mixed_path=mixed_proxy`, `mixed_status`, and `mixed_reason` independently describe the application proxy listener. A working alternate routing group cannot make the selected proxy appear online. Older modules retain `path=mixed_proxy`; consumers negotiate the capability and accept the corresponding schema. Missing observation timestamps are `null`; route status, action status and budgets follow the linked contract. Reads never perform recovery, and public fields omit process identities and raw routes.
 
 MagicNet keeps two CLI surfaces on purpose:
 
@@ -18,6 +18,10 @@ preconditions, and recover progress through status. A successful staged install
 requires reboot; it does not change the effective version immediately. MCP
 adds only the read-only `magicnet_module_update_status` convenience tool. No
 MCP convenience update/install writer is introduced.
+
+The `bounded_selector_failover` capability adds `last_action=failover`. Recovery considers at most three concrete proxy candidates already allowed by the current group, verifies them before changing selection, and compensates failed changes without replacing newer external choices. No automatic direct/block fallback is allowed. Existing action and refresh cooldowns remain in force. Action status `conflict` preserves a newer selection; `rollback_failed` reports incomplete compensation. Probe reasons add `probe_unsupported`, `selection_changed`, and `mixed_path_failed`.
+
+The `manual_connectivity_check` capability advertises the human command `cli connectivity check`. It performs a real, serialized check without triggering repair, subscription refresh, or restart. Successful manual selector changes request a fresh check after releasing the configuration lock. There is no corresponding `--json` mutation: ordinary machine status reads remain cached and network-free.
 
 ## Envelope
 

@@ -43,7 +43,7 @@ impl Fixture {
         };
         fs::write(
             root.join(".config/sing-box/config.json"),
-            r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":7892}]}"#,
+            r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":7892}],"outbounds":[{"type":"selector","tag":"proxy","outbounds":["node-a"]},{"type":"vmess","tag":"node-a"}]}"#,
         )
         .unwrap();
         fs::write(
@@ -60,19 +60,94 @@ impl Fixture {
         script(
             "bin/curl",
             r#"
+url= method=GET body= previous=
+for argument in "$@"; do
+  case "$previous" in -X|--request) method=$argument ;; --data|--data-binary|--data-raw) body=$argument ;; esac
+  case "$argument" in http://*|https://*) url=$argument ;; esac
+  previous=$argument
+done
+proxy=$(cat "$MODDIR/selected-proxy")
+ai=$(cat "$MODDIR/selected-ai-proxy")
+restricted=$(cat "$MODDIR/selected-restricted-ai")
+members='"node-a"'
+test ! -f "$MODDIR/allow-failover" || members='"node-a","node-b"'
+group_json() {
+  case "$1" in
+    proxy) printf '{"type":"Selector","now":"%s","all":[%s]}' "$proxy" "$members" ;;
+    ai-proxy) printf '{"type":"Selector","now":"%s","all":["node-a","node-b"]}' "$ai" ;;
+    restricted-ai) printf '{"type":"Selector","now":"%s","all":["node-a"]}' "$restricted" ;;
+    node-a|node-b) printf '{"type":"VMess"}' ;;
+    *) exit 22 ;;
+  esac
+}
+case "$url" in
+  */configs) printf '{"mode":"%s"}' "$(cat "$MODDIR/clash-mode")"; exit 0 ;;
+  */connections) printf '{"connections":[]}'; exit 0 ;;
+  */proxies)
+    printf '{"proxies":{"proxy":'; group_json proxy
+    printf ',"ai-proxy":'; group_json ai-proxy
+    printf ',"restricted-ai":'; group_json restricted-ai
+    printf ',"node-a":{"type":"VMess"},"node-b":{"type":"VMess"}}}'; exit 0 ;;
+  */proxies/*/delay\?*) ;;
+  */proxies/*)
+    group=${url##*/}
+    if test "$method" = PUT; then
+      node=$(printf '%s' "$body" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+      test -n "$node" || exit 22
+      printf '%s' "$node" >"$MODDIR/selected-$group"
+      printf '%s=%s\n' "$group" "$node" >>"$MODDIR/selector-changes"
+    else
+      if test "$group" = proxy && test "$proxy" = node-b && test -f "$MODDIR/unreadable-after-put"; then exit 22; fi
+      group_json "$group"
+    fi
+    exit 0 ;;
+esac
 printf '%s\n' "$*" >>"$MODDIR/calls"
 test ! -f "$MODDIR/slow" || sleep 0.2
 mode=$(cat "$MODDIR/mode")
-case "$mode:$*" in
-  dns:*) printf '000 0.001'; exit 6 ;;
-  down:*baidu*) printf '200 0.002' ;;
-  down:*) printf '000 0.010'; exit 28 ;;
-  google:*google.com*) printf '500 0.003' ;;
-  *) printf '204 0.004' ;;
+case "$url" in
+  */proxies/*/delay\?*)
+    case "$url" in */proxies/node-b/delay*)
+      if test -f "$MODDIR/slow-candidate"; then
+        : >"$MODDIR/candidate-started"
+        sleep 0.7
+      fi ;;
+    esac
+    case "$url" in
+      */proxies/proxy/delay*) selected=$proxy ;;
+      */proxies/node-b/delay*) selected=node-b ;;
+      *) selected=node-a ;;
+    esac
+    reason= status=null
+    case "$mode:$selected:$url" in
+      old-core:*) printf '{"delay":4}'; exit 0 ;;
+      unsupported-error:*) exit 22 ;;
+      down:*) reason=timeout ;;
+      dns:*) reason=transport_failure ;;
+      masked:node-a:*|failover:node-a:*|verify-fails:node-a:*) reason=timeout ;;
+      google:*google.com*) reason=http_status; status=500 ;;
+    esac
+    if test -n "$reason"; then
+      printf '{"strict_probe":true,"expected_status":204,"ok":false,"reason":"%s","http_status":%s}' "$reason" "$status"
+    else printf '{"strict_probe":true,"expected_status":204,"ok":true,"http_status":204,"delay":4}'; fi ;;
+  *baidu*)
+    if test "$mode" = dns; then printf '000 0.001'; exit 6; fi
+    printf '200 0.002' ;;
+  *)
+    case "$mode:$proxy:$url" in
+      dns:*) printf '000 0.001'; exit 6 ;;
+      down:*|mixed-down:*|verify-fails:*|failover:node-a:*) printf '000 0.010'; exit 28 ;;
+      google:*google.com*) printf '500 0.003' ;;
+      *) printf '204 0.004' ;;
+    esac ;;
 esac
 "#,
         );
         fs::write(root.join("mode"), "online").unwrap();
+        fs::write(root.join("clash-mode"), "rule").unwrap();
+        for group in ["proxy", "ai-proxy", "restricted-ai"] {
+            fs::write(root.join(format!("selected-{group}")), "node-a").unwrap();
+        }
         fs::write(root.join("lib/kamfw/.kamfwrc"), "import() { :; }\n").unwrap();
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../src/MagicNet/lib");
         fs::create_dir_all(root.join("lib/magicnet/singbox_subscribe")).unwrap();
@@ -186,6 +261,38 @@ magicnet_lifecycle_after_stop() {
             .unwrap_or_default()
             .lines()
             .count()
+    }
+
+    fn config(&self, mut config: Value) {
+        let previous: Value = serde_json::from_slice(
+            &fs::read(self.root.join(".config/sing-box/config.json")).unwrap(),
+        )
+        .unwrap();
+        if config.get("outbounds").is_none() {
+            config["outbounds"] = previous["outbounds"].clone();
+        }
+        fs::write(
+            self.root.join(".config/sing-box/config.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn enable_failover(&self) {
+        fs::write(self.root.join("allow-failover"), "").unwrap();
+        self.config(serde_json::json!({
+            "inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":7892}],
+            "outbounds":[
+                {"type":"selector","tag":"proxy","outbounds":["node-a","node-b"]},
+                {"type":"selector","tag":"ai-proxy","outbounds":["node-a","node-b"]},
+                {"type":"selector","tag":"restricted-ai","outbounds":["node-a"]},
+                {"type":"vmess","tag":"node-a"},{"type":"vmess","tag":"node-b"}
+            ]
+        }));
+    }
+
+    fn selected(&self, group: &str) -> String {
+        fs::read_to_string(self.root.join(format!("selected-{group}"))).unwrap()
     }
 
     fn install_supervisor_activation_fixture(&self) {
@@ -344,8 +451,8 @@ fn connectivity_real_ticks_share_a_persisted_budget_across_processes_and_status_
     }
     assert_eq!(
         fixture.calls(),
-        1,
-        "concurrent producers must issue one Google request"
+        3,
+        "concurrent producers share one two-site directed check and one mixed check"
     );
     let state = fixture.state();
     let status = fixture.status();
@@ -359,7 +466,7 @@ fn connectivity_real_ticks_share_a_persisted_budget_across_processes_and_status_
         fixture.status();
     }
     assert_eq!(fixture.state(), state);
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
     let encoded = status.to_string();
     assert!(!encoded.contains("private-source"));
     assert!(!encoded.contains(&state["boot"]));
@@ -368,7 +475,7 @@ fn connectivity_real_ticks_share_a_persisted_budget_across_processes_and_status_
 #[test]
 fn connectivity_tun_checks_are_independent_of_successful_mixed_proxy_probes() {
     let fixture = Fixture::new();
-    fs::write(fixture.root.join(".config/sing-box/config.json"), r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":7892},{"type":"tun","tag":"tun-in","interface_name":"magicnet0","address":["172.19.0.1/30"],"auto_route":true}]}"#).unwrap();
+    fixture.config(serde_json::json!({"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":7892},{"type":"tun","tag":"tun-in","interface_name":"magicnet0","address":["172.19.0.1/30"],"auto_route":true}]}));
     fs::write(
         fixture.root.join("bin/ip"),
         r#"#!/bin/sh
@@ -388,7 +495,7 @@ esac
     let status = fixture.status();
     assert_eq!(status["status"], "online");
     assert_eq!(status["tun_auto_route"]["status"], "present");
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
 
     fs::write(fixture.root.join("rules"), "0: from all lookup 255\n").unwrap();
     fixture.edit_state(&[("tun_next_uptime", "0")]);
@@ -402,8 +509,8 @@ esac
     assert_eq!(pending["tun_auto_route"]["recovery_attempts"], 0);
     assert_eq!(
         fixture.calls(),
-        1,
-        "a TUN check does not issue another Google request"
+        3,
+        "a TUN check does not issue another HTTPS request"
     );
 
     fs::write(fixture.root.join("rules-unknown"), "").unwrap();
@@ -431,7 +538,7 @@ esac
     fixture.edit_state(&[("tun_next_uptime", "0")]);
     fixture.run(&["connectivity", "tick"]);
     assert_eq!(fixture.status()["tun_auto_route"]["status"], "not_required");
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
     assert!(!fixture.root.join("actions").exists());
 }
 
@@ -442,8 +549,8 @@ fn connectivity_real_failure_attempts_warning_backoff_repair_and_subscription_re
     fixture.run(&["connectivity", "tick"]);
     assert_eq!(
         fixture.calls(),
-        3,
-        "Google, independent proxy, and direct control"
+        4,
+        "two directed sites, direct control, and mixed ingress"
     );
     let first = fixture.status();
     assert_eq!(first["status"], "offline");
@@ -454,7 +561,7 @@ fn connectivity_real_failure_attempts_warning_backoff_repair_and_subscription_re
         .unwrap()
         .contains("⚠️"));
     fixture.run(&["connectivity", "tick"]);
-    assert_eq!(fixture.calls(), 3);
+    assert_eq!(fixture.calls(), 4);
     fixture.edit_state(&[("next_uptime", "0")]);
     fixture.run(&["connectivity", "tick"]);
     let second = fixture.status();
@@ -494,7 +601,7 @@ fn connectivity_proxy_missing_default_route_and_dns_failures_do_not_create_false
     fs::write(fixture.root.join(".config/sing-box/config.json"), "{}").unwrap();
     fixture.run(&["connectivity", "tick"]);
     assert_eq!(fixture.calls(), 0);
-    assert_eq!(fixture.status()["reason"], "proxy_unavailable");
+    assert_eq!(fixture.status()["reason"], "probe_unavailable");
     fixture.edit_state(&[("next_uptime", "0")]);
     fs::write(fixture.root.join("no-route"), "").unwrap();
     fixture.run(&["connectivity", "tick"]);
@@ -503,7 +610,7 @@ fn connectivity_proxy_missing_default_route_and_dns_failures_do_not_create_false
     fs::remove_file(fixture.root.join("no-route")).unwrap();
     fs::write(
         fixture.root.join(".config/sing-box/config.json"),
-        r#"{"inbounds":[{"type":"mixed","listen_port":7892}]}"#,
+        r#"{"inbounds":[{"type":"mixed","listen_port":7892}],"outbounds":[{"type":"selector","tag":"proxy","outbounds":["node-a"]},{"type":"vmess","tag":"node-a"}]}"#,
     )
     .unwrap();
     fs::write(fixture.root.join("mode"), "dns").unwrap();
@@ -511,8 +618,8 @@ fn connectivity_proxy_missing_default_route_and_dns_failures_do_not_create_false
     fixture.run(&["connectivity", "tick"]);
     assert_eq!(fixture.status()["status"], "offline");
     assert_eq!(fixture.status()["reason"], "upstream_unavailable");
-    assert_eq!(fixture.status()["primary_reason"], "dns_failure");
-    assert_eq!(fixture.calls(), 3);
+    assert_eq!(fixture.status()["primary_reason"], "transport_failure");
+    assert_eq!(fixture.calls(), 4);
     assert!(!fixture.root.join("actions").exists());
 }
 
@@ -555,7 +662,7 @@ fn connectivity_crashed_core_releases_interception_without_probing_or_restarting
         fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
         "cleanup\n"
     );
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
     assert!(!fixture.root.join("actions").exists());
     assert_eq!(fixture.status()["status"], "paused");
     assert_eq!(fixture.status()["reason"], "core_stopped");
@@ -604,7 +711,7 @@ fn connectivity_crash_cleanup_defers_lifecycle_contention_and_retries_failures()
         fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
         "cleanup\ncleanup\n"
     );
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
     assert!(!fixture.root.join("actions").exists());
 }
 
@@ -619,7 +726,7 @@ fn connectivity_unknown_core_cannot_authorize_crash_cleanup() {
     assert_eq!(fixture.status()["status"], "unknown");
     assert!(fixture.root.join("dns-capture-attached").exists());
     assert!(!fixture.root.join("cleanup-actions").exists());
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
 }
 
 #[test]
@@ -648,7 +755,7 @@ fn connectivity_crash_cleanup_respects_the_shell_startup_lock() {
         fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
         "cleanup\n"
     );
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
 }
 
 #[test]
@@ -670,7 +777,7 @@ cat "$MODDIR/core.pid"
     fixture.edit_state(&[("tun_next_uptime", "0")]);
     fixture.run(&["connectivity", "tick"]);
     assert!(!fixture.root.join("cleanup-actions").exists());
-    assert_eq!(fixture.calls(), 1);
+    assert_eq!(fixture.calls(), 3);
 }
 
 #[test]
@@ -765,7 +872,7 @@ fn connectivity_a_core_stopped_during_probing_cannot_be_restarted_by_recovery() 
     fs::write(fixture.root.join("slow"), "").unwrap();
     let child = fixture.command(&["connectivity", "tick"]).spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
-    while fixture.calls() < 4 {
+    while fixture.calls() < 5 {
         assert!(Instant::now() < deadline);
         thread::sleep(Duration::from_millis(5));
     }
@@ -897,6 +1004,10 @@ fn connectivity_machine_rejections_keep_the_complete_error_envelope() {
     let fixture = Fixture::new();
     for (args, code) in [
         (
+            vec!["--json", "connectivity", "check"],
+            "machine.unsupported_command",
+        ),
+        (
             vec!["--json", "connectivity", "tick"],
             "machine.unsupported_command",
         ),
@@ -927,4 +1038,342 @@ fn connectivity_machine_rejections_keep_the_complete_error_envelope() {
             .exists());
         assert!(!fixture.root.join(".state/connectivity.lock").exists());
     }
+}
+
+#[test]
+fn connectivity_selected_failure_is_visible_even_when_domain_routing_mixed_probe_succeeds() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("mode"), "masked").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    let status = fixture.status();
+    assert_eq!(status["path"], "selected_proxy");
+    assert_eq!(status["status"], "offline");
+    assert_eq!(status["primary_reason"], "timeout");
+    assert_eq!(status["secondary_status"], "failed");
+    assert_eq!(status["direct_status"], "online");
+    assert_eq!(status["mixed_status"], "online");
+    assert_eq!(status["warning"], true);
+    assert_eq!(fixture.calls(), 4);
+}
+
+#[test]
+fn connectivity_working_selected_proxy_requires_a_working_mixed_ingress_for_online() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("mode"), "mixed-down").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    let status = fixture.status();
+    assert_eq!(status["status"], "degraded");
+    assert_eq!(status["reason"], "mixed_path_failed");
+    assert_eq!(status["primary_reason"], "ok");
+    assert_eq!(status["http_status"], 204);
+    assert_eq!(status["secondary_status"], "online");
+    assert_eq!(status["mixed_status"], "failed");
+    assert_eq!(status["mixed_reason"], "timeout");
+    assert!(!fixture.root.join("actions").exists());
+}
+
+#[test]
+fn connectivity_legacy_delay_or_unmarked_error_cannot_authorize_online_or_recovery() {
+    for (mode, reason) in [
+        ("old-core", "probe_unsupported"),
+        ("unsupported-error", "probe_unavailable"),
+    ] {
+        let fixture = Fixture::new();
+        fixture.enable_failover();
+        fs::write(fixture.root.join("mode"), mode).unwrap();
+        fixture.run(&["connectivity", "tick"]);
+        fixture.edit_state(&[("next_uptime", "0")]);
+        fixture.run(&["connectivity", "tick"]);
+        let status = fixture.status();
+        assert_eq!(status["status"], "unknown", "{mode}");
+        assert_eq!(status["reason"], reason);
+        assert_eq!(status["consecutive_failures"], 0);
+        assert_eq!(status["secondary_status"], "unknown");
+        assert_eq!(status["direct_status"], "not_run");
+        assert_eq!(status["mixed_status"], "online");
+        assert_eq!(status["last_action"], "none");
+        assert!(!fixture.root.join("selector-changes").exists());
+        assert!(!fixture.root.join("actions").exists());
+    }
+}
+
+#[test]
+fn connectivity_manual_check_bypasses_observation_backoff_without_recovery_or_cooldown_reset() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fs::write(fixture.root.join("mode"), "down").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    let now = fixture.state()["checked_uptime"].parse::<u64>().unwrap();
+    fixture.edit_state(&[
+        ("failures", "7"),
+        ("next_uptime", &(now + 1800).to_string()),
+        ("last_action", "refresh"),
+        ("action_uptime", &now.to_string()),
+        ("refresh_uptime", &now.to_string()),
+        ("recovery_stage", "2"),
+        ("tun_attempts", "2"),
+        ("tun_action_uptime", &now.to_string()),
+    ]);
+    let before = fixture.state();
+    fixture.run(&["connectivity", "check"]);
+    let after = fixture.state();
+    assert_eq!(fixture.calls(), 8);
+    assert_eq!(after["failures"], "8");
+    for field in [
+        "action_uptime",
+        "refresh_uptime",
+        "recovery_stage",
+        "tun_action_uptime",
+        "tun_attempts",
+    ] {
+        assert_eq!(after[field], before[field], "{field}");
+    }
+    assert_eq!(fixture.status()["status"], "offline");
+    assert!(!fixture.root.join("selector-changes").exists());
+    assert!(!fixture.root.join("actions").exists());
+    let second = fixture
+        .command(&["connectivity", "check"])
+        .output()
+        .unwrap();
+    assert!(!second.status.success());
+    assert!(String::from_utf8_lossy(&second.stderr).contains("connectivity.check_throttled"));
+    assert_eq!(fixture.calls(), 8);
+    assert_eq!(
+        fixture.state(),
+        after,
+        "throttled requests do not rewrite observations or action budgets"
+    );
+}
+
+#[test]
+fn connectivity_manual_selection_requests_real_check_and_replaces_cached_outage_without_waiting() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fs::write(fixture.root.join("mode"), "failover").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    let now = fixture.state()["checked_uptime"].parse::<u64>().unwrap();
+    fixture.edit_state(&[
+        ("next_uptime", &(now + 1800).to_string()),
+        ("action_uptime", &now.to_string()),
+        ("refresh_uptime", &now.to_string()),
+        ("recovery_stage", "2"),
+    ]);
+    fixture.run(&["api", "select", "proxy", "node-b"]);
+    assert_eq!(fixture.status()["status"], "pending");
+    assert_eq!(fixture.status()["reason"], "selection_changed");
+    assert_eq!(
+        fixture.calls(),
+        4,
+        "request scheduling itself never reports a successful probe"
+    );
+    fixture.run(&["connectivity", "tick"]);
+    let state = fixture.state();
+    assert_eq!(fixture.status()["status"], "online");
+    assert_eq!(fixture.calls(), 7);
+    assert_eq!(state["action_uptime"], now.to_string());
+    assert_eq!(state["refresh_uptime"], now.to_string());
+    assert!(!fixture.root.join("actions").exists());
+}
+
+#[test]
+fn connectivity_selection_changed_during_probe_never_publishes_the_old_result_for_new_node() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fixture.run(&["connectivity", "tick"]);
+    fixture.edit_state(&[("next_uptime", "0")]);
+    fs::write(fixture.root.join("slow"), "").unwrap();
+    let child = fixture.command(&["connectivity", "tick"]).spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while fixture.calls() < 4 {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    fixture.run(&["api", "select", "proxy", "node-b"]);
+    assert!(child.wait_with_output().unwrap().status.success());
+    assert_eq!(fixture.state()["reason"], "selection_changed");
+    assert_eq!(
+        fixture.state()["probes"],
+        "1",
+        "mixed snapshots are discarded before recording"
+    );
+    assert_eq!(fixture.status()["status"], "pending");
+    fs::remove_file(fixture.root.join("slow")).unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(fixture.status()["status"], "online");
+    assert_eq!(fixture.state()["probes"], "2");
+}
+
+#[test]
+fn connectivity_direct_or_unknown_clash_mode_disables_automatic_selector_and_lifecycle_actions() {
+    for mode in ["direct", "unknown"] {
+        let fixture = Fixture::new();
+        fixture.enable_failover();
+        fs::write(fixture.root.join("mode"), "masked").unwrap();
+        fs::write(fixture.root.join("clash-mode"), mode).unwrap();
+        fixture.run(&["connectivity", "tick"]);
+        fixture.edit_state(&[("next_uptime", "0")]);
+        fixture.run(&["connectivity", "tick"]);
+        assert_eq!(fixture.status()["status"], "offline");
+        assert_eq!(fixture.status()["last_action"], "none");
+        assert_eq!(fixture.selected("proxy"), "node-a");
+        assert!(!fixture.root.join("selector-changes").exists());
+        assert!(!fixture.root.join("actions").exists());
+    }
+}
+
+#[test]
+fn connectivity_verified_failover_updates_only_compatible_selectors_and_saves_restart_intent() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fs::write(fixture.root.join("mode"), "failover").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    fixture.edit_state(&[("next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    let status = fixture.status();
+    assert_eq!(status["status"], "online");
+    assert_eq!(status["last_action"], "failover");
+    assert_eq!(status["action_status"], "ok");
+    assert_eq!(fixture.selected("proxy"), "node-b");
+    assert_eq!(fixture.selected("ai-proxy"), "node-b");
+    assert_eq!(fixture.selected("restricted-ai"), "node-a");
+    let saved: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .join(".config/magicnet/selector-selections.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["proxy"], "node-b");
+    assert_eq!(saved["ai-proxy"], "node-b");
+    assert!(saved.get("restricted-ai").is_none());
+    assert_eq!(
+        fixture.calls(),
+        13,
+        "two failing cycles, one two-site candidate, and three verification probes"
+    );
+    assert!(!fixture.root.join("actions").exists());
+    let encoded = status.to_string();
+    assert!(!encoded.contains("node-a") && !encoded.contains("node-b"));
+}
+
+#[test]
+fn connectivity_failed_verification_rolls_back_every_changed_selector_and_persisted_choice() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fs::write(fixture.root.join("mode"), "verify-fails").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    fixture.edit_state(&[("next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(fixture.status()["status"], "offline");
+    assert_eq!(fixture.status()["last_action"], "failover");
+    assert_eq!(fixture.status()["action_status"], "failed");
+    assert_eq!(fixture.selected("proxy"), "node-a");
+    assert_eq!(fixture.selected("ai-proxy"), "node-a");
+    let saved: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .join(".config/magicnet/selector-selections.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(saved.get("proxy").is_none());
+    assert!(saved.get("ai-proxy").is_none());
+    let changes = fs::read_to_string(fixture.root.join("selector-changes")).unwrap();
+    assert_eq!(
+        changes.lines().collect::<Vec<_>>(),
+        [
+            "proxy=node-b",
+            "ai-proxy=node-b",
+            "ai-proxy=node-a",
+            "proxy=node-a"
+        ]
+    );
+}
+
+#[test]
+fn connectivity_unwritable_saved_selection_prevents_runtime_change_and_false_success() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fs::create_dir_all(
+        fixture
+            .root
+            .join(".config/magicnet/selector-selections.json"),
+    )
+    .unwrap();
+    fs::write(fixture.root.join("mode"), "failover").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    fixture.edit_state(&[("next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(fixture.status()["status"], "offline");
+    assert_eq!(fixture.status()["action_status"], "failed");
+    assert_eq!(fixture.selected("proxy"), "node-a");
+    assert!(!fixture.root.join("selector-changes").exists());
+    assert!(!fixture.root.join("actions").exists());
+}
+
+#[test]
+fn connectivity_manual_a_to_b_to_a_during_candidate_probe_wins_over_automatic_failover() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fs::write(fixture.root.join("mode"), "failover").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    fixture.edit_state(&[("next_uptime", "0")]);
+    fs::write(fixture.root.join("slow-candidate"), "").unwrap();
+    let child = fixture.command(&["connectivity", "tick"]).spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !fixture.root.join("candidate-started").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    fixture.run(&["api", "select", "proxy", "node-b"]);
+    fixture.run(&["api", "select", "proxy", "node-a"]);
+    assert!(child.wait_with_output().unwrap().status.success());
+    assert_eq!(fixture.selected("proxy"), "node-a");
+    assert_eq!(fixture.selected("ai-proxy"), "node-a");
+    assert_eq!(fixture.state()["action_status"], "conflict");
+    assert_eq!(fixture.status()["status"], "pending");
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("selector-changes")).unwrap(),
+        "proxy=node-b\nproxy=node-a\n"
+    );
+}
+
+#[test]
+fn connectivity_failed_inner_compensation_is_not_mislabeled_as_a_completed_rollback() {
+    let fixture = Fixture::new();
+    fixture.enable_failover();
+    fs::write(fixture.root.join("mode"), "failover").unwrap();
+    fs::write(fixture.root.join("unreadable-after-put"), "").unwrap();
+    fixture.run(&["connectivity", "tick"]);
+    fixture.edit_state(&[("next_uptime", "0")]);
+    let output = fixture.command(&["connectivity", "tick"]).output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("connectivity.failover_rollback_failed")
+    );
+    assert_eq!(fixture.status()["action_status"], "rollback_failed");
+    assert_eq!(fixture.status()["status"], "offline");
+    assert_eq!(
+        fixture.selected("proxy"),
+        "node-b",
+        "unobservable API prevented compensation"
+    );
+    assert_eq!(fixture.selected("ai-proxy"), "node-a");
+    let saved: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .root
+                .join(".config/magicnet/selector-selections.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        saved.get("proxy").is_none(),
+        "persistent intent is still restored independently"
+    );
 }

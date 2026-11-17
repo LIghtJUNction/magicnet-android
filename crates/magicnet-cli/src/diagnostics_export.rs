@@ -1300,6 +1300,9 @@ fn machine_key(key: &str) -> bool {
             | "http_status"
             | "secondary_status"
             | "direct_status"
+            | "mixed_path"
+            | "mixed_status"
+            | "mixed_reason"
             | "last_action"
             | "action_status"
             | "last_action_at"
@@ -1322,7 +1325,8 @@ fn machine_public_value(key: &str, value: &str) -> bool {
             "service.status" | "transparent.status" | "dns.status"
         ),
         "target" => value == crate::connectivity::TARGET,
-        "path" => value == "mixed_proxy",
+        "path" => matches!(value, "mixed_proxy" | "selected_proxy"),
+        "mixed_path" => value == "mixed_proxy",
         "selected" => value == "sing-box",
         "pid_summary" | "fswatch" | "wifi_policy" => {
             matches!(value, "stopped" | "unknown")
@@ -1359,7 +1363,7 @@ fn machine_public_value(key: &str, value: &str) -> bool {
                 | "old-restored"
         ),
         "status" | "phase" | "process_state" | "lifecycle" | "capability" | "local_cgroup"
-        | "shared_tc" | "secondary_status" | "direct_status" | "action_status"
+        | "shared_tc" | "secondary_status" | "direct_status" | "mixed_status" | "action_status"
         | "recovery_status" => {
             matches!(
                 value,
@@ -1381,6 +1385,8 @@ fn machine_public_value(key: &str, value: &str) -> bool {
                     | "not_run"
                     | "none"
                     | "busy"
+                    | "conflict"
+                    | "rollback_failed"
                     | "not_required"
                     | "inactive"
                     | "configured"
@@ -1398,7 +1404,7 @@ fn machine_public_value(key: &str, value: &str) -> bool {
                     | "rolled-back"
             )
         }
-        "reason" | "primary_reason" => matches!(
+        "reason" | "primary_reason" | "mixed_reason" => matches!(
             value,
             "ok" | "not_checked"
                 | "probing"
@@ -1414,6 +1420,9 @@ fn machine_public_value(key: &str, value: &str) -> bool {
                 | "http_error"
                 | "probe_unavailable"
                 | "probe_invalid"
+                | "probe_unsupported"
+                | "mixed_path_failed"
+                | "selection_changed"
                 | "proxy_unavailable"
                 | "endpoint_specific"
                 | "upstream_unavailable"
@@ -1423,7 +1432,7 @@ fn machine_public_value(key: &str, value: &str) -> bool {
         ),
         "last_action" => matches!(
             value,
-            "none" | "repair" | "refresh" | "restart" | "deferred"
+            "none" | "failover" | "repair" | "refresh" | "restart" | "deferred"
         ),
         _ => false,
     }
