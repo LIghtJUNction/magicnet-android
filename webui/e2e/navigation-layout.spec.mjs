@@ -1,3 +1,4 @@
+import { navigateToPage } from "./navigation.mjs";
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
@@ -21,9 +22,7 @@ test("the phone toolbar keeps the full app name and reachable actions", async ({
 
 test("changing pages after scrolling opens the destination at its heading", async ({ page }) => {
   const navigate = async (tab) => {
-    const desktop = page.locator(`.desktop-rail [data-tab="${tab}"]`);
-    if (await desktop.isVisible()) await desktop.click();
-    else await page.locator(`.mn-section-tabs [data-tab="${tab}"]`).click();
+    await navigateToPage(page, tab);
     await expect(page.locator(`.page-surface[data-page="${tab}"] h2`).first()).toBeVisible();
   };
   // Cache both long pages first; an empty lazy-loading shell can hide this bug.
@@ -43,17 +42,10 @@ test("a direct link keeps the selected section label fully visible", async ({ pa
   await page.goto("/#/webui", { waitUntil: "networkidle" });
   await expect(page.locator('.page-surface[data-page="webui"] h2').first()).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  const sections = page.locator(".mn-section-tabs");
-  if (await sections.isVisible()) {
-    await expect.poll(async () => sections.evaluate((track) => {
-      const selected = track.querySelector('[aria-current="page"]');
-      if (!selected) return false;
-      const label = selected.getBoundingClientRect();
-      const visible = track.getBoundingClientRect();
-      return label.left >= visible.left && label.right <= visible.right;
-    })).toBe(true);
-  } else {
+  if (await page.locator(".desktop-rail").isVisible()) {
     await expect(page.locator('.desktop-rail [data-tab="webui"][aria-current="page"]')).toBeInViewport({ ratio: 1 });
+  } else {
+    await expect(page.locator('.mobile-nav [aria-haspopup="dialog"]')).toHaveAttribute("aria-current", "page");
   }
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
   await page.keyboard.press("Tab");

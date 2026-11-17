@@ -4,11 +4,10 @@ import {
   AppWindow,
   Bug,
   Coffee,
-  ChevronUp,
+  ChevronDown,
   DownloadCloud,
   FileCode2,
   Gauge,
-  GitBranch,
   Github,
   HeartPulse,
   Link2,
@@ -25,7 +24,6 @@ import {
   Settings,
   ShieldBan,
   SquareTerminal,
-  Stethoscope,
   Sun,
   Wrench,
   X,
@@ -66,8 +64,6 @@ type TabDefinition = {
 type WorkspaceDefinition = {
   key: WorkspaceKey;
   label: string;
-  mobileLabel?: string;
-  icon: Component;
 };
 
 const ONBOARDING_STORAGE_KEY = "magicnet.webui.onboarding.v1";
@@ -118,28 +114,14 @@ const tabs: readonly TabDefinition[] = [
 ];
 
 const workspaces: readonly WorkspaceDefinition[] = [
-  {
-    key: "run",
-    label: "运行",
-    icon: Gauge,
-  },
-  {
-    key: "route",
-    label: "路由",
-    icon: GitBranch,
-  },
-  {
-    key: "configure",
-    label: "配置",
-    mobileLabel: "订阅",
-    icon: Settings,
-  },
-  {
-    key: "diagnose",
-    label: "诊断",
-    icon: Stethoscope,
-  },
+  { key: "run", label: "运行" },
+  { key: "route", label: "路由" },
+  { key: "configure", label: "配置" },
+  { key: "diagnose", label: "诊断" },
 ];
+const primaryKeys: readonly TabKey[] = ["control", "proxies", "subs", "apps"];
+const primaryTabs = primaryKeys.map((key) => tabs.find((tab) => tab.key === key)!);
+const secondaryTabs = tabs.filter((tab) => !primaryKeys.includes(tab.key));
 
 const {
   state,
@@ -178,11 +160,9 @@ function writeTabToLocation(tab: TabKey, replace = false): void {
 }
 
 const activeTab = ref<TabKey>(readTabFromLocation() ?? "control");
-const lastTabByWorkspace = ref<Record<WorkspaceKey, TabKey>>({
-  run: "control",
-  route: "apps",
-  configure: "subs",
-  diagnose: "health",
+const showAdvancedPages = ref(!primaryKeys.includes(activeTab.value));
+watch(activeTab, (tab) => {
+  if (!primaryKeys.includes(tab)) showAdvancedPages.value = true;
 });
 const showUtilityMenu = ref(false);
 const showPalette = ref(false);
@@ -214,12 +194,6 @@ let delayedWarmup: number | undefined;
 const activeTabDefinition = computed(
   () => tabs.find((item) => item.key === activeTab.value) ?? tabs[0],
 );
-const activeWorkspace = computed(
-  () => workspaces.find((item) => item.key === activeTabDefinition.value.workspace) ?? workspaces[0],
-);
-const activeSectionTabs = computed(() =>
-  tabs.filter((item) => item.workspace === activeWorkspace.value.key),
-);
 const activeComponent = computed(() => asyncPages[activeTab.value]);
 watchEffect(() => { document.title = `${t(activeTabDefinition.value.label)} · MagicNet`; });
 
@@ -249,7 +223,7 @@ const coreMemoryLabel = computed(() =>
 const tabsByWorkspace = computed(() =>
   workspaces.map((workspace) => ({
     workspace,
-    items: tabs.filter((tab) => tab.workspace === workspace.key),
+    items: secondaryTabs.filter((tab) => tab.workspace === workspace.key),
   })),
 );
 
@@ -278,8 +252,6 @@ function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
   const changed = tab !== activeTab.value;
   if (changed) {
     activeTab.value = tab;
-    const definition = tabs.find((item) => item.key === tab);
-    if (definition) lastTabByWorkspace.value[definition.workspace] = tab;
     warmActiveTab(tab);
   }
   if (options.updateLocation !== false) writeTabToLocation(tab);
@@ -296,13 +268,9 @@ function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
   });
 }
 
-function setWorkspace(workspace: WorkspaceKey, event: MouseEvent): void {
-  if (activeWorkspace.value.key === workspace) {
-    mobilePagesTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-    showMobilePages.value = true;
-    return;
-  }
-  setTab(workspace === "configure" ? "subs" : lastTabByWorkspace.value[workspace]);
+function openMobilePages(event: MouseEvent): void {
+  mobilePagesTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  showMobilePages.value = true;
 }
 
 function closeMobilePages(): void {
@@ -498,17 +466,6 @@ function warnBeforeDiscardingConfig(event: BeforeUnloadEvent): void {
   event.returnValue = "";
 }
 
-function revealInitialSectionTab(): void {
-  const track = document.querySelector<HTMLElement>(".mn-section-tabs");
-  const selected = track?.querySelector<HTMLElement>('[aria-current="page"]');
-  if (!track || !selected) return;
-  const label = selected.getBoundingClientRect();
-  const visible = track.getBoundingClientRect();
-  if (label.left >= visible.left && label.right <= visible.right) return;
-  // Avoid scrollIntoView here: it can change the keyboard navigation starting point.
-  // Move only this track so the first Tab still reaches the skip link.
-  track.scrollLeft += label.left - visible.left - (visible.width - label.width) / 2;
-}
 
 onMounted(() => {
   const initialTab = activeTab.value;
@@ -516,7 +473,6 @@ onMounted(() => {
     refreshStatus(),
     initialTab === "control" ? refreshSubs(true, undefined, false) : Promise.resolve(false),
   ]);
-  void nextTick(revealInitialSectionTab);
   // A deep link is already the active tab, so setTab would not warm it.
   if (initialTab !== "control") warmActiveTab(initialTab);
   document.addEventListener("keydown", handleEscape);
@@ -629,7 +585,7 @@ onUnmounted(() => {
           :aria-expanded="showUtilityMenu"
           @click="openUtilityMenu"
         >
-          <MoreHorizontal :size="18" aria-hidden="true" />
+          <Settings :size="18" aria-hidden="true" />
         </Button>
       </div>
     </header>
@@ -662,12 +618,9 @@ onUnmounted(() => {
     <div class="mn-workspace-frame">
       <aside class="desktop-rail" :aria-label="t('MagicNet 工作区')">
         <nav :aria-label="t('全部页面')">
-          <div v-for="group in tabsByWorkspace" :key="group.workspace.key" class="mn-nav-group">
-            <div class="mn-rail-label">
-              <span>{{ t(group.workspace.label) }}</span>
-            </div>
+          <div class="mn-nav-group">
             <button
-              v-for="item in group.items"
+              v-for="item in primaryTabs"
               :key="item.key"
               :data-tab="item.key"
               :class="activeTab === item.key ? 'mn-nav-active' : 'mn-nav-idle'"
@@ -677,9 +630,33 @@ onUnmounted(() => {
               @focus="prefetchTab(item.key)"
               @click="setTab(item.key)"
             >
-              <component :is="item.icon" :size="17" aria-hidden="true" />
-              <span>{{ t(item.label) }}</span>
+              <component :is="item.icon" :size="18" aria-hidden="true" />
+              <span>{{ t(item.key === 'proxies' ? '节点' : item.label) }}</span>
             </button>
+          </div>
+          <div class="mn-nav-more">
+            <button class="mn-nav-more-toggle" type="button" :aria-expanded="showAdvancedPages" aria-controls="mn-secondary-navigation" @click="showAdvancedPages = !showAdvancedPages">
+              <MoreHorizontal :size="18" aria-hidden="true" /><span>{{ t('更多功能') }}</span><ChevronDown :size="16" aria-hidden="true" />
+            </button>
+            <div v-show="showAdvancedPages" id="mn-secondary-navigation" class="mn-secondary-navigation">
+              <div v-for="group in tabsByWorkspace" :key="group.workspace.key" class="mn-nav-group">
+                <div class="mn-rail-label">{{ t(group.workspace.label) }}</div>
+                <button
+                  v-for="item in group.items"
+                  :key="item.key"
+                  :data-tab="item.key"
+                  :class="activeTab === item.key ? 'mn-nav-active' : 'mn-nav-idle'"
+                  type="button"
+                  :aria-current="activeTab === item.key ? 'page' : undefined"
+                  @pointerenter="prefetchTab(item.key)"
+                  @focus="prefetchTab(item.key)"
+                  @click="setTab(item.key)"
+                >
+                  <component :is="item.icon" :size="17" aria-hidden="true" />
+                  <span>{{ t(item.label) }}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </nav>
         <button
@@ -703,25 +680,7 @@ onUnmounted(() => {
       </aside>
 
       <main id="mn-main" class="mn-workspace-main" tabindex="-1">
-        <header class="mn-workspace-header">
-          <nav class="mn-section-tabs" :aria-label="t('{workspace}分区', { workspace: t(activeWorkspace.label) })">
-            <button
-              v-for="item in activeSectionTabs"
-              :key="item.key"
-              :data-tab="item.key"
-              :class="activeTab === item.key ? 'is-active' : undefined"
-              type="button"
-              :aria-current="activeTab === item.key ? 'page' : undefined"
-              @pointerenter="prefetchTab(item.key)"
-              @focus="prefetchTab(item.key)"
-              @click="setTab(item.key)"
-            >
-              <span>{{ t(item.label) }}</span>
-            </button>
-          </nav>
-        </header>
-
-        <!-- KeepAlive preserves form state across all four workspaces. -->
+        <!-- Preserve unfinished forms while switching pages. -->
         <section class="page-surface" :data-page="activeTab">
           <Suspense>
             <KeepAlive :max="tabs.length">
@@ -741,29 +700,28 @@ onUnmounted(() => {
 
     <nav v-show="!keyboardOpen" class="mobile-nav" :aria-label="t('MagicNet 移动导航')">
       <button
-        v-for="workspace in workspaces"
-        :key="workspace.key"
-        :data-workspace="workspace.key"
-        :class="activeWorkspace.key === workspace.key ? 'mn-nav-active' : 'mn-nav-idle'"
+        v-for="item in primaryTabs"
+        :key="item.key"
+        :data-tab="item.key"
+        :class="activeTab === item.key ? 'mn-nav-active' : 'mn-nav-idle'"
         type="button"
-        :aria-current="activeWorkspace.key === workspace.key ? 'page' : undefined"
-        :aria-haspopup="activeWorkspace.key === workspace.key ? 'dialog' : undefined"
-        :aria-expanded="activeWorkspace.key === workspace.key ? showMobilePages : undefined"
-        :title="activeWorkspace.key === workspace.key ? t('打开分区页面') : undefined"
-        @click="setWorkspace(workspace.key, $event)"
+        :aria-current="activeTab === item.key ? 'page' : undefined"
+        @click="setTab(item.key)"
       >
-        <component :is="workspace.icon" :size="19" aria-hidden="true" />
-        <span>{{ t(workspace.mobileLabel ?? workspace.label) }}</span>
-        <ChevronUp v-if="activeWorkspace.key === workspace.key" class="mn-nav-expand" :size="12" aria-hidden="true" />
+        <component :is="item.icon" :size="20" aria-hidden="true" />
+        <span>{{ t(item.key === 'proxies' ? '节点' : item.label) }}</span>
+      </button>
+      <button type="button" :class="!primaryKeys.includes(activeTab) ? 'mn-nav-active' : 'mn-nav-idle'" :aria-label="t('更多功能')" :aria-current="!primaryKeys.includes(activeTab) ? 'page' : undefined" aria-haspopup="dialog" :aria-expanded="showMobilePages" @click="openMobilePages">
+        <MoreHorizontal :size="20" aria-hidden="true" /><span>{{ t('更多') }}</span>
       </button>
     </nav>
 
     <Transition name="sheet">
       <MobileWorkspaceSheet
         v-if="showMobilePages"
-        :workspace="activeWorkspace.label"
+        :workspace="t('更多功能')"
         :current-page="activeTab"
-        :pages="activeSectionTabs"
+        :pages="secondaryTabs"
         @close="closeMobilePages"
         @select="selectMobilePage"
       />

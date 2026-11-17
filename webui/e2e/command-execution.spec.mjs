@@ -1,3 +1,4 @@
+import { navigateToPage } from "./navigation.mjs";
 import { test, expect } from "@playwright/test";
 
 test("pending writes keep navigation and observations responsive while writes execute in order", async ({ page }) => {
@@ -53,13 +54,7 @@ test("pending writes keep navigation and observations responsive while writes ex
   // Both actions must complete while the first native exit callback is withheld.
   await page.getByRole("button", { name: /外观主题/ }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  const desktopOutput = page.locator('.desktop-rail [data-tab="output"]');
-  if (await desktopOutput.isVisible()) {
-    await desktopOutput.click();
-  } else {
-    await page.locator('[data-workspace="diagnose"]:visible').click();
-    await page.locator('.mn-section-tabs [data-tab="output"]:visible').click();
-  }
+  await navigateToPage(page, "output");
   await expect(page.getByRole("heading", { name: "最近输出", exact: true })).toBeVisible();
   expect(await page.evaluate(() => ({
     started: window.__commandBridge.started,

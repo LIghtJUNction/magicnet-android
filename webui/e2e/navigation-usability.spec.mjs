@@ -1,3 +1,4 @@
+import { navigateToPage } from "./navigation.mjs";
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
@@ -26,11 +27,11 @@ test("the brand stays readable beside touch-sized toolbar controls", async ({ pa
 });
 
 test("opening another page starts at its heading after a long page", async ({ page }) => {
+  await navigateToPage(page, "about");
+  await expect(page.locator(".mn-path-page")).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, 600));
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
-  const desktop = page.locator('.desktop-rail [data-tab="apps"]');
-  if (await desktop.isVisible()) await desktop.click();
-  else await page.locator('.mobile-nav [data-workspace="route"]').click();
+  await navigateToPage(page, "apps");
   await expect(page.locator('.page-surface[data-page="apps"] h2')).toHaveText("应用名单");
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(2);
   await expect(page.locator('.page-surface[data-page="apps"] h2')).toBeInViewport();

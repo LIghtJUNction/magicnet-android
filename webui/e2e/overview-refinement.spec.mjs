@@ -1,3 +1,4 @@
+import { navigateToPage } from "./navigation.mjs";
 import { test, expect } from "@playwright/test";
 import { connectReadOnlyNativeFixture } from "./read-only-native-fixture.mjs";
 
@@ -61,6 +62,8 @@ for (const theme of ["light", "dark"]) {
       });
       state.subscriptionReadStatus = "ready";
     });
+    await expect(page.locator(".mn-control-memory")).toBeHidden();
+    await page.locator(".mn-section-disclosure > summary").filter({ hasText: "运行详情" }).click();
     await expect(page.locator(".mn-control-memory")).toContainText("128.0");
     await expect(page.locator(".mn-control-memory")).toContainText("MiB");
     await fit(page);
@@ -87,9 +90,7 @@ for (const theme of ["light", "dark"]) {
       state.runtime.singBoxState = "stopped";
     });
     await expect(page.locator(".mn-control-memory")).toHaveCount(0);
-    const desktop = page.locator('.desktop-rail [data-tab="subs"]');
-    if (await desktop.isVisible()) await desktop.click();
-    else await page.locator('[data-workspace="configure"]:visible').click();
+    await navigateToPage(page, "subs");
     await expect(page.locator(".subscriptions-page")).toBeVisible();
     // Navigation performs a fresh read. With an unavailable mock response the prior
     // success must be cleared, not silently retained by the display fixture.

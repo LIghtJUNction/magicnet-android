@@ -1,5 +1,4 @@
 export default {
-  "透明网络工作台": ["Transparent network console","Консоль прозрачной сети"],
   "快速跳转": ["Quick jump","Быстрый переход"],
   "跳转到…": ["Jump to…","Перейти…"],
   "MagicNet 运行状态：{state}，打开概览": ["MagicNet status: {state}. Open overview","Состояние MagicNet: {state}. Открыть обзор"],
@@ -11,10 +10,6 @@ export default {
   "选择": ["Select","Выбрать"],
   "打开": ["Open","Открыть"],
   "随时唤出": ["Open anytime","Открыть в любой момент"],
-  "流量经数据面进入 sing-box，按规则选择出口。实际联网请在诊断中确认。": ["Traffic enters sing-box through the dataplane and leaves by rule. Confirm real connectivity in Diagnostics.","Трафик проходит через плоскость данных в sing-box и выходит по правилам. Реальную связность проверьте в диагностике."],
-  "sing-box 已停止，MagicNet 当前没有接管流量。": ["sing-box is stopped. MagicNet is not handling traffic.","sing-box остановлен. MagicNet сейчас не обрабатывает трафик."],
-  "路径部分就绪；虚线断开的位置就是需要检查的环节。": ["The path is partly ready. Check the link where the dashed line breaks.","Путь готов частично. Проверьте звено, где обрывается пунктир."],
-  "状态未确认，路径不会按已接管显示。": ["Status unconfirmed; the path is not shown as active.","Состояние не подтверждено; путь не показан как активный."],
   "已启用，转发规则正在应用或待核实": ["Enabled; forwarding rules are being applied or await verification","Включено; правила пересылки применяются или ожидают проверки"],
   "服务状态、代理模式与热点": ["Service status, proxy mode and hotspot","Состояние службы, режим прокси и точка доступа"],
   "流量如何经过 MagicNet": ["How traffic passes through MagicNet","Как трафик проходит через MagicNet"],
@@ -38,8 +33,5 @@ export default {
   "支持 MagicNet 持续维护": ["Support ongoing MagicNet maintenance","Поддержать развитие MagicNet"],
   "设备": ["Device","Устройство"],
   "出口": ["Exit","Выход"],
-  "本机应用": ["Local apps","Локальные приложения"],
-  "本机已就绪 · 共享待就绪": ["Local ready · sharing pending","Локальный доступ готов · общий доступ ожидает"],
-  "按规则分流": ["Routed by rules","Маршрутизация по правилам"],
   "未连接": ["Not connected","Не подключено"],
 };

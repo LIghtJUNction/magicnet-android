@@ -39,7 +39,7 @@ onUnmounted(() => {
       class="mn-utility-sheet mn-workspace-sheet"
       role="dialog"
       aria-modal="true"
-      :aria-label="t('{workspace}分区', { workspace: t(workspace) })"
+      :aria-label="t(workspace)"
       tabindex="-1"
       @keydown="trapFocusWithin($event, dialog)"
       @keydown.esc.prevent.stop="emit('close')"
@@ -50,7 +50,7 @@ onUnmounted(() => {
           <X :size="20" aria-hidden="true" />
         </Button>
       </header>
-      <nav class="mn-workspace-sheet__pages" :aria-label="t('{workspace}分区', { workspace: t(workspace) })">
+      <nav class="mn-workspace-sheet__pages" :aria-label="t(workspace)">
         <button
           v-for="page in pages"
           :key="page.key"

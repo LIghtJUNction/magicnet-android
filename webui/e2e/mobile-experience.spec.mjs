@@ -11,13 +11,14 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator(".mn-control")).toBeVisible();
 });
 
-test("the current phone workspace exposes subpages without losing drafts or history", async ({ page }) => {
-  test.skip(page.viewportSize().width >= 900, "The desktop rail already exposes every page.");
-  const configure = page.locator('.mobile-nav [data-workspace="configure"]');
-  const routing = page.locator('.mobile-nav [data-workspace="route"]');
-  const sheet = page.getByRole("dialog", { name: "配置分区", exact: true });
+test("the More button exposes secondary pages without losing drafts or history", async ({ page }) => {
+  test.skip(page.viewportSize().width >= 900, "The desktop rail has its own More disclosure.");
+  const configure = page.locator('.mobile-nav [data-tab="subs"]');
+  const more = page.locator('.mobile-nav [aria-haspopup="dialog"]');
+  const routing = page.locator('.mobile-nav [data-tab="apps"]');
+  const sheet = page.getByRole("dialog", { name: "更多功能", exact: true });
 
-  // The first tap still opens subscriptions directly.
+  // Primary tabs always navigate; repeated taps never open another menu.
   await configure.click();
   await expect(page).toHaveURL(/#\/subs$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -25,22 +26,22 @@ test("the current phone workspace exposes subpages without losing drafts or hist
   const subscriptionDraft = "https://example.invalid/mobile-a\nhttps://example.invalid/mobile-b";
   await subscription.fill(subscriptionDraft);
 
-  await configure.click();
+  await more.click();
   await expect(sheet).toBeVisible();
-  await expect(configure).toHaveAttribute("aria-expanded", "true");
-  await expect(sheet.locator('[data-page="subs"]')).toHaveAttribute("aria-current", "page");
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  await expect(sheet.locator("[data-page]")).toHaveCount(10);
   const close = sheet.getByRole("button", { name: "关闭页面导航", exact: true });
   await expect(close).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(sheet.locator('[data-page="webui"]')).toBeFocused();
+  await expect(sheet.locator('[data-page="output"]')).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
   await close.click();
   await expect(sheet).toBeHidden();
-  await expect(configure).toBeFocused();
+  await expect(more).toBeFocused();
   await expect(page.locator("body")).not.toHaveCSS("overflow", "hidden");
 
-  await configure.click();
+  await more.click();
   await sheet.locator('[data-page="config"]').click();
   await expect(page).toHaveURL(/#\/config$/);
   await expect(sheet).toBeHidden();
@@ -62,22 +63,22 @@ test("the current phone workspace exposes subpages without losing drafts or hist
   await configure.click();
   await expect(page).toHaveURL(/#\/subs$/);
   await expect(subscription).toHaveValue(subscriptionDraft);
-  await configure.click();
+  await more.click();
   await sheet.locator('[data-page="config"]').click();
   await expect(editor).toHaveValue(configDraft);
 
   await page.goBack();
   await expect(page).toHaveURL(/#\/subs$/);
   await expect(subscription).toHaveValue(subscriptionDraft);
-  await configure.click();
+  await more.click();
   await expect(sheet).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
-  await expect(configure).toBeFocused();
-  await expect(configure).toHaveAttribute("aria-expanded", "false");
+  await expect(more).toBeFocused();
+  await expect(more).toHaveAttribute("aria-expanded", "false");
 
   // Rotation can remove the original bottom-bar focus target while the sheet is open.
-  await configure.click();
+  await more.click();
   await expect(sheet).toBeVisible();
   await page.setViewportSize({ width: 900, height: 390 });
   await expect(configure).toBeHidden();

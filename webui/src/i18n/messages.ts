@@ -14,7 +14,7 @@ import machineStatus from "./catalogs/machine-status.ts";
 
 import tailscale from "./catalogs/tailscale.ts";
 import terminal from "./catalogs/terminal.ts";
-import constellation from "./catalogs/constellation.ts";
+import navigation from "./catalogs/navigation.ts";
 import subscriptionRecovery from "./catalogs/subscription-recovery.ts";
 
 export const messages: Record<string, readonly string[]> = {
@@ -33,6 +33,6 @@ export const messages: Record<string, readonly string[]> = {
   ...terminal,
   ...overrides,
   ...moduleUpdate,
-  ...constellation,
+  ...navigation,
   ...subscriptionRecovery,
 };

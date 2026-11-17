@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   ArrowRight,
   Route,
+  Stethoscope,
   Save,
   Share2,
   ShieldCheck,
@@ -29,7 +30,7 @@ import RemovableTag from "@/components/ui/RemovableTag.vue";
 import StatTile from "@/components/ui/StatTile.vue";
 import StatusDot from "@/components/ui/StatusDot.vue";
 import ModuleUpdateCard from "./ModuleUpdateCard.vue";
-import ConstellationPath from "./ConstellationPath.vue";
+import SectionDisclosure from "@/components/ui/SectionDisclosure.vue";
 import ConnectivityNotice from "@/components/ConnectivityNotice.vue";
 import {
   applyConfigAction,
@@ -158,11 +159,6 @@ const controlDescription = computed(() => {
   return t("先确认服务状态，再继续操作。刷新不会重启服务。");
 });
 
-const transparentModeLabel = computed(() => {
-  if (state.runtime.transparentMode === "tun") return "TUN";
-  if (state.runtime.transparentMode === "ebpf") return "eBPF";
-  return t("状态未知");
-});
 const transparentEffectiveLabel = computed(() => {
   const effective = state.runtime.transparentEffectiveMode;
   if (effective === "tun") return "TUN · magicnet0";
@@ -509,16 +505,10 @@ onMounted(() => {
         <div class="mn-control-status" role="status" aria-live="polite">
           <div class="mn-control-state-heading">
             <h2>{{ controlTitle }}</h2>
-            <p class="mn-control-label"><StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />{{ t("代理服务") }}<span v-if="state.hasKsu && state.runtime.transparentMode !== 'unknown'" class="mn-control-mode">{{ transparentModeLabel }}</span></p>
+            <p class="mn-control-label"><StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />{{ t("代理服务") }}</p>
             <p class="mn-control-description">{{ controlDescription }}</p>
           </div>
-          <dl v-if="state.hasKsu && state.runtime.singBoxState === 'sing-box'" class="mn-control-memory">
-            <dt>{{ t("内核内存（RSS）") }}</dt>
-            <dd :data-unavailable="state.runtime.singBoxRssKib == null">
-              <template v-if="state.runtime.singBoxRssKib != null">{{ (state.runtime.singBoxRssKib / 1024).toFixed(1) }} <span>MiB</span></template>
-              <template v-else>{{ t("暂不可用") }}</template>
-            </dd>
-          </dl>
+
         </div>
         <div class="mn-control-actions">
           <Button class="mn-control-power" :data-running="state.runtime.singBoxState === 'sing-box'" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('toggle-sing-box') || isRunning('refresh-control-status') || Boolean(servicePendingLabel)" @click="toggleSingBox">
@@ -528,21 +518,18 @@ onMounted(() => {
             <Button variant="ghost" :disabled="!state.hasKsu" :loading="isRunning('refresh-control-status')" @click="withAction('refresh-control-status', () => refreshStatus())">
               <RefreshCw :size="16" />{{ t("刷新状态") }}
             </Button>
-            <Button variant="ghost" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('restart-sing-box')" @click="requestDangerAction(restartSingBoxAction(), $event.currentTarget)">
-              <RotateCcw :size="16" />{{ t("重启服务") }}
+            <Button variant="ghost" @click="emit('goto-tab', 'health')">
+              <Stethoscope :size="16" />{{ t("检查网络") }}
             </Button>
           </div>
         </div>
       </div>
-      <ConstellationPath :runtime="state.runtime" :has-device="state.hasKsu" />
-      <dl class="mn-service-facts" :aria-label="t('运行证据')">
-        <div><dt>sing-box</dt><dd>{{ coreFact }}</dd></div>
-        <div><dt>{{ t("服务检查") }}</dt><dd>{{ readinessFact }}</dd></div>
-        <div><dt>{{ t("实际模式") }}</dt><dd>{{ state.hasKsu ? transparentEffectiveLabel : t("未确认") }}</dd></div>
-      </dl>
       <ConnectivityNotice v-if="state.hasKsu" :snapshot="state.connectivity">
         <Button v-if="state.connectivity.warning" variant="ghost" class="justify-self-start" @click="emit('goto-tab', 'health')">{{ t("打开诊断") }}<ArrowUpRight :size="16" /></Button>
       </ConnectivityNotice>
+      <p v-if="state.hasKsu && state.runtime.transparentRecentError" role="alert" class="text-sm leading-6 text-[var(--mn-danger)]">
+        {{ t("最近一次网络操作出现错误。请打开诊断查看原因。") }}
+      </p>
       <section v-if="showRuntimeNotice" class="mn-control-notice" :class="controlInsightTone(runtimeInsight.status)" :role="state.phase === 'error' ? 'alert' : 'status'" aria-live="polite">
         <h3><StatusDot tone="current" />{{ runtimeInsight.title }}</h3>
         <p>{{ runtimeInsight.detail }}</p>
@@ -560,9 +547,21 @@ onMounted(() => {
       <button type="button" @click="emit('goto-tab', 'subs')"><DownloadCloud :size="19" /><span>{{ t("订阅与节点") }}<small>{{ t("管理来源与更新") }}</small></span><ArrowUpRight :size="16" /></button>
       <button type="button" @click="emit('goto-tab', 'proxies')"><Route :size="19" /><span>{{ t("切换节点") }}<small>{{ t("选择节点与代理组") }}</small></span><ArrowUpRight :size="16" /></button>
     </nav>
-    <ModuleUpdateCard />
-    <div class="mn-control-section-title"><h3>{{ t("网络设置") }}</h3></div>
-
+    <SectionDisclosure :title="t('运行详情')">
+      <dl class="mn-service-facts" :aria-label="t('运行证据')">
+        <div><dt>sing-box</dt><dd>{{ coreFact }}</dd></div>
+        <div><dt>{{ t("服务检查") }}</dt><dd>{{ readinessFact }}</dd></div>
+        <div><dt>{{ t("实际模式") }}</dt><dd>{{ state.hasKsu ? transparentEffectiveLabel : t("未确认") }}</dd></div>
+      </dl>
+          <dl v-if="state.hasKsu && state.runtime.singBoxState === 'sing-box'" class="mn-control-memory">
+            <dt>{{ t("内核内存（RSS）") }}</dt>
+            <dd :data-unavailable="state.runtime.singBoxRssKib == null">
+              <template v-if="state.runtime.singBoxRssKib != null">{{ (state.runtime.singBoxRssKib / 1024).toFixed(1) }} <span>MiB</span></template>
+              <template v-else>{{ t("暂不可用") }}</template>
+            </dd>
+          </dl>
+    </SectionDisclosure>
+    <SectionDisclosure :title="t('网络设置')">
     <div class="mn-control-settings">
       <Card class="grid gap-5">
         <CardHeading :title="t('代理模式')">
@@ -642,9 +641,6 @@ onMounted(() => {
         >
           <Radar :size="17" />{{ t("重新应用当前模式") }} </Button>
         </details>
-        <p v-if="state.runtime.transparentRecentError" role="alert" class="text-sm leading-6 text-[var(--mn-danger)]">
-          {{ state.runtime.transparentRecentError }}
-        </p>
       </Card>
 
       <Card class="grid gap-2" :aria-busy="hotspotPolicyPhase === 'loading' || hotspotTaskPending">
@@ -793,6 +789,9 @@ onMounted(() => {
         <summary>{{ t("服务管理") }}</summary>
         <div class="mn-disclosure__body">
           <div class="grid grid-cols-2 gap-3">
+            <Button variant="outline" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('restart-sing-box')" @click="requestDangerAction(restartSingBoxAction(), $event.currentTarget)">
+              <RotateCcw :size="16" />{{ t("重启服务") }}
+            </Button>
             <Button variant="secondary" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('apply-config')" @click="requestDangerAction(applyConfigAction(), $event.currentTarget)">
               <Save :size="17" />{{ t("应用配置") }} </Button>
             <Button variant="secondary" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('repair')" @click="requestDangerAction(repairAction(), $event.currentTarget)">
@@ -807,6 +806,8 @@ onMounted(() => {
         </div>
       </details>
     </div>
+    </SectionDisclosure>
+    <ModuleUpdateCard />
 
     <Teleport to="body">
       <Transition name="sheet">
@@ -835,13 +836,13 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.mn-control { max-width: 1040px; margin-inline: auto; }
-.mn-control-hero { padding: 12px 0 8px; }
+.mn-control { max-width: 880px; margin-inline: auto; }
+.mn-control-hero { padding: 24px 0 12px; }
 .mn-control-overview { display: grid; gap: 28px; }
 .mn-control-status { display: grid; gap: 18px; min-width: 0; }
 .mn-control-state-heading { min-width: 0; }
-.mn-control-label { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 16px 0 0; color: var(--mn-ink-muted); font-size: 13px; font-weight: 500; }
-.mn-control-mode { padding: 2px 8px; border-radius: 6px; background: var(--mn-surface-sunken); color: var(--mn-ink-soft); font-family: var(--font-mono); font-size: 12px; }
+.mn-control-label { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 14px 0 0; color: var(--mn-ink-muted); font-size: 13px; font-weight: 500; }
+
 .mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-sans); font-size: clamp(28px, 6vw, 36px); font-weight: 550; line-height: 1.2; letter-spacing: -.025em; overflow-wrap: anywhere; }
 .mn-control-hero[data-service-state="ready"] .mn-control-status h2 { color: var(--mn-ink); }
 .mn-control-description { margin: 12px 0 0; max-width: 46ch; color: var(--mn-ink-muted); font-size: 15px; line-height: 1.7; }
@@ -856,7 +857,7 @@ onMounted(() => {
 .mn-control-power[data-running="true"]:hover { border-color: var(--mn-ink-soft); background: var(--mn-ink-soft); }
 .mn-control-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
 .mn-control-shortcuts > button { padding-inline: 6px; }
-.mn-service-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 24px 0 0; }
+.mn-service-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 0 0 16px; }
 .mn-service-facts > div { min-width: 0; padding: 8px 0; }
 .mn-service-facts dt { color: var(--mn-ink-muted); font-size: 12px; overflow-wrap: anywhere; }
 .mn-service-facts dd { margin: 6px 0 0; color: var(--mn-ink); font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
@@ -870,7 +871,7 @@ onMounted(() => {
 .mn-next-step h3 { margin: 8px 0 0; color: var(--mn-ink); font-size: 20px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
 .mn-next-step p { margin: 8px 0 0; color: var(--mn-ink-soft); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
 .mn-next-step > button { max-width: 100%; }
-.mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 24px 0 40px; padding-block: 12px; border-block: 1px solid var(--mn-border); }
+.mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 24px 0 8px; padding-block: 12px; border-block: 1px solid var(--mn-border); }
 .mn-control-destinations > button { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 64px; padding: 8px; border: 0; border-radius: var(--mn-radius-md); background: transparent; color: var(--mn-ink); text-align: left; cursor: pointer; transition: background-color 160ms ease-out; }
 .mn-control-destinations > button:hover:not(:disabled) { background: var(--mn-surface-sunken); }
 .mn-control-destinations > button:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 3px; }
@@ -879,16 +880,16 @@ onMounted(() => {
 .mn-control-destinations > button > svg:first-child { color: var(--mn-ink-muted); }
 .mn-control-destinations span { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .mn-control-destinations small { display: block; margin-top: 4px; color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; line-height: 1.5; }
-.mn-control-section-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin: 8px 0 20px; }
-.mn-control-section-title h3 { margin: 0; color: var(--mn-ink); font-family: var(--font-serif); font-size: 22px; font-weight: 500; letter-spacing: -.02em; }
 .mn-control-settings { display: grid; gap: 32px; }
 @media (min-width: 760px) {
   .mn-control-overview { grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 36px; }
   .mn-control-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }
 @media (max-width: 420px) {
-  .mn-control-destinations { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-bottom: 32px; }
-  .mn-control-destinations > button { min-height: 72px; }
+  .mn-control-destinations { gap: 12px; }
+  .mn-control-destinations > button { gap: 10px; }
+  .mn-control-destinations > button > svg:last-child { display: none; }
+  .mn-control-destinations > button { min-height: 64px; }
   .mn-service-facts { gap: 16px; }
 }
 @media (forced-colors: active) {

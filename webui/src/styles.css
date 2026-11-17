@@ -504,17 +504,6 @@ a {
   min-width: 0;
 }
 
-.mn-workspace-header {
-  position: sticky;
-  z-index: 20;
-  top: 0;
-  min-width: 0;
-  margin: 0 calc(-1 * var(--mn-page-gutter)) 20px;
-  padding: 8px var(--mn-page-gutter) 12px;
-  background: var(--mn-ivory);
-}
-
-.mn-workspace-header h2,
 .mn-sheet-header h2 {
   margin: 0;
   color: var(--mn-ink);
@@ -522,54 +511,6 @@ a {
   font-weight: 600;
   letter-spacing: -0.025em;
   line-height: 1.2;
-}
-
-/* Navigation uses spacing and selection, without an enclosing frame. */
-.mn-section-tabs {
-  display: flex;
-  gap: 4px;
-  width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--mn-border);
-  background: transparent;
-  scrollbar-width: none;
-}
-
-.mn-section-tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.mn-section-tabs button {
-  min-width: max-content;
-  min-height: 44px;
-  padding: 0 16px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--mn-ink-muted);
-  font-size: 13.5px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color 160ms ease-out, background-color 160ms ease-out, box-shadow 160ms ease-out;
-}
-
-.mn-section-tabs button:hover {
-  color: var(--mn-ink);
-}
-
-.mn-section-tabs button.is-active {
-  border-bottom-color: var(--mn-primary);
-  color: var(--mn-primary-strong);
-  font-weight: 650;
-}
-
-.mn-section-tabs button:focus-visible {
-  outline-offset: -3px;
 }
 
 /* ---------- Page header ---------- */
@@ -668,7 +609,7 @@ a {
   bottom: 0;
   left: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   margin-inline: auto;
   padding: 6px max(12px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
@@ -726,12 +667,6 @@ a {
   stroke-width: 2.1;
 }
 
-.mobile-nav .mn-nav-expand {
-  position: absolute;
-  top: 8px;
-  right: 9px;
-  opacity: 0.8;
-}
 
 .mn-nav-active {
   background: var(--mn-surface-sunken);
@@ -1663,6 +1598,19 @@ a {
     gap: 24px;
   }
 
+  .mn-secondary-navigation {
+    display: grid;
+    gap: 20px;
+    padding-top: 20px;
+  }
+
+  .desktop-rail nav .mn-nav-more-toggle {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    width: 100%;
+  }
+
+  .mn-nav-more-toggle[aria-expanded="true"] > svg:last-child { transform: rotate(180deg); }
+
   .mn-nav-group {
     display: grid;
     gap: 2px;
@@ -1721,10 +1669,6 @@ a {
 
   .desktop-rail nav button.mn-nav-active > svg {
     color: var(--mn-primary);
-  }
-
-  .mn-workspace-header {
-    display: none;
   }
 
   .mn-path-board__head {
@@ -1848,10 +1792,6 @@ a {
     outline: 2px solid Highlight;
     background: Canvas;
     color: CanvasText;
-  }
-
-  .mn-section-tabs button.is-active {
-    outline: 2px solid Highlight;
   }
 
   .magic-card[class*="mn-tone-"] {

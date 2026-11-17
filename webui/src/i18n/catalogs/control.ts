@@ -1,4 +1,6 @@
 export default {
+  "最近一次网络操作出现错误。请打开诊断查看原因。": ["The last network operation encountered an error. Open Diagnostics for details.", "При последней сетевой операции произошла ошибка. Откройте диагностику."],
+  "检查网络": ["Check connection", "Проверить сеть"],
   "下一步": ["Next step", "Следующий шаг"],
   "先读取现有订阅": ["Read your existing subscriptions first", "Сначала прочитайте текущие подписки"],
   "确认设备上的来源后，再继续设置。已有输入会保留。": ["Read the sources saved on this device before continuing. Your draft will be kept.", "Прочитайте сохранённые на устройстве источники перед настройкой. Ваш черновик сохранится."],
@@ -426,9 +428,9 @@ export default {
     "Transparent proxy status unavailable",
     "Состояние прозрачного прокси недоступно",
   ],
-  "无法确认 configured/effective 模式；不会按 TUN 或 eBPF 猜测当前数据面。": [
-    "Cannot confirm configured/effective modes; the current data plane cannot be determined.",
-    "Не удалось подтвердить режимы configured/effective; текущая плоскость данных не определена.",
+  "暂时无法读取代理模式。请刷新状态，或打开诊断查看原因。": [
+    "The proxy mode could not be read. Refresh the status or open Diagnostics for details.",
+    "Не удалось прочитать режим прокси. Обновите состояние или откройте диагностику.",
   ],
   刷新状态: ["Refresh status", "Обновить состояние"],
   文件监听未运行: [

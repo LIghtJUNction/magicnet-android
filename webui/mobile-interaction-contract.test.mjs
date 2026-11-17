@@ -45,11 +45,11 @@ for (const label of ["运行", "路由", "配置", "诊断"]) {
 }
 assert.match(
   app,
-  /:aria-current="activeWorkspace\.key === workspace\.key \? 'page' : undefined"/,
+  /:aria-current="activeTab === item\.key \? 'page' : undefined"/,
 );
 assert.match(
   styles,
-  /\.mobile-nav\s*\{[\s\S]*grid-template-columns:\s*repeat\(4,/,
+  /\.mobile-nav\s*\{[\s\S]*grid-template-columns:\s*repeat\(5,/,
 );
 assert.match(styles, /\.mobile-nav button\s*\{[\s\S]*min-height:\s*56px/);
 assert.match(styles, /env\(safe-area-inset-bottom\)/);

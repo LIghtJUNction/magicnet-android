@@ -53,7 +53,7 @@ test("navigation and disclosure focus remain distinct in both themes", async ({ 
     await expect(active).toHaveCount(1);
     const colors = await active.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(document.body).backgroundColor]);
     expect(colors[0]).not.toBe(colors[1]);
-    const summary = page.locator(".mn-disclosure > summary").first();
+    const summary = page.locator(".mn-section-disclosure > summary").first();
     await page.keyboard.press("Tab");
     await summary.focus();
     await expect(summary).toBeFocused();

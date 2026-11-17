@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { isPaletteShortcut, rankPaletteEntries, scorePaletteEntry } from "./src/components/commandPalette.ts";
-import { buildConstellation } from "./src/components/pages/constellationPath.ts";
 import { parseMachineHotspot, parseMachineRuntime } from "./src/composables/machineStatus.ts";
-import { runtimeDefaults } from "./src/composables/parsers.ts";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const envelope = (command, data) => JSON.stringify({ schema: 1, ok: true, command, data });
@@ -43,61 +41,6 @@ test("palette shortcut never steals a slash typed into a field", () => {
   assert.equal(isPaletteShortcut(key({ key: "/", target: { tagName: "DIV", isContentEditable: true } })), false);
   assert.equal(isPaletteShortcut(key({ key: "k", ctrlKey: true, altKey: true })), false);
   assert.equal(isPaletteShortcut(key({ key: "k" })), false);
-});
-
-const ready = {
-  ...runtimeDefaults,
-  singBoxState: "sing-box",
-  singBox: "4127",
-  singBoxRssKib: 48230,
-  serviceReady: true,
-  transparentDataplaneReady: true,
-  transparentMode: "tun",
-  transparentEffectiveMode: "tun",
-};
-
-test("constellation only flows when every star is backed by evidence", () => {
-  const flowing = buildConstellation(ready, true);
-  assert.equal(flowing.summary, "flowing");
-  assert.deepEqual(flowing.edges, ["flowing", "flowing", "flowing"]);
-  assert.equal(flowing.stars[1].detail, "magicnet0");
-  assert.match(flowing.stars[2].detail, /^PID 4127 · 47 MiB$/);
-
-  // Unknown dataplane evidence is never drawn as captured traffic.
-  const unproven = buildConstellation({ ...ready, transparentDataplaneReady: null, serviceReady: null }, true);
-  assert.notEqual(unproven.summary, "flowing");
-  assert.equal(unproven.stars[1].state, "unknown");
-  assert.equal(unproven.edges[0], "unknown");
-  assert.equal(unproven.stars[3].state, "unknown");
-
-  // API not ready breaks only the exit link.
-  const partial = buildConstellation({ ...ready, serviceReady: false }, true);
-  assert.deepEqual(partial.edges, ["flowing", "flowing", "idle"]);
-  assert.equal(partial.summary, "partial");
-
-  const stopped = buildConstellation({ ...runtimeDefaults, singBoxState: "stopped", singBox: "stopped", serviceReady: false, transparentMode: "tun" }, true);
-  assert.equal(stopped.summary, "stopped");
-  assert.ok(stopped.stars.every((star) => star.state === "off"));
-
-  const preview = buildConstellation(ready, false);
-  assert.equal(preview.summary, "unknown");
-  assert.ok(preview.stars.every((star) => star.state === "unknown"));
-});
-
-test("eBPF dataplane is described by attachments, never by magicnet0", () => {
-  const ebpf = buildConstellation({ ...ready, transparentMode: "ebpf", transparentEffectiveMode: "hybrid", transparentLocalCgroup: "attached" }, true);
-  assert.equal(ebpf.stars[1].label, "eBPF");
-  assert.equal(ebpf.stars[1].detail, "local + shared");
-  assert.doesNotMatch(JSON.stringify(ebpf), /magicnet0/);
-});
-
-test("a ready hybrid local plane never labels its pending shared plane as ready", () => {
-  const ebpf = buildConstellation({ ...ready, transparentMode:"ebpf", transparentEffectiveMode:"hybrid",
-    transparentLocalCgroup:"attached", transparentSharedTc:"pending",
-    transparentLocalReady:true, transparentSharedReady:false }, true);
-  assert.equal(ebpf.stars[1].state, "ok");
-  assert.equal(ebpf.stars[1].detail, "本机已就绪 · 共享待就绪");
-  assert.equal(ebpf.stars[3].state, "ok");
 });
 
 test("runtime parser keeps dataplane evidence separate and never carries a stale true", () => {
@@ -140,7 +83,6 @@ test("overview reads hotspot state through the machine interface", () => {
   assert.match(control, /runCli\("--json hotspot status"/);
   assert.match(control, /parseMachineHotspot\(output\)/);
   assert.doesNotMatch(control, /route_status=\(/);
-  assert.match(control, /<ConstellationPath :runtime="state\.runtime" :has-device="state\.hasKsu" \/>/);
 });
 
 test("shell exposes the quick-jump palette with dialog semantics", () => {
