@@ -57,6 +57,7 @@ jobs:
           python3 scripts/test-host-connectivity-performance.py \
             --core "$RUNNER_TEMP/core/sing-box" --output artifacts/host-forwarding.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
           name: core-memory-evidence
           path: |

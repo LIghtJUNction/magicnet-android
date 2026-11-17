@@ -438,10 +438,13 @@ def main():
             version = subprocess.check_output([str(args.core), 'version'], text=True, timeout=10)
             if f'+LIghtJUNction.{revision[:12]}' not in version:
                 raise RuntimeError('core_version_differs_from_pinned_source')
-            expected_tags = (ROOT / 'sing-box/release/DEFAULT_BUILD_TAGS_OTHERS').read_text().strip()
+            expected_tags = set((ROOT / 'sing-box/release/DEFAULT_BUILD_TAGS_OTHERS')
+                                .read_text().strip().split(','))
+            # The production builder adds MagicNet's strict selected-outbound probe.
+            expected_tags.add('with_lx_probe')
             actual_tags = next((line.removeprefix('Tags: ').strip() for line in version.splitlines()
                                 if line.startswith('Tags: ')), '')
-            if set(actual_tags.split(',')) != set(expected_tags.split(',')):
+            if set(actual_tags.split(',')) != expected_tags:
                 raise RuntimeError('core_build_tags_differ_from_production')
             report['core'] = {'source_revision': revision, 'binary_sha256': digest(args.core),
                               'binary_bytes': args.core.stat().st_size, 'version': version.strip(),

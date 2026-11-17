@@ -47,7 +47,8 @@ def cp(output='', rc=0, stderr=''):
 
 def connectivity_value(**changes):
     return {
-        'target': 'https://www.google.com/generate_204', 'path': 'mixed_proxy',
+        'target': 'https://www.google.com/generate_204', 'path': 'selected_proxy',
+        'mixed_path': 'mixed_proxy', 'mixed_status': 'not_run', 'mixed_reason': 'not_checked',
         'status': 'unknown', 'reason': 'not_checked', 'primary_reason': 'not_checked',
         'warning': False, 'checked_at': None, 'next_check_at': None,
         'retry_in_seconds': None, 'consecutive_failures': 0, 'probe_count': 0,
@@ -294,8 +295,9 @@ class ProductConnectivityTests(unittest.TestCase):
             return SIM.product_connectivity_observation(self.device, self.evidence)
 
     def test_cached_success_never_requests_another_google_probe(self):
-        self.snapshots = [connectivity_value(status='online', reason='https_204', primary_reason='ok',
-            probe_count=1, checked_at=100, latency_ms=12, http_status=204)]
+        self.snapshots = [connectivity_value(status='online', reason='ok', primary_reason='ok',
+            probe_count=1, checked_at=100, latency_ms=12, http_status=204,
+            secondary_status='online', mixed_status='online', mixed_reason='ok')]
         result = self.check()
         self.assertEqual(result['explicit_tick_count'], 0)
         self.assertEqual(result['observation_source'], 'existing_producer_result')
@@ -314,7 +316,7 @@ class ProductConnectivityTests(unittest.TestCase):
                 self.assertEqual(self.calls.count(SIM.MOD + '/cli connectivity tick'), 1)
                 self.assertFalse(result['google_https_204_observed'])
                 self.assertEqual(result['after']['primary_reason'], reason)
-                self.assertEqual(result['explicit_request_upper_bound'], {'google': 1, 'auxiliary': 2})
+                self.assertEqual(result['explicit_request_upper_bound'], {'google': 2, 'auxiliary': 2})
 
     def test_existing_failure_does_not_trigger_recovery_or_another_probe(self):
         self.snapshots = [connectivity_value(status='offline', reason='upstream_unavailable',
@@ -335,7 +337,8 @@ class ProductConnectivityTests(unittest.TestCase):
         self.assertEqual(result['observation_source'], 'pending_producer_result')
 
     def test_missing_or_invalid_executor_cannot_be_reported_as_network_success(self):
-        for reason in ('probe_unavailable', 'probe_invalid', 'proxy_unavailable', 'no_default_route'):
+        for reason in ('probe_unavailable', 'probe_invalid', 'probe_unsupported', 'selection_changed',
+                       'proxy_unavailable', 'no_default_route'):
             with self.subTest(reason=reason):
                 self.calls.clear()
                 self.snapshots = [connectivity_value(), connectivity_value(status='offline', reason=reason,
@@ -362,6 +365,89 @@ class ProductConnectivityTests(unittest.TestCase):
             self.check()
         self.assertEqual(len(self.calls), 3)
         self.assertFalse(self.evidence['canonical_state_modified_by_harness'])
+
+
+    def test_selected_success_with_failed_mixed_is_observed_without_claiming_online(self):
+        self.snapshots = [connectivity_value(status='degraded', reason='mixed_path_failed',
+            primary_reason='ok', probe_count=1, checked_at=100, latency_ms=12, http_status=204,
+            secondary_status='online', mixed_status='failed', mixed_reason='timeout', warning=True)]
+        result = self.check()
+        self.assertEqual(result['status'], 'observed')
+        self.assertFalse(result['google_https_204_observed'])
+        self.assertEqual(result['after']['mixed_status'], 'failed')
+        self.assertEqual(result['explicit_tick_count'], 0)
+        self.assertFalse(result['canonical_state_modified_by_harness'])
+        self.assertEqual(self.calls, [SIM.MOD + '/cli --json connectivity status'])
+
+    def test_unsupported_strict_probe_is_not_retried_or_rewritten_as_success(self):
+        self.snapshots = [connectivity_value(status='unknown', reason='probe_unsupported',
+            primary_reason='probe_unsupported', probe_count=1, checked_at=100,
+            secondary_status='unknown', mixed_status='online', mixed_reason='ok', warning=True)]
+        with self.assertRaisesRegex(RuntimeError, 'no usable observation'):
+            self.check()
+        self.assertEqual(self.evidence['status'], 'failed')
+        self.assertFalse(self.evidence['google_https_204_observed'])
+        self.assertEqual(self.evidence['explicit_tick_count'], 0)
+        self.assertFalse(self.evidence['canonical_state_modified_by_harness'])
+        self.assertEqual(self.calls, [SIM.MOD + '/cli --json connectivity status'])
+
+
+class ConnectivitySnapshotTests(unittest.TestCase):
+    def online(self):
+        return connectivity_value(status='online', reason='ok', primary_reason='ok',
+            probe_count=1, checked_at=100, latency_ms=0, http_status=204,
+            secondary_status='online', mixed_status='online', mixed_reason='ok')
+
+    def test_online_preserves_both_selected_and_mixed_evidence(self):
+        value = self.online()
+        original = copy.deepcopy(value)
+        result = SIM.connectivity_snapshot(value)
+        self.assertEqual(result['path'], 'selected_proxy')
+        self.assertEqual(result['mixed_path'], 'mixed_proxy')
+        self.assertEqual(result['mixed_status'], 'online')
+        self.assertEqual(result['mixed_reason'], 'ok')
+        self.assertEqual(result['latency_ms'], 0)
+        self.assertEqual(value, original)
+
+    def test_legacy_missing_or_invalid_mixed_contract_is_rejected(self):
+        for key, invalid in (
+            ('path', 'mixed_proxy'), ('mixed_path', 'selected_proxy'),
+            ('mixed_status', 'bogus'), ('mixed_status', True),
+            ('mixed_reason', 'bogus'), ('mixed_reason', '<private>'),
+        ):
+            with self.subTest(key=key, invalid=invalid):
+                with self.assertRaises(RuntimeError):
+                    SIM.connectivity_snapshot(self.online() | {key: invalid})
+        for key in ('mixed_path', 'mixed_status', 'mixed_reason'):
+            value = self.online()
+            del value[key]
+            with self.subTest(missing=key), self.assertRaises(RuntimeError):
+                SIM.connectivity_snapshot(value)
+
+    def test_online_requires_complete_success_at_both_layers(self):
+        changes = [
+            {'http_status': 200}, {'http_status': True}, {'checked_at': 0},
+            {'latency_ms': None}, {'latency_ms': True}, {'probe_count': 0},
+            {'primary_reason': 'timeout'}, {'reason': 'mixed_path_failed'},
+            {'warning': True}, {'consecutive_failures': 1}, {'mixed_reason': 'timeout'},
+        ]
+        for status in ('not_run', 'failed', 'unknown'):
+            changes.extend([{'secondary_status': status}, {'mixed_status': status}])
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(RuntimeError):
+                SIM.connectivity_snapshot(self.online() | change)
+
+    def test_unknown_capability_and_failover_tokens_remain_separate_from_online(self):
+        for action in ('conflict', 'rollback_failed'):
+            value = connectivity_value(status='unknown', reason='probe_unsupported',
+                primary_reason='probe_unsupported', probe_count=1, checked_at=100,
+                secondary_status='unknown', direct_status='unknown',
+                mixed_status='unknown', mixed_reason='probe_unavailable',
+                last_action='failover', action_status=action, warning=True)
+            result = SIM.connectivity_snapshot(value)
+            self.assertEqual(result['status'], 'unknown')
+            self.assertEqual(result['mixed_status'], 'unknown')
+            self.assertEqual(result['action_status'], action)
 
 
 class ReadinessTests(unittest.TestCase):
@@ -399,7 +485,9 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual([s['type'] for s in value['dns']['servers']], ['hosts'])
         self.assertEqual(value['inbounds'][0]['exclude_uid'], [0])
         self.assertEqual(value['inbounds'][0]['interface_name'], 'magicnet0')
-        self.assertEqual(value['outbounds'], [{'type': 'direct', 'tag': 'direct'}])
+        self.assertEqual(value['outbounds'], [
+            {'type': 'selector', 'tag': 'proxy', 'outbounds': ['direct'], 'default': 'direct'},
+            {'type': 'direct', 'tag': 'direct'}])
 
 
 class InstalledControlsTests(unittest.TestCase):
@@ -565,8 +653,10 @@ class InstalledControlsTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.check()
         value = copy.deepcopy(self.export_service)
-        value['data']['connectivity'].update({'status': 'online', 'reason': 'https_204',
-                                             'http_status': 204, 'checked_at': 12345, 'latency_ms': 4})
+        value['data']['connectivity'].update({'status': 'online', 'reason': 'ok', 'primary_reason': 'ok',
+                                             'http_status': 204, 'checked_at': 12345, 'latency_ms': 4,
+                                             'probe_count': 1, 'secondary_status': 'online',
+                                             'mixed_status': 'online', 'mixed_reason': 'ok'})
         self.replace_report_section('service status', self.capture_header + json.dumps(value))
         self.check()
         snapshot = self.evidence['support_export']['content']['service_status']['connectivity']

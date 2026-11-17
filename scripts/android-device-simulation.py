@@ -82,7 +82,10 @@ def fixture_config() -> dict:
             {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 7892},
             {'type': 'direct', 'tag': 'magicnet-dns-in', 'listen': '127.0.0.1', 'listen_port': 1053},
         ],
-        'outbounds': [{'type': 'direct', 'tag': 'direct'}],
+        'outbounds': [
+            {'type': 'selector', 'tag': 'proxy', 'outbounds': ['direct'], 'default': 'direct'},
+            {'type': 'direct', 'tag': 'direct'},
+        ],
         'route': {'auto_detect_interface': True, 'final': 'direct', 'rules': [
             {'inbound': ['magicnet-dns-in'], 'action': 'hijack-dns'},
             {'port': 53, 'action': 'hijack-dns'},
@@ -296,13 +299,19 @@ def has_owned_network(text: str) -> bool:
 def connectivity_snapshot(connectivity: dict) -> dict:
     require(isinstance(connectivity, dict), 'missing diagnostic connectivity object')
     require(connectivity.get('target') == 'https://www.google.com/generate_204'
-            and connectivity.get('path') == 'mixed_proxy', 'invalid connectivity target or path')
+            and connectivity.get('path') == 'selected_proxy'
+            and connectivity.get('mixed_path') == 'mixed_proxy',
+            'invalid connectivity target or path')
     for key, allowed in {
         'status': ('unknown', 'pending', 'online', 'degraded', 'offline', 'paused', 'stale'),
-        'secondary_status': ('not_run', 'online', 'failed'),
-        'direct_status': ('not_run', 'online', 'failed'),
-        'last_action': ('none', 'repair', 'refresh', 'restart', 'deferred'),
-        'action_status': ('none', 'pending', 'ok', 'failed', 'busy'),
+        'secondary_status': ('not_run', 'online', 'failed', 'unknown'),
+        'direct_status': ('not_run', 'online', 'failed', 'unknown'),
+        'mixed_status': ('not_run', 'online', 'failed', 'unknown'),
+        'mixed_reason': ('not_checked', 'ok', 'dns_failure', 'proxy_refused', 'timeout',
+                         'tls_failure', 'http_error', 'probe_unavailable', 'probe_invalid',
+                         'proxy_unavailable', 'transport_failure', 'selection_changed'),
+        'last_action': ('none', 'repair', 'refresh', 'restart', 'failover', 'deferred'),
+        'action_status': ('none', 'pending', 'ok', 'failed', 'busy', 'conflict', 'rollback_failed'),
     }.items():
         require(connectivity.get(key) in allowed, 'invalid connectivity ' + key)
     for key in ('reason', 'primary_reason'):
@@ -321,12 +330,18 @@ def connectivity_snapshot(connectivity: dict) -> dict:
     require(60 <= connectivity['backoff_seconds'] <= 1800, 'invalid connectivity backoff')
     if connectivity['status'] == 'online':
         require(connectivity['http_status'] == 204 and (connectivity['checked_at'] or 0) > 0
-                and connectivity['latency_ms'] is not None, 'unproven online connectivity')
+                and connectivity['latency_ms'] is not None and connectivity['probe_count'] > 0
+                and connectivity['primary_reason'] == 'ok' and connectivity['reason'] == 'ok'
+                and connectivity['secondary_status'] == 'online'
+                and connectivity['mixed_status'] == 'online' and connectivity['mixed_reason'] == 'ok'
+                and connectivity['warning'] is False and connectivity['consecutive_failures'] == 0,
+                'unproven online connectivity')
     return {key: connectivity[key] for key in (
         'target', 'path', 'status', 'reason', 'primary_reason', 'warning',
         'checked_at', 'next_check_at', 'retry_in_seconds', 'consecutive_failures',
         'probe_count', 'backoff_seconds', 'latency_ms', 'http_status',
-        'secondary_status', 'direct_status', 'last_action', 'action_status',
+        'secondary_status', 'direct_status', 'mixed_path', 'mixed_status', 'mixed_reason',
+        'last_action', 'action_status',
         'last_action_at', 'last_refresh_at',
     )}
 
@@ -335,14 +350,15 @@ def product_connectivity_observation(device, evidence: dict | None = None) -> di
     """Accept an existing producer result or invoke one ordinary, deduplicated tick.
 
     Never edit canonical state, bypass next_due, retry the tick or chase a 204.
-    A first failed attempt may make the product's two differential requests;
-    no subscription or recovery action is needed to establish executor use.
+    A tick checks selected Google/Cloudflare and independent mixed Google;
+    dual selected failures also allow one direct control. No subscription or
+    recovery action is needed to establish executor use.
     """
     deadline = time.monotonic() + 40
     if evidence is None:
         evidence = {}
     evidence.update({'schema': 1, 'status': 'failed', 'explicit_tick_count': 0,
-                'explicit_request_upper_bound': {'google': 1, 'auxiliary': 2},
+                'explicit_request_upper_bound': {'google': 2, 'auxiliary': 2},
                 'canonical_state_modified_by_harness': False,
                 'google_https_204_observed': False, 'status_reads': 0})
 
@@ -388,7 +404,10 @@ def product_connectivity_observation(device, evidence: dict | None = None) -> di
     require(executed(current), 'connectivity executor has no usable observation')
     evidence['google_https_204_observed'] = (current['status'] == 'online'
                                            and current['http_status'] == 204
-                                           and current['primary_reason'] == 'ok')
+                                           and current['primary_reason'] == 'ok'
+                                           and current['secondary_status'] == 'online'
+                                           and current['mixed_status'] == 'online'
+                                           and current['mixed_reason'] == 'ok')
     evidence['status'] = 'observed'
     return evidence
 

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Offline Git integration checks for CI's moving submodule inputs."""
+from contextlib import redirect_stdout
+import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -133,13 +138,16 @@ class SubmoduleUpdateTests(unittest.TestCase):
             (work / "bin").mkdir()
             compiler = work / "bin/go"
             compiler_called = work / "compiler-called"
+            compiler_args = work / "compiler-args"
             compiler.write_text(
-                '#!/bin/sh\n: >"$FAKE_GO_CALLED"\nwhile [ "$#" -gt 0 ]; do\n'
+                '#!/bin/sh\n: >"$FAKE_GO_CALLED"\nprintf "%s\\n" "$@" >"$FAKE_GO_ARGS"\n'
+                'while [ "$#" -gt 0 ]; do\n'
                 '  if [ "$1" = -o ]; then printf fixture >"$2"; exit 0; fi\n'
                 '  shift\ndone\nexit 1\n')
             compiler.chmod(0o755)
             env.update(MAGICNET_SINGBOX_SOURCE_DIR=str(source),
                        FAKE_GO_CALLED=str(compiler_called),
+                       FAKE_GO_ARGS=str(compiler_args),
                        PATH=f"{work / 'bin'}:{env['PATH']}")
 
             def build():
@@ -151,6 +159,9 @@ class SubmoduleUpdateTests(unittest.TestCase):
             result = build()
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((work / "output").read_text(), "fixture")
+            arguments = compiler_args.read_text().splitlines()
+            self.assertEqual(set(arguments[arguments.index("-tags") + 1].split(",")),
+                             {"with_ebpf", "with_lx_probe"})
 
             def assert_rejected():
                 compiler_called.unlink(missing_ok=True)
@@ -210,6 +221,64 @@ class SubmoduleUpdateTests(unittest.TestCase):
                           if step.get("name") == "Initialize shell test submodules")
         command = shell_init.get("run", "")
         self.assertIn("git submodule update --init --recursive --depth 1", command)
+
+
+class HostCoreBuildTagTests(unittest.TestCase):
+    def test_forwarding_preflight_requires_exact_production_build_tags(self):
+        spec = importlib.util.spec_from_file_location(
+            "host_connectivity_performance", ROOT / "scripts/test-host-connectivity-performance.py")
+        benchmark = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(benchmark)
+        revision = "a" * 40
+
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            release = work / "sing-box/release"
+            release.mkdir(parents=True)
+            (release / "DEFAULT_BUILD_TAGS_OTHERS").write_text("with_clash_api,with_ebpf\n")
+            core, output = work / "core", work / "report.json"
+
+            def pinned_git(*arguments):
+                if arguments == ("rev-parse", "HEAD"):
+                    return "b" * 40
+                if arguments == ("ls-tree", "HEAD", "--", "sing-box"):
+                    return f"160000 commit {revision} sing-box"
+                if arguments == ("-C", str(work / "sing-box"), "rev-parse", "HEAD"):
+                    return revision
+                raise AssertionError(arguments)
+
+            for case, tags, accepted in (
+                ("complete_reordered", "with_lx_probe,with_ebpf,with_clash_api", True),
+                ("missing_magicnet_probe", "with_clash_api,with_ebpf", False),
+                ("missing_base_feature", "with_clash_api,with_lx_probe", False),
+                ("unexpected_feature", "with_clash_api,with_ebpf,with_lx_probe,unexpected", False),
+            ):
+                with self.subTest(case=case):
+                    core.write_text(
+                        "#!/bin/sh\nprintf '%s\\n' "
+                        f"'sing-box version 1.14.0+LIghtJUNction.{revision[:12]}' "
+                        f"'Tags: {tags}'\n")
+                    core.chmod(0o700)
+                    with patch.object(benchmark, "ROOT", work), \
+                            patch.object(benchmark, "git", side_effect=pinned_git), \
+                            patch.object(benchmark, "measure_loopback",
+                                         return_value={"status": "passed"}) as measure, \
+                            patch("sys.argv", ["host-forwarding", "--core", str(core),
+                                               "--output", str(output)]), \
+                            redirect_stdout(io.StringIO()):
+                        code = benchmark.main()
+                    report = json.loads(output.read_text())
+                    self.assertEqual(code, 0 if accepted else 1)
+                    self.assertEqual(report["local_acceptance"], "passed" if accepted else "failed")
+                    self.assertEqual(report["google_once"]["status"], "not_requested")
+                    if accepted:
+                        measure.assert_called_once()
+                        self.assertTrue(report["core"]["production_build_tags_verified"])
+                        self.assertEqual(report["core"]["source_revision"], revision)
+                    else:
+                        measure.assert_not_called()
+                        self.assertEqual(report["loopback"]["reason"],
+                                         "core_build_tags_differ_from_production")
 
 
 if __name__ == "__main__":
