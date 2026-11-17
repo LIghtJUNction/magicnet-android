@@ -74,12 +74,29 @@ esac
         );
         fs::write(root.join("mode"), "online").unwrap();
         fs::write(root.join("lib/kamfw/.kamfwrc"), "import() { :; }\n").unwrap();
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../src/MagicNet/lib");
+        fs::create_dir_all(root.join("lib/magicnet/singbox_subscribe")).unwrap();
+        for path in [
+            "magicnet/common.sh",
+            "magicnet/primitives.sh",
+            "magicnet/subscribe_bootstrap.sh",
+            "magicnet/singbox_subscribe/bootstrap.sh",
+        ] {
+            fs::copy(source.join(path), root.join("lib").join(path)).unwrap();
+        }
         fs::write(
             root.join("lib/magicnet.sh"),
             r#"
+. "$MODDIR/lib/magicnet/common.sh"
+magicnet_warn() { :; }
 magicnet_notify() { printf '%s\n' "$*" >>"$MODDIR/notifications"; }
 magicnet_after_kernel_start_unlocked() { printf '%s\n' repair >>"$MODDIR/actions"; }
 magicnet_connectivity_watchdog_start() { :; }
+magicnet_lifecycle_after_stop() {
+    printf '%s\n' cleanup >>"$MODDIR/cleanup-actions"
+    test ! -f "$MODDIR/cleanup-fails" || return 1
+    rm -f "$MODDIR/dns-capture-attached"
+}
 "#,
         )
         .unwrap();
@@ -232,6 +249,7 @@ magicnet_singbox_stop_owned_config() { printf '%s\n' core_stop >>"$MODDIR/activa
 magicnet_singbox_ensure_start_owned() { printf '%s\n' core_start >>"$MODDIR/activation"; }
 magicnet_reapply_post_start_policy() { printf '%s\n' policy >>"$MODDIR/activation"; }
 magicnet_prepare_network_for_core_stop() { printf '%s\n' network_stop >>"$MODDIR/activation"; }
+magicnet_with_sub_config_lock() { "$@"; }
 magicnet_lifecycle_after_stop() { printf '%s\n' stopped >>"$MODDIR/activation"; }
 "#,
         )
@@ -505,6 +523,7 @@ fn connectivity_stopped_core_and_module_disable_prevent_every_probe_and_action()
     fixture.run(&["connectivity", "tick"]);
     assert_eq!(fixture.calls(), 0);
     assert_eq!(fixture.status()["reason"], "module_disabled");
+    assert!(!fixture.root.join("cleanup-actions").exists());
     fs::remove_file(fixture.root.join("disable")).unwrap();
     unsafe {
         libc::kill(-(fixture.core.id() as i32), libc::SIGKILL);
@@ -516,6 +535,142 @@ fn connectivity_stopped_core_and_module_disable_prevent_every_probe_and_action()
     assert_eq!(fixture.status()["reason"], "core_stopped");
     assert_eq!(fixture.calls(), 0);
     assert!(!fixture.root.join("actions").exists());
+}
+
+#[test]
+fn connectivity_crashed_core_releases_interception_without_probing_or_restarting() {
+    let mut fixture = Fixture::new();
+    fixture.run(&["connectivity", "tick"]);
+    fs::write(fixture.root.join("dns-capture-attached"), "1053").unwrap();
+    unsafe { libc::kill(-(fixture.core.id() as i32), libc::SIGKILL) };
+    fixture.core.wait().unwrap();
+    // Crash cleanup follows the local watchdog interval, not the independent
+    // five-minute HTTPS schedule. A status read must remain read-only.
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    assert_eq!(fixture.status()["reason"], "core_stopped");
+    assert!(fixture.root.join("dns-capture-attached").exists());
+    fixture.run(&["connectivity", "tick"]);
+    assert!(!fixture.root.join("dns-capture-attached").exists());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
+        "cleanup\n"
+    );
+    assert_eq!(fixture.calls(), 1);
+    assert!(!fixture.root.join("actions").exists());
+    assert_eq!(fixture.status()["status"], "paused");
+    assert_eq!(fixture.status()["reason"], "core_stopped");
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
+        "cleanup\n"
+    );
+}
+
+#[test]
+fn connectivity_crash_cleanup_defers_lifecycle_contention_and_retries_failures() {
+    let mut fixture = Fixture::new();
+    fixture.run(&["connectivity", "tick"]);
+    fs::write(fixture.root.join("dns-capture-attached"), "1053").unwrap();
+    unsafe { libc::kill(-(fixture.core.id() as i32), libc::SIGKILL) };
+    fixture.core.wait().unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(fixture.root.join(".state/config-apply.lock"))
+        .unwrap();
+    assert_eq!(
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert!(fixture.root.join("dns-capture-attached").exists());
+    assert!(!fixture.root.join("cleanup-actions").exists());
+    drop(lock);
+    fs::write(fixture.root.join("cleanup-fails"), "").unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    let failed = fixture.command(&["connectivity", "tick"]).output().unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("connectivity.cleanup_failed"));
+    assert!(fixture.root.join("dns-capture-attached").exists());
+    assert_eq!(fixture.status()["status"], "paused");
+    fs::remove_file(fixture.root.join("cleanup-fails")).unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert!(!fixture.root.join("dns-capture-attached").exists());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
+        "cleanup\ncleanup\n"
+    );
+    assert_eq!(fixture.calls(), 1);
+    assert!(!fixture.root.join("actions").exists());
+}
+
+#[test]
+fn connectivity_unknown_core_cannot_authorize_crash_cleanup() {
+    let fixture = Fixture::new();
+    fixture.run(&["connectivity", "tick"]);
+    fs::write(fixture.root.join("dns-capture-attached"), "1053").unwrap();
+    fs::write(fixture.root.join("bin/pidof"), "#!/bin/sh\nexit 2\n").unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(fixture.status()["status"], "unknown");
+    assert!(fixture.root.join("dns-capture-attached").exists());
+    assert!(!fixture.root.join("cleanup-actions").exists());
+    assert_eq!(fixture.calls(), 1);
+}
+
+#[test]
+fn connectivity_crash_cleanup_respects_the_shell_startup_lock() {
+    let mut fixture = Fixture::new();
+    fixture.run(&["connectivity", "tick"]);
+    unsafe { libc::kill(-(fixture.core.id() as i32), libc::SIGKILL) };
+    fixture.core.wait().unwrap();
+    let startup_lock = fixture.root.join(".state/config.lock");
+    fs::create_dir(&startup_lock).unwrap();
+    fs::write(startup_lock.join("pid"), std::process::id().to_string()).unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    assert!(!fixture
+        .command(&["connectivity", "tick"])
+        .output()
+        .unwrap()
+        .status
+        .success());
+    assert!(startup_lock.join("pid").is_file());
+    assert!(!fixture.root.join("cleanup-actions").exists());
+    fs::remove_file(startup_lock.join("pid")).unwrap();
+    fs::remove_dir(startup_lock).unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
+        "cleanup\n"
+    );
+    assert_eq!(fixture.calls(), 1);
+}
+
+#[test]
+fn connectivity_rechecks_a_stopped_core_before_cleanup() {
+    let fixture = Fixture::new();
+    fixture.run(&["connectivity", "tick"]);
+    fs::write(
+        fixture.root.join("bin/pidof"),
+        r#"#!/bin/sh
+test "$1" = sing-box || exit 1
+if [ ! -f "$MODDIR/discovered-once" ]; then
+    touch "$MODDIR/discovered-once"
+    exit 1
+fi
+cat "$MODDIR/core.pid"
+"#,
+    )
+    .unwrap();
+    fixture.edit_state(&[("tun_next_uptime", "0")]);
+    fixture.run(&["connectivity", "tick"]);
+    assert!(!fixture.root.join("cleanup-actions").exists());
+    assert_eq!(fixture.calls(), 1);
 }
 
 #[test]

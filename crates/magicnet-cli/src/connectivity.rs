@@ -568,19 +568,20 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
         }
     };
     if let Some(reason) = reason {
-        if state.phase != "paused" || state.reason != reason {
-            state.phase = "paused";
-            state.reason = reason;
-            state.next_uptime = clock.uptime.saturating_add(INTERVAL);
-            state.tun.record(
-                &clock,
-                if reason == "core_unknown" {
-                    "unknown"
-                } else {
-                    "paused"
-                },
-            );
-            state.publish(app)?;
+        state.phase = "paused";
+        state.reason = reason;
+        state.next_uptime = clock.uptime.saturating_add(INTERVAL);
+        state.tun.record(
+            &clock,
+            if reason == "core_unknown" {
+                "unknown"
+            } else {
+                "paused"
+            },
+        );
+        state.publish(app)?;
+        if reason == "core_stopped" {
+            cleanup_stopped_network(app)?;
         }
         return Ok(());
     }
@@ -654,6 +655,29 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
         recover(app, &mut state, &clock, action)?;
     }
     Ok(())
+}
+
+fn cleanup_stopped_network(app: &App) -> Result<(), String> {
+    // A crashed core cannot remove the DNS redirect/route policy that outlives
+    // its listener. Retire those owned resources without starting a new core.
+    // The ordinary lifecycle helper is idempotent and preserves foreign rules.
+    let Some(_guard) = crate::service::try_config_apply_lock(app)? else {
+        return Ok(());
+    };
+    if cancelled() || disabled(app) || live(app) != Ok(false) {
+        return Ok(());
+    }
+    let result = crate::process::run_magicnet_function_quiet(
+        app,
+        // Boot and shell launchers use the config lock while creating the new
+        // listener. Hold it too; after_stop rechecks identity inside that lock.
+        "MAGICNET_SUB_CONFIG_LOCK_TIMEOUT=2 magicnet_with_sub_config_lock magicnet_lifecycle_after_stop",
+        Duration::from_secs(45),
+    );
+    let _ = crate::state::reconcile(app);
+    // Failed cleanup retains the lifecycle helper's recovery evidence and is
+    // retried on the next local watchdog check, independently of HTTPS backoff.
+    result.map_err(|_| "connectivity.cleanup_failed".into())
 }
 
 fn pause_cancelled(app: &App, state: &mut State) -> Result<(), String> {
