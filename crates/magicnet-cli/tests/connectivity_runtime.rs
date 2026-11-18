@@ -484,18 +484,37 @@ case "$*" in
   '-4 -N rule show')
     test ! -f "$MODDIR/rules-unknown" || exit 1
     cat "$MODDIR/rules" ;;
-  '-4 route show table  2022') printf '%s\n' 'default dev magicnet0 scope link' ;;
+  '-4 route show table  2022') cat "$MODDIR/routes" ;;
   *) exit 64 ;;
 esac
 "#,
     )
     .unwrap();
+    let routes = fixture.root.join("routes");
+    fs::write(&routes, "default dev magicnet0 scope link\n").unwrap();
     fs::write(fixture.root.join("rules"), "0: from all lookup 255\n9001: from all iif magicnet0 goto 9010\n9002: not from all iif lo lookup 2022\n9002: from 0.0.0.0 iif lo lookup 2022\n9002: from 172.19.0.0/30 iif lo lookup 2022\n9010: from all nop\n").unwrap();
     fixture.run(&["connectivity", "tick"]);
     let status = fixture.status();
     assert_eq!(status["status"], "online");
     assert_eq!(status["tun_auto_route"]["status"], "present");
     assert_eq!(fixture.calls(), 3);
+
+    fs::write(&routes, "default tos 0x10 dev magicnet0 scope link\n").unwrap();
+    fixture.edit_state(&[
+        ("tun_next_uptime", "0"),
+        ("tun_failures", "2"),
+        ("tun_status", "missing"),
+    ]);
+    fixture.run(&["connectivity", "tick"]);
+    let conditional = fixture.status();
+    assert_eq!(conditional["status"], "online");
+    assert_eq!(conditional["tun_auto_route"]["status"], "unknown");
+    assert_eq!(conditional["tun_auto_route"]["warning"], true);
+    assert_eq!(conditional["tun_auto_route"]["consecutive_failures"], 0);
+    assert_eq!(conditional["tun_auto_route"]["recovery_attempts"], 0);
+    assert_eq!(fixture.calls(), 3);
+    assert!(!fixture.root.join("actions").exists());
+    fs::write(&routes, "default dev magicnet0 scope link\n").unwrap();
 
     fs::write(fixture.root.join("rules"), "0: from all lookup 255\n").unwrap();
     fixture.edit_state(&[("tun_next_uptime", "0")]);

@@ -406,6 +406,9 @@ mod tests {
         let rules = "0: from all lookup 255\n9000: from all fwmark 0x200000/0xe00000 goto 9002\n9001: from all fwmark 0x400000/0xe00000 lookup 2022\n9002: from all nop\n32768: not from all fwmark 0x200000/0xe00000 lookup 2022\n";
         for (rules, routes, expected) in [
             (Ok(rules), "default dev magicnet0\n", Some(true)),
+            (Ok(rules), "default tos 0x10 dev magicnet0\n", None),
+            (Ok(rules), "default dsfield 0x10 dev magicnet0\n", None),
+            (Ok(rules), "default tos 0x00 dev magicnet0\n", Some(true)),
             (
                 Ok("0: from all lookup 255\n"),
                 "default dev magicnet0\n",

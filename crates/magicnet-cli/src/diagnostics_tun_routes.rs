@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use serde_json::Value;
 
-use super::{config_bool, prefix, Family};
+use super::{config_bool, number, prefix, Family};
 
 const MAX_CONFIG_PREFIXES: usize = 1024;
 
@@ -163,7 +163,19 @@ pub(super) fn routes_cover(
             && !fields.contains(&"linkdown")
             && fields.windows(2).any(|pair| pair == ["dev", "magicnet0"])
         {
-            if fields.contains(&"from") || fields.contains(&"nexthop") {
+            if fields
+                .iter()
+                .enumerate()
+                .any(|(index, field)| match *field {
+                    "from" | "nexthop" => true,
+                    // A zero DS field is a fallback; other values restrict which
+                    // packets match and cannot prove unconditional TUN coverage.
+                    "tos" | "dsfield" => {
+                        fields.get(index + 1).and_then(|value| number(value)) != Some(0)
+                    }
+                    _ => false,
+                })
+            {
                 return Err("route-selectors-unobserved");
             }
             observed.push(range);

@@ -598,6 +598,59 @@ fn fib_evidence_requires_a_live_unicast_route_on_the_exact_tun_device() {
 }
 
 #[test]
+fn conditional_fib_routes_do_not_prove_unconditional_tun_coverage() {
+    let config = inbound();
+    let rules = normal_rules(2022, 9000, Family::V4);
+    for routes in [
+        "default tos 0x10 dev magicnet0 scope link\n",
+        "default dsfield 0x10 dev magicnet0 scope link\n",
+        "default tos lowdelay dev magicnet0 scope link\n",
+        "default tos invalid dev magicnet0 scope link\n",
+        "default dev magicnet0 tos\n",
+        "default dev magicnet0 dsfield\n",
+    ] {
+        let observed = super::auto_route_observation_with(&config, true, |args| {
+            Ok(if args.contains(&"rule") {
+                rule_snapshot(args, &rules)
+            } else {
+                routes.into()
+            })
+        });
+        assert_eq!(observed.ready, None, "accepted {routes}");
+        assert!(
+            !observed.fully_observed,
+            "a conditional route must not authorize recovery: {routes}"
+        );
+        assert!(
+            observed
+                .detail
+                .contains("ipv4_fib=unknown:route-selectors-unobserved"),
+            "{}",
+            observed.detail
+        );
+    }
+}
+
+#[test]
+fn zero_tos_and_dsfield_keep_unconditional_tun_coverage() {
+    let config = inbound();
+    let rules = normal_rules(2022, 9000, Family::V4);
+    for selector in ["tos 0", "tos 0x00", "dsfield 0", "dsfield 0X00"] {
+        let routes = format!("default {selector} dev magicnet0 scope link\n");
+        let observed = super::auto_route_observation_with(&config, true, |args| {
+            Ok(if args.contains(&"rule") {
+                rule_snapshot(args, &rules)
+            } else {
+                routes.clone()
+            })
+        });
+        assert_eq!(observed.ready, Some(true), "{}", observed.detail);
+        assert!(observed.fully_observed, "{}", observed.detail);
+        assert!(observed.detail.contains("ipv4_fib=present"));
+    }
+}
+
+#[test]
 fn fib_conflicting_routes_cannot_hide_behind_a_covering_tun_route() {
     for (address, family, base, conflicting) in [
         (
