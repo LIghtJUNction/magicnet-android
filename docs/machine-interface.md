@@ -119,6 +119,20 @@ A running process is not proof that the proxy is ready.
 
 `readiness.overall` is true only when both the API and dataplane are ready. Unknown evidence stays `null`; it is never promoted to ready.
 
+The `local_zashboard_readiness` capability adds `api.webui_ready`, a boolean
+that checks whether the bundled `.config/sing-box/zashboard/index.html` is a
+file. A missing entry, directory or failed metadata read returns `false`.
+The human `webui status` field `local_ready` uses the same check. This read
+does not start the core, install assets or send a network request.
+
+Dashboard entry points use a fresh `service.status` snapshot: `api.ready`
+describes the listener, `api.webui_ready` describes the local assets, and
+`api.webui` supplies the loopback setup URL without credentials. A false
+dataplane or overall readiness must not block access to an available dashboard,
+because users need it to fix their proxy selection. An older response without
+`webui_ready` leaves asset availability unconfirmed; clients may retain their
+validated loopback navigation without labeling the assets ready.
+
 Transparent `effective_type` and `effective_mode` come from the unique `tun-in`
 inbound in the materialized configuration. Missing, unreadable, invalid or
 ambiguous input reports `unknown`; configured intent does not fill that gap.

@@ -172,6 +172,12 @@ pub(crate) fn service_status(app: &App) {
     }
 }
 
+pub(crate) fn singbox_webui_ready(app: &App) -> bool {
+    app.moddir
+        .join(".config/sing-box/zashboard/index.html")
+        .is_file()
+}
+
 pub(crate) fn singbox_webui(app: &App) -> String {
     // `external_ui` is a filesystem directory, not the HTTP route. The Clash
     // API serves whichever dashboard directory is configured at `/ui/`.

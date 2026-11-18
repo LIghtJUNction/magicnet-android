@@ -17,7 +17,7 @@ use crate::selector_store;
 
 #[path = "selector_change.rs"]
 mod selector_change;
-use crate::service::{apply_config, singbox_webui};
+use crate::service::{apply_config, singbox_webui, singbox_webui_ready};
 use crate::subscriptions::{download_pinned_https_url, validate_subscription_url};
 use crate::{run_magicnet_function, write_text_file, App};
 pub(crate) use selector_change::{
@@ -655,10 +655,7 @@ mod mode_tests {
 fn webui_status(app: &App) {
     let local_dir = app.moddir.join(".config/sing-box/zashboard");
     println!("local_dir={}", local_dir.display());
-    println!(
-        "local_ready={}",
-        local_dir.join("index.html").exists() as u8
-    );
+    println!("local_ready={}", singbox_webui_ready(app) as u8);
     println!("sing-box={}", singbox_webui(app));
     println!(
         "version={}",

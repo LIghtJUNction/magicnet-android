@@ -7,8 +7,13 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::{
-    clean_module_lines, diagnostics::supervisor_pid, read_kv, service::singbox_webui,
-    singbox_pid_summary, webui_api::current_clash_mode, App,
+    clean_module_lines,
+    diagnostics::supervisor_pid,
+    read_kv,
+    service::{singbox_webui, singbox_webui_ready},
+    singbox_pid_summary,
+    webui_api::current_clash_mode,
+    App,
 };
 
 mod subscription;
@@ -263,6 +268,7 @@ fn capabilities_value() -> Value {
                 "native_tun_stack",
                 "privacy_safe_network_identifiers",
                 "readiness_signals",
+                "local_zashboard_readiness",
                 "transparent_plane_readiness",
                 "dns_capture_preflight",
                 "low_frequency_connectivity",
@@ -329,6 +335,7 @@ fn service_status_value(app: &App) -> Value {
             "api": {
                 "url": app.api,
                 "webui": singbox_webui(app),
+                "webui_ready": singbox_webui_ready(app),
                 "ready": api_ready,
             },
             "readiness": {
@@ -877,6 +884,11 @@ mod tests {
             .unwrap()
             .iter()
             .any(|feature| feature == "native_tun_stack"));
+        assert!(value["data"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "local_zashboard_readiness"));
         assert_eq!(value["data"]["mutation_commands"][1], "override.set");
         assert_eq!(
             value["data"]["private_commands"],
@@ -1003,6 +1015,39 @@ mod tests {
         assert!(!value.to_string().contains("secret"));
 
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn service_status_reports_local_zashboard_file_independently_of_api_readiness() {
+        let (root, app) = fixture();
+        let index = root.join(".config/sing-box/zashboard/index.html");
+        let missing = machine_value(&app, &["service", "status"]).unwrap();
+        assert_eq!(missing["data"]["api"]["webui_ready"], false);
+
+        fs::create_dir_all(&index).unwrap();
+        let directory = machine_value(&app, &["service", "status"]).unwrap();
+        assert_eq!(directory["data"]["api"]["webui_ready"], false);
+
+        fs::remove_dir(&index).unwrap();
+        fs::write(&index, "<html>private-panel-content</html>").unwrap();
+        let installed = machine_value(&app, &["service", "status"]).unwrap();
+        assert_eq!(installed["schema"], 1);
+        assert_eq!(installed["command"], "service.status");
+        assert_eq!(installed["data"]["api"]["webui_ready"], true);
+        assert_eq!(
+            installed["data"]["api"]["ready"],
+            missing["data"]["api"]["ready"]
+        );
+        assert_eq!(installed["data"]["api"]["ready"], false);
+        assert_eq!(installed["data"]["core"]["sing_box"]["running"], false);
+        assert_eq!(installed["data"]["readiness"], missing["data"]["readiness"]);
+        assert!(!installed.to_string().contains("private-panel-content"));
+        assert!(!root.join(".state").exists());
+
+        fs::remove_file(&index).unwrap();
+        let removed = machine_value(&app, &["service", "status"]).unwrap();
+        assert_eq!(removed["data"]["api"]["webui_ready"], false);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
