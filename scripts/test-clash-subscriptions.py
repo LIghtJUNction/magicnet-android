@@ -361,6 +361,131 @@ magicnet_singbox_subscription_filter_file() {{ printf '/dev/null\\n'; }}
         self.prefix += f"magicnet_singbox_subscription_filter_file() {{ printf '%s\\n' {shlex.quote(str(filters))}; }}\n"
         return content, nodes
 
+    def test_json_emitter_across_available_awk_implementations(self):
+        commands = []
+        requested = os.environ.get('MAGICNET_TEST_AWK')
+        if requested:
+            commands.append(shlex.split(requested))
+        for name in ('awk', 'mawk', 'nawk', 'gawk', 'original-awk', 'busybox', 'toybox'):
+            executable = shutil.which(name)
+            if executable:
+                commands.append([executable] + (['awk'] if name in ('busybox', 'toybox') else []))
+        seen = set()
+        checked = 0
+        cases = [
+            ('text', 'quote"slash\\\nline\ttab\r', 'quote"slash\\ line tab '),
+            ('csv', ' one, two ,one\n', ['one', 'two', 'one']),
+            ('lines', '[US] node\n[US] node\n\nquote"slash\\\n', ['[US] node', 'quote"slash\\']),
+        ]
+        for command in commands:
+            key = (str(Path(command[0]).resolve()), *command[1:])
+            if key in seen:
+                continue
+            seen.add(key)
+            probe = subprocess.run([*command, 'BEGIN { exit 0 }'], capture_output=True, timeout=10)
+            if probe.returncode:
+                if requested and command == shlex.split(requested):
+                    self.fail('requested awk command is unavailable: ' + shlex.join(command))
+                continue
+            checked += 1
+            directory = self.root / f'awk-{checked}'
+            directory.mkdir()
+            wrapper = directory / 'awk'
+            wrapper.write_text('#!/bin/sh\nexec ' + shlex.join(command) + ' "$@"\n')
+            wrapper.chmod(0o700)
+            for mode, value, expected in cases:
+                with self.subTest(awk=command, mode=mode):
+                    cp = self.shell(f'PATH={shlex.quote(str(directory))}:$PATH\n'
+                                    f'magicnet_json_emit {mode} {shlex.quote(value)}')
+                    actual = json.loads('"' + cp.stdout + '"') if mode == 'text' else json.loads(cp.stdout)
+                    self.assertEqual(actual, expected)
+        self.assertGreater(checked, 0)
+
+    def test_invalid_converted_proxy_cannot_hide_behind_a_valid_peer(self):
+        valid = {'type': 'vmess', 'tag': 'valid', 'server': 'vmess.example.invalid',
+                 'server_port': 443, 'uuid': '00000000-0000-4000-8000-000000000001'}
+        ss = {'type': 'shadowsocks', 'tag': 'legacy-ss', 'server': 'ss.example.invalid',
+              'server_port': 443, 'method': 'aes-256-gcm', 'password': 'fixture-password'}
+        for invalid in ({**ss, 'server_port': 0},
+                        {**ss, 'method': ''},
+                        {**ss, 'password': ''}):
+            with self.subTest(invalid=invalid):
+                # JSON has no native-parser lower bound. A valid peer must not
+                # turn a malformed generated proxy into a successful import.
+                source = self.file('invalid-converted.json', json.dumps({'outbounds': [valid, invalid]}))
+                output = self.file('out.json', '[{"previous":true}]\n')
+                previous = output.read_bytes()
+                self.convert([source], self.converter_output([valid, invalid]), expected=1, success=False)
+                self.assertEqual(output.read_bytes(), previous)
+        with_non_nodes = [valid, ss, {'type': 'direct', 'tag': 'direct'},
+                          {'type': 'selector', 'tag': 'fixture-group', 'outbounds': ['valid']}]
+        source = self.file('valid-converted.json', json.dumps({'outbounds': with_non_nodes}))
+        actual = self.convert([source], self.converter_output(with_non_nodes), expected=2)
+        self.assertEqual(actual, {'valid': valid, 'legacy-ss': ss})
+
+    def test_invalid_notice_and_reserved_proxy_rows_keep_existing_filter_semantics(self):
+        valid = {'type': 'vmess', 'tag': 'valid', 'server': 'vmess.example.invalid',
+                 'server_port': 443, 'uuid': '00000000-0000-4000-8000-000000000001'}
+        for tag in ('剩余流量：100GB', 'proxy', 'magicnet-chain-fixture'):
+            with self.subTest(tag=tag):
+                # These labels are already excluded from imported nodes.
+                # Their placeholder endpoint fields must not reject a valid peer.
+                placeholder = {'type': 'shadowsocks', 'tag': tag,
+                               'server': 'placeholder.example.invalid', 'server_port': 0}
+                converted = [valid, placeholder]
+                source = self.file('ignored-placeholder.json', json.dumps({'outbounds': converted}))
+                actual = self.convert([source], self.converter_output(converted), expected=1)
+                self.assertEqual(actual, {'valid': valid})
+
+    def legacy_shadowsocks_fixture(self):
+        vmess = {'v': '2', 'ps': 'vmess-peer', 'add': 'vmess.example.invalid', 'port': '443',
+                 'id': '00000000-0000-4000-8000-000000000001', 'aid': '0', 'net': 'tcp',
+                 'type': 'none', 'tls': ''}
+        links = ['vmess://' + base64.b64encode(json.dumps(vmess).encode()).decode()]
+        expected = [
+            {'type': 'vmess', 'tag': 'vmess-peer', 'server': 'vmess.example.invalid',
+             'server_port': 443, 'uuid': vmess['id'], 'security': 'auto', 'alter_id': 0},
+        ]
+        for index, encoder in enumerate((base64.b64encode, base64.urlsafe_b64encode)):
+            tag = f'[US] legacy-{index}'
+            server = f'ss-{index}.example.invalid'
+            auth = f'aes-256-gcm:fixture-password@{server}:443'
+            encoded = encoder(auth.encode()).decode()
+            if index:
+                encoded = encoded.rstrip('=')
+            links.append(f'ss://{encoded}#{tag}')
+            expected.append({'type': 'shadowsocks', 'tag': tag, 'server': server,
+                             'server_port': 443, 'method': 'aes-256-gcm',
+                             'password': 'fixture-password'})
+        return '\n'.join(links) + '\n', expected
+
+    def test_legacy_shadowsocks_native_count_and_converter_fallback(self):
+        content, expected = self.legacy_shadowsocks_fixture()
+        source = self.file('legacy-links', content)
+        cp = self.shell(f'magicnet_singbox_count_source_native_nodes {source} {self.root / "legacy-count"}')
+        self.assertEqual(cp.stdout.strip(), '3')
+        malformed = [expected[0]] + [
+            {'type': 'shadowsocks', 'tag': node['tag'], 'server': 'encoded-legacy-authority',
+             'server_port': 0} for node in expected[1:]
+        ]
+        nodes, status = self.native_update(content, converter=self.converter_output(malformed))
+        self.assertIsNotNone(nodes, status)
+        actual = {node['tag']: node for node in nodes if node.get('server')}
+        self.assertEqual(set(actual), {node['tag'] for node in expected})
+        for node in expected[1:]:
+            self.assertEqual(actual[node['tag']], node)
+        self.assertEqual((self.root / 'native-counts').read_text(), '3 0\n')
+
+    @unittest.skipUnless(CONVERTER, 'real converter is exercised by the evidence job')
+    def test_real_legacy_shadowsocks_keeps_all_nodes(self):
+        content, expected = self.legacy_shadowsocks_fixture()
+        nodes, status = self.native_update(content, converter=CONVERTER)
+        self.assertIsNotNone(nodes, status)
+        actual = {node['tag']: node for node in nodes if node.get('server')}
+        self.assertEqual(set(actual), {node['tag'] for node in expected})
+        for node in expected[1:]:
+            self.assertEqual(actual[node['tag']], node)
+
     def converter_output(self, nodes):
         output = self.file('converter-output.json', json.dumps({'outbounds': nodes}))
         converter = self.file('converter', '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in -o) out="$2"; shift;; esac; shift; done\n'

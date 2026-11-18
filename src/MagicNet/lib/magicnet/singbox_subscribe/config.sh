@@ -426,7 +426,9 @@ magicnet_singbox_count_valid_outbounds_nodes() {
     # Completeness compares against native extraction before notice-name
     # filtering. Keep protocol validation, reserved-tag rejection and dedupe
     # in both modes so invalid rows cannot stand in for lost real nodes.
-    jq -n -r --slurpfile nodes "$_nodes_json" --argjson include_info_tags "${2:-false}" '
+    jq -n -r --slurpfile nodes "$_nodes_json" \
+      --argjson include_info_tags "${2:-false}" \
+      --argjson require_complete "${3:-false}" '
       def normalize_tag:
         if type == "string"
         then gsub("[\\r\\n\\t]"; " ") | gsub("[[:cntrl:]]"; "")
@@ -444,6 +446,8 @@ magicnet_singbox_count_valid_outbounds_nodes() {
             "final", "direct", "block", "warp"
           ]
         | index($tag) != null or ($tag | startswith("magicnet-chain-"));
+      def info_tag:
+        test("剩余流量|到期|过期|套餐|官网|订阅|Traffic|traffic|Expire|expire|Expired|expired|Subscription|subscription|官方网站|更新订阅");
       def valid_proxy_node:
         (.tag | type == "string" and length > 0 and (reserved_tag | not))
           and (.server | type == "string" and length > 0)
@@ -466,12 +470,20 @@ magicnet_singbox_count_valid_outbounds_nodes() {
                     and (.password | type == "string" and length > 0)))
             else false
             end);
-      ($nodes[0] // []) as $all
+      ($nodes[0] // [] | map(.tag = ((.tag // "") | normalize_tag))) as $all
+      | if $require_complete and any($all[];
+          (.type == "shadowsocks" or .type == "vmess" or .type == "vless"
+            or .type == "trojan" or .type == "hysteria2" or .type == "anytls"
+            or .type == "tuic" or .type == "socks")
+          and (.tag | (reserved_tag or info_tag) | not)
+          and (valid_proxy_node | not))
+        then error("converter emitted an invalid proxy node")
+        else .
+        end
       | ($all
-        | map(.tag = ((.tag // "") | normalize_tag))
         | map(select(
             valid_proxy_node
-            and ($include_info_tags or (((.tag // "") | test("剩余流量|到期|过期|套餐|官网|订阅|Traffic|traffic|Expire|expire|Expired|expired|Subscription|subscription|官方网站|更新订阅")) | not))
+            and ($include_info_tags or (.tag | info_tag | not))
           ))) as $valid
       | reduce $valid[] as $node (
           [];

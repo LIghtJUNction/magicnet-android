@@ -317,7 +317,7 @@ magicnet_json_emit() {
                 if (mode == "csv" && value == "") continue
                 value=escape(value)
                 if (mode != "csv" && (trim(value) == "" || seen[value]++)) continue
-                if (emitted++) printf "%s", mode == "csv" ? "," : ", "
+                if (emitted++) printf "%s", (mode == "csv" ? "," : ", ")
                 printf "\"%s\"", value
             }
             printf "]"
