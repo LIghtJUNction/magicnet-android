@@ -4,6 +4,7 @@ import {
   Copy,
   DownloadCloud,
   Plus,
+  PanelsTopLeft,
   Power,
   Radar,
   RotateCcw,
@@ -44,7 +45,7 @@ import {
 } from "@/components/pages/controlDangerActions";
 import { useActionLock } from "@/composables/useActionLock";
 import { backgroundTaskBlocksLaunch, formatBackgroundDuration } from "@/composables/backgroundTasks";
-import { servicePresentation } from "@/lib/servicePresentation";
+import { connectionPresentation, servicePresentation } from "@/lib/servicePresentation";
 import { machineFailureText, parseMachineHotspot, type HotspotRouteState } from "@/composables/machineStatus";
 import { useMagicNet } from "@/composables/useMagicNet";
 import { restoreFocusAfterUpdate, trapFocusWithin } from "@/lib/focus";
@@ -66,12 +67,15 @@ const {
   refreshStatus,
   refreshSubs,
   refreshWifiPolicy,
+  openSingBoxUi,
+  openingSingBoxUi,
+  singBoxUiError,
   shellQuote,
 } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
 
 const emit = defineEmits<{
-  (e: "goto-tab", tab: "about" | "health" | "output" | "subs" | "proxies"): void;
+  (e: "goto-tab", tab: "about" | "health" | "output" | "subs" | "proxies" | "webui"): void;
 }>();
 type HotspotPolicyPhase = "loading" | "ready" | "error";
 
@@ -110,6 +114,7 @@ const pendingDangerMessage = computed(
   () => pendingDangerAction.value?.message ?? "",
 );
 const serviceStatus = computed(() => servicePresentation(state.runtime, state.hasKsu));
+const connectionStatus = computed(() => connectionPresentation(state.runtime, state.hasKsu, state.connectivity));
 const runtimeInsight = computed(() =>
   buildControlRuntimeInsight({
     hasKsu: state.hasKsu,
@@ -144,7 +149,7 @@ const showRuntimeNotice = computed(() => state.hasKsu && (
   (runtimeInsight.value.status !== "ok" && state.runtime.singBoxState === "sing-box")
 ));
 const servicePendingLabel = computed(() => pendingServiceLabel(state.backgroundTask));
-const controlTitle = computed(() => servicePendingLabel.value || serviceStatus.value.label);
+const controlTitle = computed(() => servicePendingLabel.value || connectionStatus.value.label);
 const coreFact = computed(() => !state.hasKsu || state.runtime.singBoxState === "unknown" ? t("未确认")
   : state.runtime.singBoxState === "sing-box" ? t("进程存在") : t("已停止"));
 const readinessFact = computed(() => !state.hasKsu || state.runtime.serviceReady == null ? t("未确认")
@@ -154,6 +159,7 @@ const controlDescription = computed(() => {
   if (servicePendingLabel.value) return t("已等待 {duration}。任务完成后自动更新状态。", {
     duration: formatBackgroundDuration(state.backgroundTask),
   });
+  if (connectionStatus.value.description) return connectionStatus.value.description;
   if (serviceStatus.value.state === "ready") return t("服务已就绪。实际联网情况可在诊断中确认。");
   if (serviceStatus.value.state === "stopped") return t("启动前确认订阅已配置；现有配置和节点会保留。");
   return t("先确认服务状态，再继续操作。刷新不会重启服务。");
@@ -504,22 +510,19 @@ onMounted(() => {
       <div class="mn-control-overview">
         <div class="mn-control-status" role="status" aria-live="polite">
           <div class="mn-control-state-heading">
+            <p class="mn-control-label"><StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />{{ t("代理服务") }}<span class="mn-control-service-label">{{ serviceStatus.label }}</span></p>
             <h2>{{ controlTitle }}</h2>
-            <p class="mn-control-label"><StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />{{ t("代理服务") }}</p>
             <p class="mn-control-description">{{ controlDescription }}</p>
           </div>
 
         </div>
         <div class="mn-control-actions">
-          <Button class="mn-control-power" :data-running="state.runtime.singBoxState === 'sing-box'" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('toggle-sing-box') || isRunning('refresh-control-status') || Boolean(servicePendingLabel)" @click="toggleSingBox">
+          <Button class="mn-control-power" :variant="state.runtime.singBoxState === 'sing-box' ? 'secondary' : 'default'" :data-running="state.runtime.singBoxState === 'sing-box'" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('toggle-sing-box') || isRunning('refresh-control-status') || Boolean(servicePendingLabel)" @click="toggleSingBox">
             <component :is="state.runtime.singBoxState === 'unknown' ? RefreshCw : Power" :size="18" />{{ powerLabel }}
           </Button>
           <div class="mn-control-shortcuts">
             <Button variant="ghost" :disabled="!state.hasKsu" :loading="isRunning('refresh-control-status')" @click="withAction('refresh-control-status', () => refreshStatus())">
               <RefreshCw :size="16" />{{ t("刷新状态") }}
-            </Button>
-            <Button variant="ghost" @click="emit('goto-tab', 'health')">
-              <Stethoscope :size="16" />{{ t("检查网络") }}
             </Button>
           </div>
         </div>
@@ -543,9 +546,29 @@ onMounted(() => {
       </section>
     </section>
 
+    <section class="mn-dashboard-entry" :aria-label="t('Zashboard 快捷入口')">
+      <div class="mn-dashboard-copy">
+        <p class="mn-dashboard-kicker">{{ t("代理控制台") }}</p>
+        <h3>Zashboard<ArrowUpRight :size="22" aria-hidden="true" /></h3>
+        <p>{{ t("切换节点、管理代理组、查看实时连接。") }}</p>
+      </div>
+      <div class="mn-dashboard-action">
+        <Button class="mn-dashboard-open" :disabled="!state.hasKsu" :loading="openingSingBoxUi" @click="openSingBoxUi('zashboard')">
+          <PanelsTopLeft :size="18" />{{ openingSingBoxUi ? t("正在连接 Zashboard") : t("打开 Zashboard") }}<ArrowUpRight :size="17" />
+        </Button>
+        <p class="mn-dashboard-hint">{{ t(state.hasKsu ? "自动连接当前设备的本地面板" : "在模块管理器中打开后可使用") }}</p>
+      </div>
+      <div v-if="singBoxUiError" class="mn-dashboard-error" role="alert">
+        <p>{{ t(singBoxUiError) }}</p>
+        <Button variant="ghost" @click="emit('goto-tab', 'webui')">{{ t("面板设置与修复") }}<ArrowRight :size="16" /></Button>
+      </div>
+    </section>
+
     <nav class="mn-control-destinations" :aria-label="t('常用入口')">
       <button type="button" @click="emit('goto-tab', 'subs')"><DownloadCloud :size="19" /><span>{{ t("订阅与节点") }}<small>{{ t("管理来源与更新") }}</small></span><ArrowUpRight :size="16" /></button>
       <button type="button" @click="emit('goto-tab', 'proxies')"><Route :size="19" /><span>{{ t("切换节点") }}<small>{{ t("选择节点与代理组") }}</small></span><ArrowUpRight :size="16" /></button>
+      <button type="button" :aria-label="t('检查网络')" @click="emit('goto-tab', 'health')"><Stethoscope :size="19" /><span>{{ t("检查网络") }}<small>{{ t("查看连接与恢复建议") }}</small></span><ArrowUpRight :size="16" /></button>
+      <button type="button" @click="emit('goto-tab', 'webui')"><PanelsTopLeft :size="19" /><span>{{ t("面板设置") }}<small>{{ t("安装、校验与修复") }}</small></span><ArrowUpRight :size="16" /></button>
     </nav>
     <SectionDisclosure :title="t('运行详情')">
       <dl class="mn-service-facts" :aria-label="t('运行证据')">
@@ -837,25 +860,24 @@ onMounted(() => {
 
 <style scoped>
 .mn-control { max-width: 880px; margin-inline: auto; }
-.mn-control-hero { padding: 24px 0 12px; }
+.mn-control-hero { padding: 24px 0 20px; }
 .mn-control-overview { display: grid; gap: 28px; }
 .mn-control-status { display: grid; gap: 18px; min-width: 0; }
 .mn-control-state-heading { min-width: 0; }
-.mn-control-label { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 14px 0 0; color: var(--mn-ink-muted); font-size: 13px; font-weight: 500; }
+.mn-control-label { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 0 0 16px; color: var(--mn-ink-muted); font-size: 12px; font-weight: 500; }
 
-.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-sans); font-size: clamp(28px, 6vw, 36px); font-weight: 550; line-height: 1.2; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.mn-control-service-label { padding-inline-start: 10px; border-inline-start: 1px solid var(--mn-border); }
+.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-sans); font-size: clamp(30px, 6vw, 44px); font-weight: 500; line-height: 1.2; letter-spacing: -.025em; overflow-wrap: anywhere; }
 .mn-control-hero[data-service-state="ready"] .mn-control-status h2 { color: var(--mn-ink); }
-.mn-control-description { margin: 12px 0 0; max-width: 46ch; color: var(--mn-ink-muted); font-size: 15px; line-height: 1.7; }
+.mn-control-description { margin: 12px 0 0; max-width: 44ch; color: var(--mn-ink-muted); font-size: 15px; line-height: 1.7; }
 .mn-control-memory { display: inline-flex; width: fit-content; align-items: baseline; gap: 12px; margin: 0; padding: 4px 0; }
 .mn-control-memory dt { color: var(--mn-ink-muted); font-size: 12px; }
 .mn-control-memory dd { margin: 0; color: var(--mn-ink); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mn-control-memory dd > span { color: var(--mn-ink-muted); font-size: 12px; font-weight: 400; }
 .mn-control-memory dd[data-unavailable="true"] { color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; }
 .mn-control-actions { align-self: center; min-width: 0; }
-.mn-control-power { width: 100%; min-height: 56px; border-radius: var(--mn-radius-lg); font-size: 15px; font-weight: 600; }
-.mn-control-power[data-running="true"] { border-color: var(--mn-ink); background: var(--mn-ink); color: var(--mn-ivory); box-shadow: none; }
-.mn-control-power[data-running="true"]:hover { border-color: var(--mn-ink-soft); background: var(--mn-ink-soft); }
-.mn-control-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.mn-control-power { width: 100%; min-height: 48px; border-radius: var(--mn-radius-md); font-size: 14px; font-weight: 500; }
+.mn-control-shortcuts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 4px; }
 .mn-control-shortcuts > button { padding-inline: 6px; }
 .mn-service-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 0 0 16px; }
 .mn-service-facts > div { min-width: 0; padding: 8px 0; }
@@ -882,7 +904,7 @@ onMounted(() => {
 .mn-control-destinations small { display: block; margin-top: 4px; color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; line-height: 1.5; }
 .mn-control-settings { display: grid; gap: 32px; }
 @media (min-width: 760px) {
-  .mn-control-overview { grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 36px; }
+  .mn-control-overview { grid-template-columns: minmax(0, 1fr) 176px; gap: 44px; }
   .mn-control-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }
 @media (max-width: 420px) {
@@ -897,6 +919,31 @@ onMounted(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .mn-control-destinations > button { transition: none; }
+}
+
+.mn-dashboard-entry { display: grid; gap: 24px; margin: 8px 0 28px; padding: 26px; border-radius: 20px; background: var(--mn-surface-sunken); }
+.mn-dashboard-copy { min-width: 0; }
+.mn-dashboard-kicker { margin: 0 0 12px; color: var(--mn-primary-strong); font-size: 12px; font-weight: 600; }
+.mn-dashboard-copy h3 { display: flex; align-items: center; gap: 12px; margin: 0; font-size: 30px; font-weight: 500; letter-spacing: -.035em; line-height: 1.25; }
+.mn-dashboard-copy h3 > svg { color: var(--mn-ink-muted); }
+.mn-dashboard-copy > p:last-child { margin: 10px 0 0; color: var(--mn-ink-muted); font-size: 14px; line-height: 1.6; }
+.mn-dashboard-action { align-self: center; min-width: 0; }
+.mn-dashboard-open { width: 100%; min-height: 52px; border-radius: 12px; }
+.mn-dashboard-hint { margin: 10px 0 0; color: var(--mn-ink-muted); font-size: 11px; text-align: center; }
+.mn-dashboard-error { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; color: var(--mn-danger); font-size: 13px; }
+.mn-dashboard-error p { flex: 1 1 240px; margin: 0; }
+.mn-dashboard-error > button { padding-inline: 0; }
+@media (min-width: 600px) {
+  .mn-dashboard-entry { grid-template-columns: minmax(0, 1fr) minmax(200px, .6fr); padding: 32px; }
+}
+@media (max-width: 759px) {
+  .mn-control-overview { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .mn-control-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .mn-control-power { width: auto; min-width: 126px; }
+  .mn-control-shortcuts { margin: 0; }
+}
+@media (max-width: 420px) {
+  .mn-dashboard-entry { padding: 22px; gap: 20px; }
 }
 
 .mn-control-details > summary {

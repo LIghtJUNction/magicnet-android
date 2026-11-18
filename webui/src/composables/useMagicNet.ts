@@ -1231,7 +1231,7 @@ async function saveConfigRepository(repository: {
   }
 }
 
-const { openExternal, openSingBoxUi } = useExternalLinks(
+const { openExternal, openSingBoxUi, openingSingBoxUi, singBoxUiError } = useExternalLinks(
   state,
   runShell,
   runCli,
@@ -1277,6 +1277,8 @@ export function useMagicNet() {
     saveConfigRepository,
     openExternal,
     openSingBoxUi,
+    openingSingBoxUi,
+    singBoxUiError,
     shellQuote,
   };
 }

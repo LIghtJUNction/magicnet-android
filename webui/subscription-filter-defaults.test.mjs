@@ -15,7 +15,7 @@ for (const keyword of defaults) {
   assert.match(component, new RegExp(`"${keyword}"`));
   assert.match(installer, new RegExp(`"${keyword}"`));
 }
-assert.match(component, /清空并保存即可关闭过滤/);
+assert.match(component, /清空并保存可关闭关键词排除/);
 assert.match(installer, /\[ -e "\$_magicnet_filter_file" \]/);
 
 console.log("subscription filter default tests passed");

@@ -17,6 +17,7 @@ import {
   MoreHorizontal,
   Network,
   PanelsTopLeft,
+  ArrowUpRight,
   RefreshCw,
   Route,
   ScrollText,
@@ -39,7 +40,7 @@ import type { PaletteItem } from "@/components/CommandPalette.vue";
 import { isPaletteShortcut } from "@/components/commandPalette";
 import Button from "@/components/ui/Button.vue";
 import StatusDot from "@/components/ui/StatusDot.vue";
-import { servicePresentation } from "@/lib/servicePresentation";
+import { connectionPresentation } from "@/lib/servicePresentation";
 import { useMagicNet } from "@/composables/useMagicNet";
 import { setPendingSubscriptionDraft } from "@/components/pages/subscriptionDraft";
 import { useTheme } from "@/composables/useTheme";
@@ -138,12 +139,18 @@ const {
   closeIssueReporter,
   submitIssue,
   openExternal,
+  openSingBoxUi,
+  openingSingBoxUi,
   REPO,
   AUTHOR_WHISPER_URL,
 } = useMagicNet();
 const { preference: themePreference, label: themeLabel, cycleTheme } = useTheme();
 const { keyboardOpen } = useMobileKeyboard();
 const { viewportStyle } = useDialogViewport();
+
+async function openDashboard(): Promise<void> {
+  if (!await openSingBoxUi("zashboard")) setTab("webui");
+}
 
 function readTabFromLocation(): TabKey | null {
   if (typeof window === "undefined") return null;
@@ -202,7 +209,7 @@ function focusPageContent(): void {
 }
 
 const statusMessage = computed(() => (state.task ? t("正在执行：{task}", { task: t(state.task) }) : t(state.notice)));
-const serviceStatus = computed(() => servicePresentation(state.runtime, state.hasKsu));
+const serviceStatus = computed(() => connectionPresentation(state.runtime, state.hasKsu, state.connectivity));
 const runtimeStateLabel = computed(() => serviceStatus.value.label);
 const routeStackState = computed(() => serviceStatus.value.routeState);
 const transparentRouteData = computed(() => {
@@ -541,6 +548,9 @@ onUnmounted(() => {
       </div>
 
       <div class="mn-global-actions">
+        <Button class="mn-dashboard-global" variant="secondary" :disabled="!state.hasKsu" :loading="openingSingBoxUi" :aria-label="t('打开 Zashboard')" :title="t('打开 Zashboard')" @click="openDashboard">
+          <PanelsTopLeft :size="18" aria-hidden="true" /><span>Zashboard</span><ArrowUpRight :size="15" aria-hidden="true" />
+        </Button>
         <button
           class="mn-palette-trigger"
           type="button"
@@ -844,6 +854,10 @@ onUnmounted(() => {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.mn-rail-status[data-state="attention"] .mn-rail-status__line {
+  color: var(--mn-danger);
 }
 
 .mn-rail-status[data-state="active"] .mn-rail-status__line {

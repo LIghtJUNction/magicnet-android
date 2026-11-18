@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from "@/i18n";
-import { CheckCircle2, Copy, DownloadCloud, ExternalLink, Github, RefreshCw, Terminal } from "lucide-vue-next";
+import { CheckCircle2, Copy, DownloadCloud, ExternalLink, Github, RefreshCw, Terminal, PanelsTopLeft, ArrowUpRight, ChevronDown } from "lucide-vue-next";
 import { computed, ref, watch } from "vue";
 import Badge from "@/components/ui/Badge.vue";
 import Button from "@/components/ui/Button.vue";
@@ -16,7 +16,15 @@ import type { PendingToolAction } from "./toolActions";
 import { buildWebuiInstallPlan, formatWebuiInstallPlanReport, webuiInstallPlanTone, type WebuiInstallPlan } from "./webuiInstallPlan";
 import { buildWebuiPanelInsight, webuiInsightTone, type WebuiVerifyCheck } from "./webuiPanelInsights";
 
-const { state, runCli, startPrivateBackgroundCli, openExternal, shellQuote, REPO } = useMagicNet();
+const { state, runCli, startPrivateBackgroundCli, openExternal, openSingBoxUi, openingSingBoxUi, singBoxUiError, shellQuote, REPO } = useMagicNet();
+const emit = defineEmits<{ (e: "goto-tab", tab: "control" | "health"): void }>();
+const maintenance = ref<HTMLDetailsElement | null>(null);
+function showMaintenance(): void {
+  if (maintenance.value) {
+    maintenance.value.open = true;
+    maintenance.value.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
 const { isRunning, withAction } = useActionLock();
 const status = ref("");
 const verifyOutput = ref("");
@@ -244,14 +252,37 @@ watch(() => [panel.value.name, panel.value.url, panel.value.sha256], () => {
 
 <template>
   <div class="grid gap-4">
-    <PageHeader :overline="t('面板')" :title="t('面板配置')">
-      <div class="flex flex-wrap items-center gap-2">
+    <PageHeader :overline="t('面板')" title="Zashboard">
+      <Button variant="ghost" @click="showMaintenance">{{ t("安装与修复") }}<ChevronDown :size="16" /></Button>
+    </PageHeader>
+
+    <section class="mn-panel-launch" :aria-label="t('Zashboard 快捷入口')">
+      <div>
+        <p class="mn-panel-launch-title">{{ t("节点与连接，一键直达。") }}</p>
+        <p class="mn-panel-launch-description">{{ t("打开设备上的 Zashboard，自动填入本地 API 地址。") }}</p>
+      </div>
+      <div class="mn-panel-launch-actions">
+        <Button :disabled="!state.hasKsu" :loading="openingSingBoxUi" @click="openSingBoxUi('zashboard')"><PanelsTopLeft :size="18" />{{ openingSingBoxUi ? t("正在连接 Zashboard") : t("打开 Zashboard") }}<ArrowUpRight :size="17" /></Button>
+        <p>{{ t(state.hasKsu ? "本地运行，无需另外输入地址" : "在模块管理器中打开后可使用") }}</p>
+      </div>
+      <div v-if="singBoxUiError" class="mn-panel-launch-error" role="alert">
+        <p>{{ t(singBoxUiError) }}</p>
+        <div class="flex flex-wrap gap-2">
+          <Button variant="secondary" @click="showMaintenance">{{ t("安装与修复") }}</Button>
+          <Button variant="ghost" @click="emit('goto-tab', 'control')">{{ t("返回概览") }}</Button>
+        </div>
+      </div>
+    </section>
+
+    <details ref="maintenance" class="mn-panel-maintenance">
+      <summary>{{ t("安装与修复") }}<ChevronDown :size="18" aria-hidden="true" /></summary>
+      <p class="mb-5 text-sm leading-6 text-[var(--mn-ink-muted)]">{{ t("已安装面板可直接打开。仅在文件缺失或需要更新时使用以下工具。") }}</p>
+      <div class="mb-6 flex flex-wrap items-center gap-2">
         <Button variant="outline" :loading="isRunning('webui-status')" @click="refreshWebui"><RefreshCw :size="17" />{{ t("读取") }}</Button>
         <Button variant="outline" :loading="isRunning('webui-verify')" @click="verifyWebui"><CheckCircle2 :size="17" />{{ t("校验面板") }}</Button>
         <Button variant="outline" :disabled="!status && !verifyOutput" :loading="isRunning('webui-copy-report')" @click="withAction('webui-copy-report', copyWebuiReport)"><Copy :size="17" />{{ reportCopied ? t("已复制报告") : t("复制报告") }}</Button>
         <Button variant="outline" @click="openExternal(issueUrl(), t('WebUI 适配 Issue'))"><Github :size="17" />{{ t("申请适配") }}</Button>
       </div>
-    </PageHeader>
 
     <ToolActionConfirmCard
       v-if="pendingWebuiAction"
@@ -318,5 +349,22 @@ watch(() => [panel.value.name, panel.value.url, panel.value.sha256], () => {
         <pre v-if="verifyOutput" class="max-h-48 overflow-auto rounded-md bg-[var(--mn-carrier-deep)] p-3 text-xs leading-6 text-[var(--mn-ink-soft)] whitespace-pre-wrap">{{ verifyOutput }}</pre>
       </Card>
     </div>
+    </details>
   </div>
 </template>
+
+<style scoped>
+.mn-panel-launch { display: grid; gap: 24px; padding: 30px; border-radius: 20px; background: var(--mn-surface-sunken); }
+.mn-panel-launch-title { margin: 0; color: var(--mn-ink); font-size: clamp(20px, 4vw, 26px); font-weight: 500; letter-spacing: -.025em; line-height: 1.5; }
+.mn-panel-launch-description { margin: 12px 0 0; color: var(--mn-ink-muted); font-size: 14px; line-height: 1.7; }
+.mn-panel-launch-actions > button { width: 100%; min-height: 52px; border-radius: 12px; }
+.mn-panel-launch-actions > p { margin: 10px 0 0; color: var(--mn-ink-muted); font-size: 12px; text-align: center; }
+.mn-panel-launch-error { grid-column: 1 / -1; color: var(--mn-danger); font-size: 14px; }
+.mn-panel-launch-error p { margin: 0 0 12px; }
+.mn-panel-maintenance { border-bottom: 1px solid var(--mn-border); padding-bottom: 12px; }
+.mn-panel-maintenance > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; list-style: none; cursor: pointer; font-size: 15px; font-weight: 500; }
+.mn-panel-maintenance > summary::-webkit-details-marker { display: none; }
+.mn-panel-maintenance[open] > summary > svg { transform: rotate(180deg); }
+@media (min-width: 760px) { .mn-panel-launch { grid-template-columns: minmax(0, 1fr) 240px; align-items: center; padding: 36px; } }
+@media (max-width: 420px) { .mn-panel-launch { padding: 24px; } }
+</style>
