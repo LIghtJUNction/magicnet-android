@@ -30,7 +30,7 @@ import {
   X,
 } from "lucide-vue-next";
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch, watchEffect, type Component } from "vue";
-import { t } from "@/i18n";
+import { locale, t } from "@/i18n";
 import LanguageSelect from "@/components/LanguageSelect.vue";
 import { MAGICNET_LOGO_URL } from "@/branding";
 import IssueReporterDialog from "@/components/IssueReporterDialog.vue";
@@ -197,6 +197,9 @@ watch(() => state.issueReporter.open, (open) => {
 let bodyOverflowBeforeDialog = "";
 let idleWarmup: number | undefined;
 let delayedWarmup: number | undefined;
+let navigationFrame: number | undefined;
+let navigationObserver: ResizeObserver | undefined;
+let navigationMounted = false;
 
 const activeTabDefinition = computed(
   () => tabs.find((item) => item.key === activeTab.value) ?? tabs[0],
@@ -275,6 +278,16 @@ function revealActiveNavigation(): void {
   else if (selected.top < visible.top) rail.scrollTop -= visible.top - selected.top;
 }
 
+function scheduleNavigationReveal(): void {
+  if (!navigationMounted || navigationFrame !== undefined) return;
+  navigationFrame = window.requestAnimationFrame(() => {
+    navigationFrame = undefined;
+    revealActiveNavigation();
+  });
+}
+
+watch(locale, scheduleNavigationReveal, { flush: "post" });
+
 function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
   const changed = tab !== activeTab.value;
   if (changed) {
@@ -288,7 +301,7 @@ function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
     if (changed && options.updateLocation !== false) {
       window.scrollTo({ top: 0, behavior: "instant" });
     }
-    revealActiveNavigation();
+    scheduleNavigationReveal();
   });
 }
 
@@ -492,6 +505,7 @@ function warnBeforeDiscardingConfig(event: BeforeUnloadEvent): void {
 
 
 onMounted(() => {
+  navigationMounted = true;
   const initialTab = activeTab.value;
   const initialReads = Promise.all([
     refreshStatus(),
@@ -506,10 +520,18 @@ onMounted(() => {
   window.addEventListener("hashchange", syncTabFromLocation);
   window.addEventListener("beforeunload", warnBeforeDiscardingConfig);
   writeTabToLocation(activeTab.value, true);
-  void nextTick(revealActiveNavigation);
-  void document.fonts.ready.then(revealActiveNavigation);
-  void initialReads.then(revealActiveNavigation);
-  window.addEventListener("resize", revealActiveNavigation);
+  // Lazy-page content, font loading and translated labels can change the rail
+  // after mount. Reveal against the settled layout without scrolling the body.
+  if (typeof ResizeObserver !== "undefined") {
+    navigationObserver = new ResizeObserver(scheduleNavigationReveal);
+    for (const element of document.querySelectorAll(".mn-command-bar, .mn-workspace-frame, .desktop-rail nav")) {
+      navigationObserver.observe(element);
+    }
+  }
+  void nextTick(scheduleNavigationReveal);
+  void document.fonts.ready.then(scheduleNavigationReveal);
+  void initialReads.then(scheduleNavigationReveal);
+  window.addEventListener("resize", scheduleNavigationReveal);
   if (state.hasKsu && !readOnboardingPreference()) {
     void initialReads.then(([serviceObserved, subscriptionsObserved]) => {
       if (!serviceObserved || !subscriptionsObserved || activeTab.value !== "control" ||
@@ -531,6 +553,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  navigationMounted = false;
+  navigationObserver?.disconnect();
+  if (navigationFrame !== undefined) window.cancelAnimationFrame(navigationFrame);
   if (idleWarmup !== undefined) window.cancelIdleCallback?.(idleWarmup);
   if (delayedWarmup !== undefined) window.clearTimeout(delayedWarmup);
   document.removeEventListener("keydown", handleEscape);
@@ -539,7 +564,7 @@ onUnmounted(() => {
   window.removeEventListener("popstate", syncTabFromLocation);
   window.removeEventListener("hashchange", syncTabFromLocation);
   window.removeEventListener("beforeunload", warnBeforeDiscardingConfig);
-  window.removeEventListener("resize", revealActiveNavigation);
+  window.removeEventListener("resize", scheduleNavigationReveal);
   if (showUtilityMenu.value) document.body.style.overflow = bodyOverflowBeforeDialog;
 });
 </script>

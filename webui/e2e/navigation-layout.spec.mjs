@@ -41,18 +41,35 @@ test("changing pages after scrolling opens the destination at its heading", asyn
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
 
-test("a direct link keeps the selected section label fully visible", async ({ page }) => {
-  // A hash-only navigation would exercise the normal setTab path instead of mounting a deep link.
-  await page.goto("about:blank");
-  await page.goto("/#/webui", { waitUntil: "networkidle" });
-  await expect(page.locator('.page-surface[data-page="webui"] h2').first()).toBeVisible();
-  await page.evaluate(() => document.fonts.ready);
-  if (await page.locator(".desktop-rail").isVisible()) {
-    await expect(page.locator('.desktop-rail [data-tab="webui"][aria-current="page"]')).toBeInViewport({ ratio: 1 });
-  } else {
-    await expect(page.locator('.mobile-nav [aria-haspopup="dialog"]')).toHaveAttribute("aria-current", "page");
-  }
-  expect(await page.evaluate(() => window.scrollY)).toBe(0);
-  await page.keyboard.press("Tab");
-  await expect(page.locator(".mn-skip-link")).toBeFocused();
-});
+for (const tab of ["webui", "output"]) {
+  test(`a direct ${tab} link keeps the selected section label fully visible`, async ({ page }, testInfo) => {
+    // A hash-only navigation would exercise the normal setTab path instead of mounting a deep link.
+    await page.goto("about:blank");
+    await page.goto(`/#/${tab}`, { waitUntil: "networkidle" });
+    await expect(page.locator(`.page-surface[data-page="${tab}"] h2`).first()).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    const desktop = await page.locator(".desktop-rail").isVisible();
+    const assertDesktopNavigation = async () => {
+      await expect(page.locator(`.desktop-rail [data-tab="${tab}"][aria-current="page"]`)).toBeInViewport({ ratio: 1 });
+      await expect(page.locator(".page-surface")).toHaveAttribute("data-page", tab);
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    };
+    if (desktop) {
+      await assertDesktopNavigation();
+    } else {
+      await expect(page.locator('.mobile-nav [aria-haspopup="dialog"]')).toHaveAttribute("aria-current", "page");
+    }
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await page.keyboard.press("Tab");
+    await expect(page.locator(".mn-skip-link")).toBeFocused();
+
+    if (desktop) {
+      await page.setViewportSize({ ...page.viewportSize(), height: 640 });
+      await assertDesktopNavigation();
+      await page.locator(".mn-language-header select").selectOption("ru");
+      await expect(page.locator("html")).toHaveAttribute("lang", "ru");
+      await assertDesktopNavigation();
+    }
+    await page.screenshot({ path: testInfo.outputPath(`navigation-${tab}.png`) });
+  });
+}

@@ -295,6 +295,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Upload verified navigation screenshots
+        if: ${{ always() && !cancelled() }}
+        timeout-minutes: 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: webui-navigation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: webui/test-results/navigation-layout-*/navigation-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Save successful per-check results
         if: ${{ always() && !cancelled() }}
         uses: ./.github/actions/test-cache
