@@ -37,40 +37,40 @@
 :root,
 html[data-theme="light"] {
   color-scheme: light;
-  --mn-ivory: #f7f9fc;
-  --mn-carrier: #f0f3f8;
-  --mn-carrier-deep: #e5eaf2;
-  --mn-surface: #f7f9fc;
+  --mn-ivory: #fafafa;
+  --mn-carrier: #f4f4f5;
+  --mn-carrier-deep: #e8e9ec;
+  --mn-surface: #fafafa;
   --mn-surface-raised: #ffffff;
-  --mn-surface-sunken: #eef2f8;
+  --mn-surface-sunken: #f0f1f3;
   --mn-surface-input: #ffffff;
   --mn-material: #ffffff;
-  --mn-material-heavy: #eef2f8;
+  --mn-material-heavy: #f0f1f3;
   --mn-material-edge: #ffffff;
   /* Ink */
-  --mn-ink: #20242c;
-  --mn-ink-soft: #414854;
-  --mn-ink-muted: #606a79;
-  --mn-ink-faint: #626c7b;
+  --mn-ink: #191b20;
+  --mn-ink-soft: #3d4149;
+  --mn-ink-muted: #636974;
+  --mn-ink-faint: #646b76;
   /* Actions and selection */
-  --mn-primary: #245ac3;
-  --mn-primary-strong: #194aa4;
-  --mn-accent: #316dd7;
-  --mn-accent-soft: #e6eefc;
+  --mn-primary: #24282e;
+  --mn-primary-strong: #080a0d;
+  --mn-accent: #414a59;
+  --mn-accent-soft: #e9ebef;
   --mn-cactus: var(--mn-primary);
   --mn-cactus-deep: var(--mn-primary-strong);
-  --mn-heather: #dce3ef;
+  --mn-heather: #e3e5e9;
   --mn-oat: #d9be8f;
   --mn-clay: #c3613b;
-  --mn-clay-ink: #194293;
+  --mn-clay-ink: #414a59;
   --mn-olive: #5b7552;
   --mn-sky: #6b8291;
   --mn-sky-ink: #48606f;
   --mn-coral: #f6e2d6;
   /* Lines */
-  --mn-border: #dfe5ee;
-  --mn-border-strong: #aab6c7;
-  --mn-focus: #245ac3;
+  --mn-border: #e8e9ec;
+  --mn-border-strong: #a5aab3;
+  --mn-focus: #4c6b9a;
   /* Semantics */
   --mn-danger: #ad2e2a;
   --mn-warning: #8a5d12;
@@ -86,16 +86,16 @@ html[data-theme="light"] {
   --mn-tone-danger-border: #e8bbb1;
   --mn-tone-info-bg: #e7eef1;
   --mn-tone-info-border: #c3d2da;
-  --mn-code-bg: #eef2f8;
+  --mn-code-bg: #f0f1f3;
   --mn-overlay: rgb(31 27 22 / 44%);
   --mn-shadow-card: none;
   --mn-shadow-float: 0 12px 40px -16px rgb(23 39 41 / 22%);
   --mn-radius-sm: 6px;
-  --mn-radius-md: 10px;
-  --mn-radius-lg: 14px;
-  --mn-radius-xl: 18px;
+  --mn-radius-md: 8px;
+  --mn-radius-lg: 12px;
+  --mn-radius-xl: 16px;
   --mn-page-gutter: 20px;
-  --mn-section-gap: 28px;
+  --mn-section-gap: 32px;
   --mn-panel-padding: 20px;
   --mn-motion-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --mn-motion-press: 90ms;
@@ -111,53 +111,53 @@ html[data-theme="light"] {
 html[data-theme="dark"] {
   color-scheme: dark;
   /* Dark surfaces */
-  --mn-ivory: #11151c;
-  --mn-carrier: #1b212b;
-  --mn-carrier-deep: #2a3341;
-  --mn-surface: #11151c;
-  --mn-surface-raised: #1a2029;
-  --mn-surface-sunken: #171d26;
-  --mn-surface-input: #1e2631;
-  --mn-material: #1a2029;
-  --mn-material-heavy: #2a3341;
-  --mn-material-edge: #303b4b;
-  --mn-ink: #f0f1f5;
-  --mn-ink-soft: #d0d4de;
-  --mn-ink-muted: #adb5c4;
-  --mn-ink-faint: #a0aaba;
-  --mn-primary: #a6c4ff;
-  --mn-primary-strong: #c6d9ff;
-  --mn-accent: #a6c4ff;
-  --mn-accent-soft: #243858;
+  --mn-ivory: #090a0c;
+  --mn-carrier: #17191d;
+  --mn-carrier-deep: #292c32;
+  --mn-surface: #090a0c;
+  --mn-surface-raised: #121417;
+  --mn-surface-sunken: #1b1e23;
+  --mn-surface-input: #17191d;
+  --mn-material: #121417;
+  --mn-material-heavy: #1b1e23;
+  --mn-material-edge: #30343b;
+  --mn-ink: #f4f5f7;
+  --mn-ink-soft: #d1d4db;
+  --mn-ink-muted: #a4a9b3;
+  --mn-ink-faint: #989faa;
+  --mn-primary: #e4e9f2;
+  --mn-primary-strong: #ffffff;
+  --mn-accent: #c7d4e8;
+  --mn-accent-soft: #252b35;
   --mn-cactus: var(--mn-primary);
   --mn-cactus-deep: var(--mn-primary-strong);
-  --mn-heather: #303c50;
+  --mn-heather: #30343b;
   --mn-oat: #7b6340;
   --mn-clay: #e98a62;
-  --mn-clay-ink: #ffab86;
+  --mn-clay-ink: #d4dcea;
   --mn-olive: #a5c299;
   --mn-sky: #9fb6c4;
   --mn-sky-ink: #b9cdd8;
-  --mn-coral: #243858;
-  --mn-border: #303b4b;
-  --mn-border-strong: #727f93;
-  --mn-focus: #a6c4ff;
-  --mn-danger: #f2988a;
-  --mn-warning: #e6c27a;
-  --mn-success: #9fcf98;
-  --mn-info: #9cc0d6;
+  --mn-coral: #252b35;
+  --mn-border: #282c33;
+  --mn-border-strong: #69717f;
+  --mn-focus: #a8c7fa;
+  --mn-danger: #f29a9a;
+  --mn-warning: #e5c386;
+  --mn-success: #8dceaa;
+  --mn-info: #a8c7fa;
   --mn-on-accent: #101114;
   --mn-on-danger: #2c120e;
-  --mn-tone-ok-bg: #1d2a1d;
-  --mn-tone-ok-border: #36513a;
-  --mn-tone-warn-bg: #2c2516;
-  --mn-tone-warn-border: #5b4a26;
-  --mn-tone-danger-bg: #301a17;
-  --mn-tone-danger-border: #613129;
-  --mn-tone-info-bg: #18252d;
-  --mn-tone-info-border: #2f4a59;
-  --mn-code-bg: #171d26;
-  --mn-overlay: rgb(5 4 3 / 68%);
+  --mn-tone-ok-bg: #17251e;
+  --mn-tone-ok-border: #2c4638;
+  --mn-tone-warn-bg: #282319;
+  --mn-tone-warn-border: #4e412a;
+  --mn-tone-danger-bg: #2a1b1d;
+  --mn-tone-danger-border: #573034;
+  --mn-tone-info-bg: #1d2430;
+  --mn-tone-info-border: #34435b;
+  --mn-code-bg: #17191d;
+  --mn-overlay: rgb(0 0 0 / 72%);
   --mn-shadow-card: none;
   --mn-shadow-float: 0 16px 48px -16px rgb(0 0 0 / 55%);
   --mn-syntax-key: #f0b48f;
@@ -308,8 +308,8 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-block: 14px;
-  border-bottom: 1px solid var(--mn-border);
+  padding-block: 12px;
+  border-bottom: 0;
 }
 
 .mn-brand-lockup,
@@ -364,10 +364,17 @@ a {
   white-space: nowrap;
   color: var(--mn-ink);
   font-family: var(--font-sans);
-  font-size: 22px;
-  font-weight: 500;
-  letter-spacing: -0.03em;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
   line-height: 1.1;
+}
+
+.mn-header-page {
+  margin: 4px 0 0;
+  color: var(--mn-ink-muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .mn-global-actions {
@@ -535,7 +542,7 @@ a {
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px 24px;
-  padding: 4px 0 12px;
+  padding: 8px 0 16px;
 }
 
 .mn-page-header > div:first-child {
@@ -619,16 +626,19 @@ a {
   position: fixed;
   z-index: 30;
   right: 0;
-  bottom: 0;
+  bottom: max(10px, env(safe-area-inset-bottom));
   left: 0;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  width: calc(100% - 24px);
+  max-width: 560px;
+  gap: 2px;
   margin-inline: auto;
-  padding: 6px max(12px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-  border: 0;
-  border-top: 1px solid var(--mn-border);
+  padding: 6px 8px;
+  border: 1px solid var(--mn-border);
+  border-radius: 20px;
   background: var(--mn-surface-raised);
+  box-shadow: var(--mn-shadow-float);
 }
 
 .mn-keyboard-open {
@@ -667,9 +677,15 @@ a {
   white-space: normal;
 }
 
+.mobile-nav button > svg {
+  box-sizing: content-box;
+  padding: 5px 14px;
+  border-radius: 999px;
+}
+
 .mobile-nav button.mn-nav-active {
-  background: var(--mn-accent-soft);
-  color: var(--mn-primary-strong);
+  background: transparent;
+  color: var(--mn-ink);
 }
 
 .mobile-nav button.mn-nav-active span {
@@ -677,7 +693,8 @@ a {
 }
 
 .mobile-nav button.mn-nav-active svg {
-  stroke-width: 2.1;
+  background: var(--mn-accent-soft);
+  stroke-width: 2;
 }
 
 
@@ -816,7 +833,7 @@ a {
 
 /* Group related settings once; nested sections stay flat and share the inset. */
 .magic-card {
-  border: 1px solid var(--mn-border);
+  border: 0;
   border-radius: var(--mn-radius-xl);
   padding: var(--mn-panel-padding);
   background: var(--mn-surface-raised);
@@ -959,7 +976,7 @@ a {
 }
 
 .mn-card-title {
-  font-weight: 550;
+  font-weight: 600;
   letter-spacing: -0.015em;
 }
 
@@ -1530,6 +1547,10 @@ a {
     justify-content: center;
     gap: 8px;
   }
+
+  .mobile-nav button > svg {
+    padding: 0;
+  }
 }
 
 @media (min-width: 640px) {
@@ -1650,9 +1671,9 @@ a {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     gap: 10px;
-    padding: 6px 16px;
+    padding: 8px 14px;
     border: 0;
-    border-radius: 999px;
+    border-radius: var(--mn-radius-md);
     background: transparent;
     color: var(--mn-ink-soft);
     text-align: left;
@@ -1671,14 +1692,37 @@ a {
     overflow-wrap: anywhere;
   }
 
+  .mn-primary-navigation > .mn-rail-label {
+    margin: 0;
+    padding-block: 0 10px;
+  }
+
+  .desktop-rail .mn-primary-navigation button {
+    min-height: 64px;
+    gap: 12px;
+  }
+
+  .desktop-rail .mn-primary-navigation strong {
+    display: block;
+    font-weight: 550;
+  }
+
+  .desktop-rail .mn-primary-navigation small {
+    display: block;
+    margin-top: 4px;
+    color: var(--mn-ink-muted);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
   .desktop-rail nav button:hover {
     background: var(--mn-surface-sunken);
     color: var(--mn-ink);
   }
 
   .desktop-rail nav button.mn-nav-active {
-    background: var(--mn-accent-soft);
-    color: var(--mn-primary-strong);
+    background: var(--mn-surface-sunken);
+    color: var(--mn-ink);
     font-weight: 650;
   }
 

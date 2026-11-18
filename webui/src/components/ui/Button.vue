@@ -34,7 +34,7 @@ const buttonVariants = cva(
         secondary:
           "border-transparent bg-[var(--mn-surface-sunken)] text-[var(--mn-ink-soft)] hover:bg-[var(--mn-carrier-deep)]",
         outline:
-          "border-[var(--mn-border)] bg-[var(--mn-surface-raised)] text-[var(--mn-ink-soft)] hover:border-[var(--mn-border-strong)] hover:bg-[var(--mn-surface-sunken)]",
+          "border-[var(--mn-border)] bg-transparent text-[var(--mn-ink-soft)] hover:border-[var(--mn-border-strong)] hover:bg-[var(--mn-surface-sunken)]",
         ghost:
           "border-transparent bg-transparent text-[var(--mn-ink-muted)] hover:bg-[var(--mn-surface-sunken)] hover:text-[var(--mn-ink)]",
         destructive:

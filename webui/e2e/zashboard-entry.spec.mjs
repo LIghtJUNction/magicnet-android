@@ -57,13 +57,15 @@ test("overview opens a configured local Zashboard and keeps common destinations 
     expect(bounds.width).toBeGreaterThanOrEqual(44);
     expect(bounds.height).toBeGreaterThanOrEqual(44);
   }
-  // Portrait uses the overview action; a short landscape uses the named toolbar action.
-  const firstScreenOpen = compactToolbar ? open : globalOpen;
-  await expect(firstScreenOpen).toBeInViewport({ ratio: 1 });
+  // The service control leads the overview. Its dashboard task remains reachable by scrolling.
+  if (compactToolbar) await expect(page.locator(".mn-control-power")).toBeInViewport({ ratio: 1 });
+  const dashboardEntry = compactToolbar ? open : globalOpen;
+  if (compactToolbar) await dashboardEntry.scrollIntoViewIfNeeded();
+  await expect(dashboardEntry).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   await page.screenshot({ path: info.outputPath("overview-entry-viewport.png"), fullPage: false });
   await page.screenshot({ path: info.outputPath("overview-online.png"), fullPage: true });
-  await firstScreenOpen.click();
+  await dashboardEntry.click();
   await expect.poll(() => page.evaluate(() => window.__dashboardFixture.commands.filter(value => value.includes("am start")).length)).toBe(1);
   const commands = await page.evaluate(() => window.__dashboardFixture.commands);
   expect(commands.some(value => value.includes("api groups"))).toBe(false);

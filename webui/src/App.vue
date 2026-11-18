@@ -255,6 +255,26 @@ const paletteItems = computed<PaletteItem[]>(() => {
   ];
 });
 
+function revealActiveNavigation(): void {
+  const target = Array.from(
+    document.querySelectorAll<HTMLElement>(`[data-tab="${activeTab.value}"]`),
+  ).find((item) => item.offsetParent !== null);
+  if (!target) return;
+  const rail = target.closest<HTMLElement>(".desktop-rail");
+  if (!rail) {
+    target.scrollIntoView({ block: "nearest", inline: "center" });
+    return;
+  }
+  // The rail begins below the toolbar. Its scroll area must fit the remaining
+  // viewport so revealing a deep link never scrolls the page heading away.
+  const top = Math.max(16, rail.getBoundingClientRect().top);
+  rail.style.maxHeight = `${Math.max(44, window.innerHeight - top - 16)}px`;
+  const visible = rail.getBoundingClientRect();
+  const selected = target.getBoundingClientRect();
+  if (selected.bottom > visible.bottom) rail.scrollTop += selected.bottom - visible.bottom;
+  else if (selected.top < visible.top) rail.scrollTop -= visible.top - selected.top;
+}
+
 function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
   const changed = tab !== activeTab.value;
   if (changed) {
@@ -263,15 +283,12 @@ function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
   }
   if (options.updateLocation !== false) writeTabToLocation(tab);
   void nextTick(() => {
-    const target = Array.from(
-      document.querySelectorAll<HTMLElement>(`[data-tab="${tab}"]`),
-    ).find((item) => item.offsetParent !== null);
-    target?.scrollIntoView({ block: "nearest", inline: "center" });
     // Cached long pages retain their height. Start explicit navigation at the
     // heading; browser history can still restore its own scroll position.
     if (changed && options.updateLocation !== false) {
       window.scrollTo({ top: 0, behavior: "instant" });
     }
+    revealActiveNavigation();
   });
 }
 
@@ -489,6 +506,10 @@ onMounted(() => {
   window.addEventListener("hashchange", syncTabFromLocation);
   window.addEventListener("beforeunload", warnBeforeDiscardingConfig);
   writeTabToLocation(activeTab.value, true);
+  void nextTick(revealActiveNavigation);
+  void document.fonts.ready.then(revealActiveNavigation);
+  void initialReads.then(revealActiveNavigation);
+  window.addEventListener("resize", revealActiveNavigation);
   if (state.hasKsu && !readOnboardingPreference()) {
     void initialReads.then(([serviceObserved, subscriptionsObserved]) => {
       if (!serviceObserved || !subscriptionsObserved || activeTab.value !== "control" ||
@@ -518,6 +539,7 @@ onUnmounted(() => {
   window.removeEventListener("popstate", syncTabFromLocation);
   window.removeEventListener("hashchange", syncTabFromLocation);
   window.removeEventListener("beforeunload", warnBeforeDiscardingConfig);
+  window.removeEventListener("resize", revealActiveNavigation);
   if (showUtilityMenu.value) document.body.style.overflow = bodyOverflowBeforeDialog;
 });
 </script>
@@ -544,6 +566,7 @@ onUnmounted(() => {
         </button>
         <div class="mn-brand-copy">
           <h1>MagicNet</h1>
+          <p class="mn-header-page">{{ t(activeTabDefinition.label) }}</p>
         </div>
       </div>
 
@@ -628,7 +651,8 @@ onUnmounted(() => {
     <div class="mn-workspace-frame">
       <aside class="desktop-rail" :aria-label="t('MagicNet 工作区')">
         <nav :aria-label="t('全部页面')">
-          <div class="mn-nav-group">
+          <div class="mn-nav-group mn-primary-navigation">
+            <p class="mn-rail-label">{{ t("常用入口") }}</p>
             <button
               v-for="item in primaryTabs"
               :key="item.key"
@@ -641,7 +665,7 @@ onUnmounted(() => {
               @click="setTab(item.key)"
             >
               <component :is="item.icon" :size="18" aria-hidden="true" />
-              <span>{{ t(item.key === 'proxies' ? '节点' : item.label) }}</span>
+              <span><strong>{{ t(item.key === 'proxies' ? '节点' : item.label) }}</strong><small>{{ t(item.hint) }}</small></span>
             </button>
           </div>
           <div class="mn-nav-more">
