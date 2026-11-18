@@ -24,7 +24,7 @@ for (const [browserLocale, language, overview] of [
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto('/');
       await expect(page.locator('html')).toHaveAttribute('lang', language);
-      await expect(page.locator('[data-tab="control"]:visible')).toHaveText(overview);
+      await expect(page.locator('[data-tab="control"]:visible').getByText(overview, { exact: true })).toHaveText(overview);
       for (const tab of tabs) {
         await page.evaluate((tab) => { window.location.hash = `/${tab}`; }, tab);
         await expect(page.locator('.page-surface')).toHaveAttribute('data-page', tab);

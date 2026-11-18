@@ -28,6 +28,11 @@ test("changing pages after scrolling opens the destination at its heading", asyn
   // Cache both long pages first; an empty lazy-loading shell can hide this bug.
   await navigate("control");
   await navigate("about");
+  // The phone overview now folds its longer guidance; expand real content
+  // before asserting that navigation resets a meaningfully scrolled page.
+  const guide = page.locator(".mn-path-guide");
+  await guide.locator("summary").click();
+  await expect(guide).toHaveAttribute("open", "");
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
 
