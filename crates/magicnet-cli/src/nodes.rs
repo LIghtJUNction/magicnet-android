@@ -126,8 +126,7 @@ fn read_proxy_selector(app: &App) -> Result<Value, String> {
 }
 
 fn resolve_node_names(app: &App, limit: usize, cache_enabled: bool, cache: &Path) -> Vec<String> {
-    let names = scan_node_names(app, limit);
-    if !names.is_empty() {
+    if let Some(names) = scan_node_names(app, limit) {
         refresh_node_cache(cache, &names);
         return names;
     }
@@ -137,45 +136,32 @@ fn resolve_node_names(app: &App, limit: usize, cache_enabled: bool, cache: &Path
     Vec::new()
 }
 
-fn scan_node_names(app: &App, limit: usize) -> Vec<String> {
-    let mut names = Vec::new();
-    scan_singbox_tags(app, limit, &mut names);
-    names
-}
-
-fn scan_singbox_tags(app: &App, limit: usize, names: &mut Vec<String>) {
-    let tags = app
-        .moddir
-        .join(".state/sing-box/subscription-work/tags.txt");
-    if let Ok(text) = fs::read_to_string(tags) {
-        for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
-            push_node(line, limit, names);
-            if names.len() >= limit {
-                return;
-            }
-        }
-    }
+fn scan_node_names(app: &App, limit: usize) -> Option<Vec<String>> {
+    // Only the active configuration defines the current candidates. Legacy work
+    // tags and staged configurations can describe nodes removed by exclusions.
     let config = app.moddir.join(".config/sing-box/config.json");
-    if let Ok(text) = fs::read_to_string(config) {
-        if let Ok(json) = serde_json::from_str::<Value>(&text) {
-            if let Some(outbounds) = json.get("outbounds").and_then(Value::as_array) {
-                let proxy_members = proxy_member_tags(outbounds);
-                for outbound in outbounds {
-                    let Some(name) = outbound.get("tag").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    if is_real_outbound(outbound)
-                        && (proxy_members.is_empty() || proxy_members.contains(name))
-                    {
-                        push_node(name, limit, names);
-                        if names.len() >= limit {
-                            return;
-                        }
-                    }
-                }
+    let text = fs::read_to_string(config).ok()?;
+    let json = serde_json::from_str::<Value>(&text).ok()?;
+    let outbounds = match json.as_object()?.get("outbounds") {
+        None | Some(Value::Null) => return Some(Vec::new()),
+        Some(value) => value.as_array()?,
+    };
+    let proxy_members = proxy_member_tags(outbounds);
+    let mut names = Vec::new();
+    for outbound in outbounds {
+        let Some(name) = outbound.get("tag").and_then(Value::as_str) else {
+            continue;
+        };
+        if is_real_outbound(outbound) && (proxy_members.is_empty() || proxy_members.contains(name))
+        {
+            push_node(name, limit, &mut names);
+            if names.len() >= limit {
+                break;
             }
         }
     }
+    // An observed empty configuration is authoritative, not a cache miss.
+    Some(names)
 }
 
 fn push_node(name: &str, limit: usize, names: &mut Vec<String>) {
@@ -334,6 +320,74 @@ mod tests {
     }
 
     #[test]
+    fn active_config_nodes_ignore_retired_work_tags_at_every_list_limit() {
+        let app = temp_app();
+        let cache = app.moddir.join(".cache/magicnet-node-list.cache");
+        let retired = (0..48)
+            .map(|index| format!("HK-retired-{index:02}\n"))
+            .collect::<String>();
+        write_file(
+            app.moddir
+                .join(".state/sing-box/subscription-work/tags.txt"),
+            &retired,
+        );
+        write_file(&cache, &retired);
+        write_file(
+            app.moddir.join(".config/sing-box/config.json"),
+            r#"{"outbounds":[{"tag":"proxy","type":"selector","outbounds":["JP-test","US-test"]},{"tag":"JP-test","type":"trojan"},{"tag":"JP-test","type":"trojan"},{"tag":"US-test","type":"trojan"},{"tag":"HK-hidden","type":"trojan"}]}"#,
+        );
+        write_file(
+            app.moddir
+                .join(".config/sing-box/config.json.candidate-test"),
+            r#"{"outbounds":[{"tag":"HK-staged","type":"trojan"}]}"#,
+        );
+        for limit in [48, 1, 2, 0, 500] {
+            let expected: Vec<_> = ["JP-test", "US-test"]
+                .into_iter()
+                .take(limit)
+                .map(str::to_owned)
+                .collect();
+            let names = resolve_node_names(&app, limit, true, &cache);
+            assert_eq!(
+                names, expected,
+                "retired work tags displaced the active configuration at limit {limit}"
+            );
+            assert_eq!(
+                fs::read_to_string(&cache).unwrap(),
+                format!("{}\n", expected.join("\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn valid_empty_config_does_not_revive_cached_or_staged_nodes() {
+        let app = temp_app();
+        let cache = app.moddir.join(".cache/magicnet-node-list.cache");
+        write_file(
+            app.moddir
+                .join(".state/sing-box/subscription-work/tags.txt"),
+            "HK-retired\n",
+        );
+        write_file(
+            app.moddir
+                .join(".config/sing-box/config.json.candidate-test"),
+            r#"{"outbounds":[{"tag":"HK-staged","type":"trojan"}]}"#,
+        );
+        for config in [
+            r#"{}"#,
+            r#"{"outbounds":null}"#,
+            r#"{"outbounds":[]}"#,
+            r#"{"outbounds":[{"tag":"direct","type":"direct"}]}"#,
+            r#"{"outbounds":[{"tag":"proxy","type":"selector","outbounds":["block"]},{"tag":"block","type":"block"}]}"#,
+        ] {
+            write_file(app.moddir.join(".config/sing-box/config.json"), config);
+            write_file(&cache, "HK-cached\n");
+            assert!(resolve_node_names(&app, 48, true, &cache).is_empty());
+            assert_eq!(fs::read_to_string(&cache).unwrap(), "\n");
+        }
+    }
+
+    #[test]
     fn stale_cache_does_not_override_current_scan() {
         let app = temp_app();
         write_file(
@@ -353,14 +407,37 @@ mod tests {
     }
 
     #[test]
-    fn cache_fallback_is_used_when_current_scan_is_empty() {
+    fn cache_fallback_is_used_only_when_active_config_is_unavailable() {
         let app = temp_app();
         let cache = app.moddir.join(".cache/magicnet-node-list.cache");
+        let active = app.moddir.join(".config/sing-box/config.json");
         write_file(&cache, "cached\n");
-
-        let names = resolve_node_names(&app, 48, true, &cache);
-
-        assert_eq!(names, vec!["cached".to_string()]);
+        write_file(
+            app.moddir
+                .join(".state/sing-box/subscription-work/tags.txt"),
+            "HK-retired\n",
+        );
+        write_file(
+            app.moddir
+                .join(".config/sing-box/config.json.candidate-test"),
+            r#"{"outbounds":[{"tag":"HK-staged","type":"trojan"}]}"#,
+        );
+        for config in [
+            None,
+            Some("invalid-json"),
+            Some(r#"{"outbounds":"invalid"}"#),
+            Some("[]"),
+            Some("null"),
+        ] {
+            if let Some(config) = config {
+                write_file(&active, config);
+            }
+            assert_eq!(
+                resolve_node_names(&app, 48, true, &cache),
+                vec!["cached".to_string()]
+            );
+            assert!(resolve_node_names(&app, 48, false, &cache).is_empty());
+        }
     }
 
     #[test]

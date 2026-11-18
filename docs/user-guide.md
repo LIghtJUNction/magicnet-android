@@ -82,6 +82,10 @@ su -c /data/adb/modules/MagicNet/cli node current
 
 WebUI 可查看延迟、手动选择节点或切回自动组。选择结果会持久化；订阅更新后不存在的节点会被安全重建为有效候选。
 
+订阅排除词会移除名称中包含任一关键词的节点。例如原有 HK、JP、US 三个节点，排除 HK 后应保留 JP 和 US；保存排除词后，须完成一次成功的订阅更新，生效节点才会改变。更新校验失败时继续保留此前的有效配置。
+
+`node list` 从当前 `.config/sing-box/config.json` 读取真实代理节点，遵守 `proxy` 选择器成员并去重；旧 `subscription-work/tags.txt` 和暂存候选不能占用列表名额。默认最多列出 48 个节点，`MAGICNET_NODE_LIST_LIMIT` 可调整上限，最大为 500。有效配置没有节点（包括省略 `outbounds` 或设为 `null`）时返回空列表并清除旧节点缓存；配置缺失、无法解析或结构不符时保留既有缓存回退，设置 `MAGICNET_NODE_CACHE=0` 可关闭该回退。
+
 ## 应用策略
 
 三种策略的边界不同：
