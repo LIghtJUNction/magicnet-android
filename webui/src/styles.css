@@ -1621,6 +1621,8 @@ a {
     display: grid;
     gap: 24px;
     max-height: calc(100dvh - 32px);
+    /* Keep scroll geometry immediate under the global reduced-motion rule. */
+    transition-property: none;
     overflow-y: auto;
     padding: 0 4px 4px;
     border: 0;

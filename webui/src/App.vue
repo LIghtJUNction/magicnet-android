@@ -274,8 +274,12 @@ function revealActiveNavigation(): void {
   rail.style.maxHeight = `${Math.max(44, window.innerHeight - top - 16)}px`;
   const visible = rail.getBoundingClientRect();
   const selected = target.getBoundingClientRect();
-  if (selected.bottom > visible.bottom) rail.scrollTop += selected.bottom - visible.bottom;
-  else if (selected.top < visible.top) rail.scrollTop -= visible.top - selected.top;
+  // Scroll offsets can round to whole pixels while translated labels retain
+  // fractional geometry. Keep a small inset inside the actual scrollport.
+  const visibleTop = Math.max(0, visible.top + rail.clientTop) + 1;
+  const visibleBottom = Math.min(window.innerHeight, visible.top + rail.clientTop + rail.clientHeight) - 1;
+  if (selected.bottom > visibleBottom) rail.scrollTop += Math.ceil(selected.bottom - visibleBottom);
+  else if (selected.top < visibleTop) rail.scrollTop -= Math.ceil(visibleTop - selected.top);
 }
 
 function scheduleNavigationReveal(): void {
@@ -524,7 +528,7 @@ onMounted(() => {
   // after mount. Reveal against the settled layout without scrolling the body.
   if (typeof ResizeObserver !== "undefined") {
     navigationObserver = new ResizeObserver(scheduleNavigationReveal);
-    for (const element of document.querySelectorAll(".mn-command-bar, .mn-workspace-frame, .desktop-rail nav")) {
+    for (const element of document.querySelectorAll(".mn-command-bar, .mn-workspace-frame, .desktop-rail, .desktop-rail nav")) {
       navigationObserver.observe(element);
     }
   }
