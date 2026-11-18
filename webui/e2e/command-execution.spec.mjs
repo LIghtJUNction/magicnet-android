@@ -89,7 +89,7 @@ test("pending writes keep navigation and observations responsive while writes ex
     const { state } = (await import("/src/composables/useMagicNet.ts")).useMagicNet();
     return { phase: state.phase, busy: state.busy, depth: state.queueDepth };
   })).toEqual({ phase: "error", busy: false, depth: 0 });
-  await expect(page.locator(".page-surface pre").last())
+  await expect(page.locator('.page-surface[data-page="output"] .output-console'))
     .toContainText("[error] errno=7\nsecond stdout\nlast line\nsecond stderr");
   expect(await page.evaluate(() => window.__commandBridge.execCalls)).toBe(0);
 });

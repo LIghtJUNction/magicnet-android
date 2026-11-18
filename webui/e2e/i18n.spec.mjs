@@ -54,9 +54,9 @@ for (const [browserLocale, language, overview] of [
         const { useMagicNet } = await import('/src/composables/useMagicNet.ts');
         useMagicNet().state.output = '原始日志: server=Москва.example；用户自定义';
       });
-      await expect(page.locator('.page-surface pre').last()).toHaveText('原始日志: server=Москва.example；用户自定义');
+      await expect(page.locator('.page-surface[data-page="output"] .output-console')).toHaveText('原始日志: server=Москва.example；用户自定义');
       await changeLanguage(page, language === 'en' ? 'ru' : 'en');
-      await expect(page.locator('.page-surface pre').last()).toHaveText('原始日志: server=Москва.example；用户自定义');
+      await expect(page.locator('.page-surface[data-page="output"] .output-console')).toHaveText('原始日志: server=Москва.example；用户自定义');
       expect(errors).toEqual([]);
     });
   });

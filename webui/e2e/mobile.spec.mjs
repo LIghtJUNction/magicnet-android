@@ -301,7 +301,8 @@ test("native editor preserves drafts and blocks empty or invalid saves", async (
 test("toolbar menus fit the page when opened", async ({ page }) => {
   for (const [workspace, tab, heading] of pages.filter(([, tab]) => ["apps", "config", "health"].includes(tab))) {
     await navigate(page, workspace, tab, heading);
-    const menu = page.locator(".mn-page-actions .config-action-menu");
+    const menu = page.locator(`.page-surface[data-page="${tab}"] .config-action-menu`);
+    await expect(menu).toHaveCount(1);
     await menu.locator("summary").click();
     await expect(menu).toHaveAttribute("open", "");
     await expectNoHorizontalOverflow(page);
