@@ -111,7 +111,7 @@ printf ' <%s>' "$@" >> "$MODDIR/.fixture/reads.log"
 printf '\n' >> "$MODDIR/.fixture/reads.log"
 case "$*" in
     '-4 rule show') emit rules ;;
-    '-4 route show table 2022'|'-4 route show table  2022')
+    '-4 route show table 2022')
         if [ -f "$MODDIR/.fixture/fail-routes" ]; then
             printf 'HOTSPOT-PRIVATE-CANARY kernel query failed\n' >&2
             exit 2

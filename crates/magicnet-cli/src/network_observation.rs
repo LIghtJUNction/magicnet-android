@@ -340,7 +340,7 @@ fn observe_hotspot(
         return Ok(false);
     };
     let rules = observe("ip", &["-4", "rule", "show"])?;
-    let routes = observe("ip", &["-4", "route", "show", "table", " 2022"])?;
+    let routes = observe("ip", &["-4", "route", "show", "table", "2022"])?;
     let forward = observe("iptables", &["-S", "FORWARD"])?;
     if !hotspot_matches(inventory, &rules, &forward) {
         return Ok(false);
@@ -602,7 +602,7 @@ mod tests {
         observe_hotspot(inventory, Some(&config), |program, args| {
             let text = match (program, args) {
                 ("ip", ["-4", "rule", "show"]) => "8999: from all iif wlan1 lookup 2022\n8998: from all to 172.20.0.2 lookup main\n",
-                ("ip", ["-4", "route", "show", "table", " 2022"]) => "default dev magicnet0 scope link\n",
+                ("ip", ["-4", "route", "show", "table", "2022"]) => "default dev magicnet0 scope link\n",
                 ("iptables", ["-S", "FORWARD"]) => "-A FORWARD -i wlan1 -o magicnet0 -m comment --comment magicnet-hotspot -j ACCEPT\n-A FORWARD -i magicnet0 -o wlan1 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment magicnet-hotspot -j ACCEPT\n",
                 ("ip", ["-4", "-o", "addr", "show", "dev", "magicnet0"]) => "7: magicnet0 inet 172.20.0.1/30 scope global magicnet0\n",
                 ("ip", ["-4", "route", "show", "table", "main", "dev", "magicnet0", "scope", "link"]) => "172.20.0.0/30 proto kernel src 172.20.0.1\n",
