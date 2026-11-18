@@ -152,7 +152,10 @@ fn scan_node_names(app: &App, limit: usize) -> Option<Vec<String>> {
         let Some(name) = outbound.get("tag").and_then(Value::as_str) else {
             continue;
         };
-        if is_real_outbound(outbound) && (proxy_members.is_empty() || proxy_members.contains(name))
+        if is_real_outbound(outbound)
+            && proxy_members
+                .as_ref()
+                .is_none_or(|members| members.contains(name))
         {
             push_node(name, limit, &mut names);
             if names.len() >= limit {
@@ -165,7 +168,7 @@ fn scan_node_names(app: &App, limit: usize) -> Option<Vec<String>> {
 }
 
 fn push_node(name: &str, limit: usize, names: &mut Vec<String>) {
-    if name.is_empty() || is_builtin_node(name) || is_obvious_group(name) {
+    if name.is_empty() || is_builtin_node(name) || is_reserved_group(name) {
         return;
     }
     if !names.iter().any(|item| item == name) {
@@ -200,13 +203,17 @@ fn refresh_node_cache(cache: &Path, names: &[String]) {
     let _ = fs::write(cache, text);
 }
 
-fn proxy_member_tags(outbounds: &[Value]) -> HashSet<&str> {
-    outbounds
-        .iter()
-        .filter(|item| item["tag"] == "proxy")
-        .flat_map(|item| item["outbounds"].as_array().into_iter().flatten())
-        .filter_map(Value::as_str)
-        .collect()
+fn proxy_member_tags(outbounds: &[Value]) -> Option<HashSet<&str>> {
+    let proxy = outbounds.iter().find(|item| item["tag"] == "proxy")?;
+    // A present selector with no members is an authoritative empty list.
+    Some(
+        proxy["outbounds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect(),
+    )
 }
 
 fn is_real_outbound(outbound: &Value) -> bool {
@@ -226,7 +233,7 @@ fn is_builtin_node(name: &str) -> bool {
     )
 }
 
-fn is_obvious_group(name: &str) -> bool {
+fn is_reserved_group(name: &str) -> bool {
     matches!(
         name,
         "GLOBAL"
@@ -264,15 +271,7 @@ fn is_obvious_group(name: &str) -> bool {
             | "twitter-proxy"
             | "whatsapp-proxy"
             | "final"
-    ) || name.contains("选择")
-        || name.contains("策略")
-        || name.starts_with("magicnet-chain-")
-        || name.contains("Selector")
-        || name.contains("selector")
-        || name.contains("URLTest")
-        || name.contains("urltest")
-        || name.contains("Fallback")
-        || name.contains("fallback")
+    ) || name.starts_with("magicnet-chain-")
 }
 
 #[cfg(test)]
@@ -317,6 +316,83 @@ mod tests {
         );
 
         assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[test]
+    fn node_labels_survive_scan_cache_and_default_tests() {
+        let app = temp_app();
+        let active = app.moddir.join(".config/sing-box/config.json");
+        let cache = app.moddir.join(".cache/magicnet-node-list.cache");
+        let expected = [
+            "[HK] 香港-选择",
+            "策略优化",
+            "US-fallback-01",
+            "Selector-node",
+            "URLTest-node",
+        ];
+        let mut outbounds: Vec<Value> = expected
+            .iter()
+            .map(|tag| serde_json::json!({"tag": tag, "type": "trojan"}))
+            .collect();
+        outbounds.extend([
+            serde_json::json!({"tag": "ordinary-group", "type": "selector", "outbounds": expected}),
+            serde_json::json!({"tag": "fast-group", "type": "urltest", "outbounds": expected}),
+            serde_json::json!({"tag": "plain-direct", "type": "direct"}),
+            serde_json::json!({"tag": "plain-block", "type": "block"}),
+            serde_json::json!({"tag": "plain-dns", "type": "dns"}),
+            serde_json::json!({"tag": "magicnet-chain-exit::US-fallback-01", "type": "trojan"}),
+        ]);
+        write_file(
+            &active,
+            &serde_json::json!({"outbounds": outbounds}).to_string(),
+        );
+
+        assert_eq!(resolve_node_names(&app, 48, true, &cache), expected);
+        assert_eq!(test_all_targets(&app, &[]), expected);
+        fs::remove_file(active).unwrap();
+        assert_eq!(resolve_node_names(&app, 48, true, &cache), expected);
+        assert_eq!(resolve_node_names(&app, 1, true, &cache), &expected[..1]);
+        assert!(resolve_node_names(&app, 0, true, &cache).is_empty());
+    }
+
+    #[test]
+    fn explicit_empty_proxy_members_do_not_expose_unselected_nodes() {
+        let app = temp_app();
+        let active = app.moddir.join(".config/sing-box/config.json");
+        let cache = app.moddir.join(".cache/magicnet-node-list.cache");
+        for proxy in [
+            serde_json::json!({"tag": "proxy", "type": "selector", "outbounds": []}),
+            serde_json::json!({"tag": "proxy", "type": "selector", "outbounds": null}),
+            serde_json::json!({"tag": "proxy", "type": "selector"}),
+            serde_json::json!({"tag": "proxy", "type": "urltest", "outbounds": []}),
+        ] {
+            write_file(
+                &active,
+                &serde_json::json!({"outbounds": [
+                    proxy, {"tag": "unselected", "type": "trojan"}
+                ]})
+                .to_string(),
+            );
+            write_file(&cache, "retired\n");
+
+            assert!(resolve_node_names(&app, 48, true, &cache).is_empty());
+            assert!(test_all_targets(&app, &[]).is_empty());
+            assert_eq!(fs::read_to_string(&cache).unwrap(), "\n");
+        }
+    }
+
+    #[test]
+    fn proxy_members_include_labels_but_exclude_internal_nodes_and_group_leaves() {
+        let names = resolve_config_nodes(
+            r#"{"outbounds":[
+            {"tag":"proxy","type":"selector","outbounds":["US-fallback-01","ordinary-group","magicnet-chain-exit::US-fallback-01","missing"]},
+            {"tag":"US-fallback-01","type":"trojan"},
+            {"tag":"ordinary-group","type":"urltest","outbounds":["nested-leaf"]},
+            {"tag":"nested-leaf","type":"vless"},
+            {"tag":"magicnet-chain-exit::US-fallback-01","type":"trojan"}
+        ]}"#,
+        );
+        assert_eq!(names, ["US-fallback-01"]);
     }
 
     #[test]
