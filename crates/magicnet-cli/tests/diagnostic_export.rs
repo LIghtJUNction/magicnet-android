@@ -30,7 +30,7 @@ impl Fixture {
         )
         .unwrap();
         fs::write(root.join(".config/sing-box/config.json"), r#"{
-            "inbounds":[{"type":"tun","tag":"tun-in","mtu":1400,"exclude_uid":[0,10112]}],
+            "inbounds":[{"type":"tun","tag":"tun-in","mtu":10112,"exclude_uid":[0,10112]}],
             "outbounds":[{"type":"vless","tag":"PRIVATE-NODE-CANARY","server":"hidden.invalid","password":"PASSWORD-CANARY"}],
             "route":{"final":"PRIVATE-NODE-CANARY"}
         }"#).unwrap();
@@ -130,6 +130,15 @@ fn machine_capture(text: &str) -> serde_json::Value {
 }
 
 fn assert_status_evidence(fixture: &Fixture, report: &str) {
+    // Public numbers may equal a private UID; verify the field's redacted shape.
+    let inbounds: serde_json::Value =
+        serde_json::from_str(section(report, "configuration: inbounds")).unwrap();
+    assert_eq!(
+        inbounds[0]["exclude_uid"],
+        serde_json::json!({"present": true, "count": 2})
+    );
+    assert_eq!(inbounds[0]["mtu"], 10112);
+
     let service = machine_capture(section(report, "service status"));
     let expected: serde_json::Value =
         serde_json::from_slice(&fixture.run(&["--json", "service", "status"]).stdout).unwrap();
@@ -288,7 +297,6 @@ fn machine_export_creates_one_complete_file_and_keeps_service_state_unchanged() 
         "extra-secret",
         "PRIVATE-BOOT-CANARY",
         "SUPERVISOR-SECRET-CANARY",
-        "10112",
     ] {
         assert!(!report.contains(private), "leaked {private}");
     }
