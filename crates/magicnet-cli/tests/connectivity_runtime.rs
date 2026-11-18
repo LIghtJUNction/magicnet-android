@@ -693,6 +693,37 @@ fn connectivity_crashed_core_releases_interception_without_probing_or_restarting
 }
 
 #[test]
+fn connectivity_pending_manual_check_does_not_block_crashed_core_cleanup() {
+    let mut fixture = Fixture::new();
+    fixture.run(&["connectivity", "tick"]);
+    fs::write(fixture.root.join("dns-capture-attached"), "1053").unwrap();
+    unsafe { libc::kill(-(fixture.core.id() as i32), libc::SIGKILL) };
+    fixture.core.wait().unwrap();
+
+    fixture.run(&["connectivity", "check"]);
+    assert_eq!(fixture.status()["reason"], "core_stopped");
+    assert!(fixture.root.join("dns-capture-attached").exists());
+    assert!(!fixture.root.join("cleanup-actions").exists());
+    assert_eq!(
+        fixture.calls(),
+        3,
+        "a manual check cannot probe a stopped core"
+    );
+
+    // The queued observation must not veto the next background cleanup.
+    fixture.run(&["connectivity", "tick"]);
+    assert!(!fixture.root.join("dns-capture-attached").exists());
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("cleanup-actions")).unwrap(),
+        "cleanup\n"
+    );
+    assert_eq!(fixture.status()["status"], "paused");
+    assert_eq!(fixture.status()["reason"], "core_stopped");
+    assert_eq!(fixture.calls(), 3);
+    assert!(!fixture.root.join("actions").exists());
+}
+
+#[test]
 fn connectivity_crash_cleanup_defers_lifecycle_contention_and_retries_failures() {
     let mut fixture = Fixture::new();
     fixture.run(&["connectivity", "tick"]);

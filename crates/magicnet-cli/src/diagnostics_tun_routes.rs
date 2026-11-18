@@ -159,6 +159,14 @@ pub(super) fn routes_cover(
         } else {
             AddressRange::parse(address, family).ok_or("route-output-invalid")?
         };
+        // Selectors outside the configured destination policy cannot affect
+        // its coverage or hide a missing route within that policy.
+        if !required
+            .iter()
+            .any(|needed| range.first <= needed.last && needed.first <= range.last)
+        {
+            continue;
+        }
         if unicast
             && !fields.contains(&"linkdown")
             && fields.windows(2).any(|pair| pair == ["dev", "magicnet0"])

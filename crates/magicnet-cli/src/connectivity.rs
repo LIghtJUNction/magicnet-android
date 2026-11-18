@@ -750,7 +750,9 @@ fn tick_mode(app: &App, manual: bool) -> Result<(), String> {
             },
         );
         state.publish(app)?;
-        if reason == "core_stopped" && !observation_only {
+        // A queued observation cannot veto background crash cleanup.
+        // Only the manual command itself must remain free of cleanup actions.
+        if reason == "core_stopped" && !manual {
             cleanup_stopped_network(app)?;
         }
         return Ok(());
