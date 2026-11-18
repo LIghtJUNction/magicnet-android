@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from "@/i18n";
-import { computed, ref, watch } from "vue";
+import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from "vue";
 import { Copy, RefreshCw, Route } from "lucide-vue-next";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
@@ -32,6 +32,11 @@ const pendingAction = ref<PendingProxyAction | null>(null);
 const selectionPlanCopied = ref(false);
 const groupLimit = ref(8);
 const nodeLimits = ref(new Map<string, number>());
+let active = true;
+let disposed = false;
+let activatedOnce = false;
+let snapshotVersion = 0;
+let refreshQueued = false;
 
 const snapshot = computed(() => parseProxyGroupsSnapshot(rawOutput.value));
 const pendingPlan = computed<ProxySelectionPlan | null>(() => {
@@ -46,16 +51,41 @@ watch(groupQuery, () => {
   nodeLimits.value = new Map();
 });
 
+function currentRead(version: number): boolean {
+  return active && !disposed && version === snapshotVersion;
+}
+
+function publishGroups(output: string): void {
+  rawOutput.value = output;
+  copied.value = false;
+  selectionPlanCopied.value = false;
+  groupDelays.value.clear();
+  // Keep search and expansion drafts; only cancel a choice that is no longer valid.
+  const action = pendingAction.value;
+  if (action) {
+    const group = parseProxyGroupsSnapshot(output)?.groups.find((entry) => entry.name === action.group.name);
+    pendingAction.value = group?.proxies.includes(action.node) && group.now !== action.node
+      ? { ...action, group } : null;
+  }
+}
+
 async function refreshGroups(): Promise<void> {
-  await withAction("proxy-groups-refresh", async () => {
-    copied.value = false;
-    pendingAction.value = null;
-    selectionPlanCopied.value = false;
-    groupDelays.value.clear();
-    groupLimit.value = 8;
-    nodeLimits.value = new Map();
-    rawOutput.value = await runCli("api proxies", t("读取代理组"));
-  });
+  if (!active || disposed) return;
+  if (isRunning("proxy-groups-refresh")) {
+    refreshQueued = true;
+    return;
+  }
+  refreshQueued = false;
+  try {
+    await withAction("proxy-groups-refresh", async () => {
+      const version = ++snapshotVersion;
+      const output = await runCli("api proxies", t("读取代理组"));
+      if (currentRead(version)) publishGroups(output);
+    });
+  } finally {
+    // A return to the page during an older read still needs one fresh observation.
+    if (refreshQueued && active && !disposed) void refreshGroups();
+  }
 }
 
 function requestSelect(group: ProxyGroupSummary, node: string): void {
@@ -79,7 +109,9 @@ async function testGroup(group: ProxyGroupSummary): Promise<void> {
   const nodes = group.proxies.slice(0, 16);
   if (!nodes.length) return;
   await withAction(`proxy-group-test-${group.name}`, async () => {
+    const version = snapshotVersion;
     const output = await runCli(`node test-all ${nodes.map(shellQuote).join(" ")}`, t("测速 {name}", { name: group.name }));
+    if (!currentRead(version)) return;
     const requested = new Set(nodes);
     const entries = parseNodeTestAll(output).filter((entry) => requested.has(entry.node));
     groupDelays.value.set(group.name, entries);
@@ -113,15 +145,17 @@ function showMoreNodes(group: ProxyGroupSummary): void {
 
 async function selectNode(group: string, node: string): Promise<void> {
   await withAction("proxy-groups-select", async () => {
+    const version = ++snapshotVersion;
     const text = await runCli(`api select ${shellQuote(group)} ${shellQuote(node)}`, t("切换代理节点"));
-    if (execFailed(text)) return;
+    if (execFailed(text) || !currentRead(version)) return;
     state.output = text;
     const refreshed = await runCli("api proxies", t("刷新代理组"), true);
+    if (!currentRead(version)) return;
     if (execFailed(refreshed)) {
       state.output = t("代理节点切换已执行，但代理组刷新未确认：\n{refreshed}", { refreshed: refreshed });
       return;
     }
-    rawOutput.value = refreshed;
+    publishGroups(refreshed);
   });
 }
 
@@ -166,7 +200,24 @@ async function copyReport(): Promise<void> {
   state.output = copied.value ? t("代理组报告已复制。") : t("剪贴板不可用，代理组报告未复制。");
 }
 
-const { target: visibilityTarget } = useVisibilityTask(refreshGroups);
+const { target: visibilityTarget, started: observationStarted } = useVisibilityTask(refreshGroups);
+onActivated(() => {
+  active = true;
+  // The first visible load belongs to useVisibilityTask; do not duplicate it.
+  if (activatedOnce && observationStarted.value) void refreshGroups();
+  activatedOnce = true;
+});
+onDeactivated(() => {
+  active = false;
+  snapshotVersion += 1;
+  refreshQueued = false;
+});
+onBeforeUnmount(() => {
+  active = false;
+  disposed = true;
+  snapshotVersion += 1;
+  refreshQueued = false;
+});
 </script>
 
 <template>
