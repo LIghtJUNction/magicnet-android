@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { subscriptionSnapshot } from "../machine-fixtures.mjs";
 
-const pages = ["control", "subs", "tailscale", "apps", "block", "chain", "config", "webui", "health", "terminal", "output", "tools", "about"];
+const pages = ["control", "proxies", "subs", "tailscale", "apps", "block", "chain", "config", "webui", "health", "terminal", "output", "tools", "about"];
 for (const theme of ["light", "dark"]) {
   for (const id of pages) {
     test(`${id} has a usable layout: ${theme}`, async ({ page }, info) => {
@@ -67,10 +67,10 @@ for (const theme of ["light", "dark"]) {
 test("advanced tools retain their native disclosure and keyboard access", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("magicnet.webui.onboarding.v1", "dismissed"));
   await page.goto("/#/tools", { waitUntil: "networkidle" });
-  const sections = page.locator(".tools-sections > details");
+  const sections = page.locator(".tools-sections .tools-group > details");
   await expect(sections).toHaveCount(8);
   await expect(sections.locator(':scope > summary').filter({ hasText: 'Play 商店联网修复' })).toHaveCount(1);
-  await expect(page.locator(".tools-sections > details[open]")).toHaveCount(0);
+  await expect(page.locator(".tools-sections .tools-group > details[open]")).toHaveCount(0);
   for (const section of await sections.all()) {
     const summary = section.locator(":scope > summary");
     await summary.focus();

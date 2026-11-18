@@ -321,32 +321,6 @@ watch(executedList, () => {
         <span class="terminal-status" role="status"><StatusDot v-if="executing" tone="current" /><span v-else class="terminal-neutral-dot" aria-hidden="true"></span>{{ t(executing ? "执行中…" : "就绪") }}</span>
       </header>
 
-      <div ref="terminalBodyRef" class="terminal-output" :class="{ 'terminal-output--empty': executedList.length === 0 && !executing }" :aria-label="t('命令输出')" tabindex="0" :aria-busy="executing">
-        <div v-if="executedList.length === 0 && !executing" class="terminal-empty">
-          <Terminal :size="28" :stroke-width="1.4" aria-hidden="true" />
-          <h2>{{ t("从一条命令开始") }}</h2>
-          <p>{{ t("输入命令，或选择下方的快捷命令。") }}</p>
-          <code>cli health</code>
-        </div>
-        <article v-for="entry in executedList" :key="entry.id" class="terminal-entry" :class="{ 'terminal-entry-failed': !entry.ok }">
-          <header class="terminal-entry-heading">
-            <div class="terminal-command"><span aria-hidden="true">›</span><code>cli {{ entry.command.replace(/^(?:cli|magicnet-cli)\s+/i, '') }}</code></div>
-            <div class="terminal-entry-meta">
-              <span class="terminal-result">{{ t(entry.ok ? "完成" : "失败") }}</span>
-              <time>{{ entry.time }}</time><span>{{ entry.durationMs }}ms</span>
-              <button type="button" class="terminal-icon-button" :aria-label="t('复制输出')" :title="t('复制输出')" @click="copyEntryOutput(entry)">
-                <component :is="copiedId === entry.id ? Check : Copy" :size="16" aria-hidden="true" />
-              </button>
-            </div>
-          </header>
-          <pre>{{ formatOutput(entry.output) }}</pre>
-        </article>
-        <div v-if="executing" class="terminal-pending" role="status">
-          <span class="terminal-pending-mark" aria-hidden="true"></span>
-          <span>{{ t("命令执行中，正在等待输出…") }}</span>
-        </div>
-      </div>
-
       <div class="terminal-composer">
         <div v-if="suggestions.length > 0" class="terminal-suggestions" :aria-label="t('补全建议')">
           <button v-for="item in suggestions" :key="item.command" type="button" :disabled="executing || clearingHistory" @click="selectSuggestion(item)">
@@ -376,6 +350,32 @@ watch(executedList, () => {
           <span class="terminal-history-count">{{ history.length }} {{ t("历史记录") }}</span>
         </div>
       </div>
+
+      <div ref="terminalBodyRef" class="terminal-output" :class="{ 'terminal-output--empty': executedList.length === 0 && !executing }" :aria-label="t('命令输出')" tabindex="0" :aria-busy="executing">
+        <div v-if="executedList.length === 0 && !executing" class="terminal-empty">
+          <Terminal :size="28" :stroke-width="1.4" aria-hidden="true" />
+          <h2>{{ t("从一条命令开始") }}</h2>
+          <p>{{ t("输入命令，或选择下方的快捷命令。") }}</p>
+          <code>cli health</code>
+        </div>
+        <article v-for="entry in executedList" :key="entry.id" class="terminal-entry" :class="{ 'terminal-entry-failed': !entry.ok }">
+          <header class="terminal-entry-heading">
+            <div class="terminal-command"><span aria-hidden="true">›</span><code>cli {{ entry.command.replace(/^(?:cli|magicnet-cli)\s+/i, '') }}</code></div>
+            <div class="terminal-entry-meta">
+              <span class="terminal-result">{{ t(entry.ok ? "完成" : "失败") }}</span>
+              <time>{{ entry.time }}</time><span>{{ entry.durationMs }}ms</span>
+              <button type="button" class="terminal-icon-button" :aria-label="t('复制输出')" :title="t('复制输出')" @click="copyEntryOutput(entry)">
+                <component :is="copiedId === entry.id ? Check : Copy" :size="16" aria-hidden="true" />
+              </button>
+            </div>
+          </header>
+          <pre>{{ formatOutput(entry.output) }}</pre>
+        </article>
+        <div v-if="executing" class="terminal-pending" role="status">
+          <span class="terminal-pending-mark" aria-hidden="true"></span>
+          <span>{{ t("命令执行中，正在等待输出…") }}</span>
+        </div>
+      </div>
     </section>
 
     <div class="terminal-quick">
@@ -398,10 +398,10 @@ watch(executedList, () => {
 .terminal-identity { font-size: 14px; font-weight: 500; }
 .terminal-neutral-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mn-ink-muted); }
 .terminal-status { color: var(--mn-ink-muted); font-size: 13px; }
-.terminal-output { height: clamp(240px, 40dvh, 460px); overflow: auto; padding: 8px 24px; scrollbar-color: var(--mn-border-strong) transparent; scrollbar-width: thin; }
+.terminal-output { height: clamp(240px, 36dvh, 420px); overflow: auto; padding: 12px 24px; scrollbar-color: var(--mn-border-strong) transparent; scrollbar-width: thin; }
 .terminal-output:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: -3px; }
 .terminal-empty { min-height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 12px; padding: 32px 8px; color: var(--mn-ink-muted); }
-.terminal-empty h2 { color: var(--mn-ink); font-size: 22px; font-weight: 500; }
+.terminal-empty h2 { color: var(--mn-ink); font-size: 20px; font-weight: 500; }
 .terminal-empty p { margin: 0; font-size: 14px; }
 .terminal-empty code { margin-top: 4px; font-size: 13px; }
 .terminal-entry { padding: 18px 0; border-bottom: 1px solid var(--mn-border); }
@@ -416,7 +416,7 @@ watch(executedList, () => {
 .terminal-entry pre { margin: 8px 0 0; border: 0; border-radius: 0; padding: 0; background: transparent; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; color: var(--mn-ink-soft); }
 .terminal-entry-failed pre { color: var(--mn-danger); }
 .terminal-icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 48px; border-radius: 8px; }
-.terminal-composer { padding: 20px 24px 12px; border-top: 1px solid var(--mn-border); background: var(--mn-surface); }
+.terminal-composer { padding: 0 24px 12px; border-bottom: 1px solid var(--mn-border); background: transparent; }
 .terminal-input-label { display: block; margin-bottom: 8px; color: var(--mn-ink-muted); font-size: 13px; }
 .terminal-input-row { display: flex; align-items: stretch; gap: 12px; }
 .terminal-command-field { display: flex; flex: 1; min-width: 0; align-items: center; gap: 12px; padding: 3px 14px; border: 1px solid var(--mn-border-strong); border-radius: 8px; background: var(--mn-surface-input); }
@@ -455,13 +455,15 @@ watch(executedList, () => {
   .terminal-toolbar { padding: 20px; }
   .terminal-output { padding: 4px 20px; height: clamp(220px, 34dvh, 340px); }
   .terminal-output--empty { height: auto; }
-  .terminal-composer { padding: 20px 16px 8px; }
+  .terminal-composer { padding: 0 16px 8px; }
   .terminal-empty { padding: 8px 0; gap: 8px; }
   .terminal-empty > svg, .terminal-empty h2 { display: none; }
-  .terminal-input-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .terminal-input-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .terminal-command-field { gap: 8px; padding-inline: 12px; }
   .terminal-run { width: 100%; }
-  .terminal-quick { grid-template-columns: 1fr; gap: 10px; }
+  .terminal-quick { grid-template-columns: 1fr; gap: 12px; }
+  .terminal-quick > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .terminal-quick button { min-width: 0; text-align: left; padding-inline: 14px; overflow-wrap: anywhere; }
   .terminal-footer { align-items: flex-start; }
   .terminal-entry-heading { display: block; }
   .terminal-entry-meta { margin-top: 2px; }
@@ -473,7 +475,7 @@ watch(executedList, () => {
   .terminal-output--empty { height: auto; }
   .terminal-empty { padding: 12px 0; gap: 8px; }
   .terminal-empty > svg { display: none; }
-  .terminal-composer { padding-top: 16px; }
+  .terminal-composer { padding-top: 0; }
 }
 @keyframes terminal-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .terminal-pending-mark { animation: none; } }

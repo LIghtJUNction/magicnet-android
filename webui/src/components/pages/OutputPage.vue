@@ -103,15 +103,42 @@ function clearOutputFilter(): void {
 </script>
 
 <template>
-  <div class="grid gap-4">
+  <div class="output-page grid">
     <PageHeader :overline="t('输出')" :title="t('最近输出')">
       <template #actions>
-        <Button variant="outline" @click="copyOutput"><Copy :size="17" />{{ copied ? t("已复制脱敏") : t("复制脱敏输出") }}</Button>
-        <Button variant="outline" :disabled="!issueSummary" @click="copyIssueSummary"><Copy :size="17" />{{ issueCopied ? t("已复制问题") : t("复制问题") }}</Button>
+        <Button @click="copyOutput"><Copy :size="17" />{{ copied ? t("已复制脱敏") : t("复制脱敏输出") }}</Button>
+        <Button variant="ghost" :disabled="!issueSummary" @click="copyIssueSummary"><Copy :size="17" />{{ issueCopied ? t("已复制问题") : t("复制问题") }}</Button>
       </template>
     </PageHeader>
-    <RuntimeLogsPanel />
-    <Card v-if="state.backgroundTask.log" class="grid gap-3">
+    <Card class="output-workspace grid gap-4">
+      <div class="output-command">
+        <code class="min-w-0 break-words text-[var(--mn-ink-soft)]">{{ state.lastCommand || t("等待执行") }}</code>
+      </div>
+      <div class="output-metrics">
+        <span>{{ t("阶段 {value1}", { value1: state.phase }) }}</span>
+        <span>{{ t("{value1} 行", { value1: outputStats.lines }) }}</span>
+        <span>{{ t("{value1} 字符", { value1: outputStats.chars }) }}</span>
+        <span>{{ t("{value1} 条问题线索", { value1: outputStats.issueLines }) }}</span>
+      </div>
+      <div class="output-diagnostic rounded-md p-3" :class="outputDiagnosticTone(outputDiagnostic.status)">
+        <p class="text-sm font-semibold">{{ outputDiagnostic.title }}</p>
+        <p class="mt-1 break-words text-sm leading-6 opacity-80">{{ outputDiagnostic.detail }}</p>
+      </div>
+      <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <label class="relative block">
+          <Search class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--mn-ink-muted)]" :size="15" />
+          <Input v-model="outputQuery" class="pl-9" :aria-label="t('过滤当前输出')" :placeholder="t('过滤当前输出，例如 error、timeout、api stats')" spellcheck="false" />
+        </label>
+        <Button variant="ghost" :disabled="!outputQuery" @click="clearOutputFilter"><X :size="16" />{{ t("清除过滤") }}</Button>
+      </div>
+      <div v-if="issueSummary" class="rounded-md mn-panel-warn p-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-[var(--mn-warning)]">{{ t("问题线索") }}</p>
+        <pre class="mt-2 max-h-32 overflow-auto text-xs leading-5 text-[var(--mn-warning)] whitespace-pre-wrap">{{ issueSummary }}</pre>
+      </div>
+      <pre tabindex="0" :aria-label="t('最近输出')" class="output-console max-h-[58vh] overflow-auto rounded-md bg-[var(--mn-carrier-deep)] p-3 text-xs leading-6 text-[var(--mn-ink-soft)] whitespace-pre-wrap">{{ visibleOutput }}</pre>
+    </Card>
+
+    <Card v-if="state.backgroundTask.log" class="output-background grid gap-3">
       <div class="flex min-w-0 flex-wrap items-center justify-between gap-3">
         <div class="min-w-0">
           <p class="text-sm font-semibold">{{ t("最近后台任务") }}</p>
@@ -132,32 +159,29 @@ function clearOutputFilter(): void {
         <code class="break-all rounded-md bg-[var(--mn-carrier-deep)] px-3 py-2 text-[var(--mn-ink-soft)]">{{ state.backgroundTask.args }}</code>
       </div>
     </Card>
-    <Card class="grid gap-3">
-      <div class="grid gap-2 text-xs text-[var(--mn-ink-muted)] sm:grid-cols-4">
-        <span>{{ t("阶段 {value1}", { value1: state.phase }) }}</span>
-        <span>{{ t("{value1} 行", { value1: outputStats.lines }) }}</span>
-        <span>{{ t("{value1} 字符", { value1: outputStats.chars }) }}</span>
-        <span>{{ t("{value1} 条问题线索", { value1: outputStats.issueLines }) }}</span>
-      </div>
-      <div class="rounded-md border p-3" :class="outputDiagnosticTone(outputDiagnostic.status)">
-        <p class="text-sm font-semibold">{{ outputDiagnostic.title }}</p>
-        <p class="mt-1 break-words text-sm leading-6 opacity-80">{{ outputDiagnostic.detail }}</p>
-      </div>
-      <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-        <label class="relative block">
-          <Search class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--mn-ink-muted)]" :size="15" />
-          <Input v-model="outputQuery" class="pl-9" :placeholder="t('过滤当前输出，例如 error、timeout、api stats')" spellcheck="false" />
-        </label>
-        <Button variant="ghost" :disabled="!outputQuery" @click="clearOutputFilter"><X :size="16" />{{ t("清除过滤") }}</Button>
-      </div>
-      <div v-if="issueSummary" class="rounded-md mn-panel-warn p-3">
-        <p class="text-xs font-semibold uppercase tracking-wide text-[var(--mn-warning)]">{{ t("问题线索") }}</p>
-        <pre class="mt-2 max-h-32 overflow-auto text-xs leading-5 text-[var(--mn-warning)] whitespace-pre-wrap">{{ issueSummary }}</pre>
-      </div>
-      <div class="flex min-w-0 flex-wrap items-center gap-2 text-sm text-[var(--mn-ink-muted)]">
-        <code class="min-w-0 truncate text-[var(--mn-ink-soft)]">{{ state.lastCommand || t("等待执行") }}</code>
-      </div>
-      <pre class="max-h-[58vh] overflow-auto rounded-md bg-[var(--mn-carrier-deep)] p-3 text-xs leading-6 text-[var(--mn-ink-soft)] whitespace-pre-wrap">{{ visibleOutput }}</pre>
-    </Card>
+    <section class="output-runtime" :aria-label="t('运行日志')">
+      <RuntimeLogsPanel />
+    </section>
   </div>
 </template>
+
+
+<style scoped>
+.output-page { min-width: 0; gap: 32px; }
+.output-workspace { border: 0; border-radius: 0; padding: 0; background: transparent; }
+.output-command { min-width: 0; font-size: 16px; line-height: 1.7; }
+.output-command code { overflow-wrap: anywhere; }
+.output-metrics { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--mn-ink-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.output-diagnostic { border: 0; padding: 16px; }
+.output-console { min-height: 200px; border: 0; padding: 18px 16px; background: var(--mn-surface-raised); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; scrollbar-width: thin; }
+.output-console:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 2px; }
+.output-background { border: 0; border-radius: var(--mn-radius-lg); padding: 20px; background: var(--mn-surface-raised); }
+.output-runtime { min-width: 0; border-top: 1px solid var(--mn-border); padding-top: 28px; }
+.output-runtime :deep(.magic-card) { border: 0; padding: 0; background: transparent; }
+.output-runtime :deep(pre) { border: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .output-page :deep(.mn-page-actions) { gap: 6px; }
+  .output-page :deep(.mn-page-actions > button) { min-height: 48px; }
+  .output-background { padding: 16px; }
+}
+</style>

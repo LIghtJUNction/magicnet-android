@@ -175,7 +175,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="grid gap-4 md:gap-5">
+  <div class="proxy-chain-page grid gap-4 md:gap-5">
     <PageHeader
       :overline="t('链式代理')"
       :title="t('链式代理')"
@@ -194,56 +194,22 @@ onMounted(() => {
       </template>
     </PageHeader>
 
-    <Card class="grid gap-5">
-      <CardHeading
-        :overline="t('当前配置')"
-        :description="t('保存后重新应用配置；节点凭据仍由订阅管理。')"
-      >
-        <template #title>
-          <span class="inline-flex items-center gap-2"><GitBranch :size="23" />{{ t('两跳链路') }}</span>
-        </template>
-        <Badge :tone="status.enabled ? 'success' : 'neutral'">{{ t('策略：') }}{{ status.enabled ? t('启用') : t('停用') }}</Badge>
-        <Badge tone="neutral">{{ status.mode === "auto" ? t('自动出口') : t('手动出口') }}</Badge>
-      </CardHeading>
 
-      <label class="flex cursor-pointer items-start gap-3 rounded-[var(--mn-radius-md)] bg-[color-mix(in_srgb,var(--mn-ink)_5%,transparent)] p-4">
-        <input
-          v-model="draft.enabled"
-          type="checkbox"
-          class="mt-1 size-5 shrink-0 accent-[var(--mn-cactus)]"
-          :disabled="!loaded || isRunning('proxy-chain-apply')"
-        />
-        <span>
-          <span class="block text-base font-semibold">{{ t('启用链式代理') }}</span>
-          <span class="mt-1 block text-sm leading-6 text-[var(--mn-ink-muted)]">
-            {{ t('启用后，默认 proxy 出口切换到 chain；停用后恢复普通代理选择器，不会删除节点配置。') }}
-          </span>
-        </span>
-      </label>
 
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile :label="t('策略状态')" :value="status.enabled ? t('已启用') : t('已停用')" />
-        <StatTile :label="t('运行 API')" :value="status.runtime.available ? t('可用') : t('不可用')" />
-        <StatTile :label="t('proxy 当前出口')" :value="status.runtime.proxy || '—'" mono />
-        <StatTile :label="t('当前链路出口')" :value="status.runtime.exit || '—'" mono />
-      </div>
-    </Card>
-
-    <Card class="grid gap-5">
+    <Card class="chain-editor-workspace grid gap-5">
       <CardHeading
         :overline="t('链路角色')"
         :title="t('选择两跳节点')"
-        :description="t('节点来自当前 sing-box 订阅缓存；订阅更新后请点击刷新重新读取。')"
       >
         <Badge :tone="nodeLoadFailed ? 'warning' : 'neutral'">
           {{ nodeLoadFailed ? t('节点读取失败') : t('{count} 个可用节点', { count: nodes.length }) }}
         </Badge>
       </CardHeading>
 
-      <div class="grid gap-4 lg:grid-cols-2">
-        <label class="grid gap-2 text-sm font-medium">
+      <div class="chain-hop-steps grid gap-4 lg:grid-cols-2">
+        <label class="chain-hop grid gap-2 text-sm font-medium">
           <span class="flex items-center justify-between gap-2">
-            <span>{{ t('中转节点') }} <span class="font-normal text-[var(--mn-ink-muted)]">{{ t('· 第一跳') }}</span></span>
+            <span><span class="chain-hop-index" aria-hidden="true">01</span>{{ t('中转节点') }} <span class="font-normal text-[var(--mn-ink-muted)]">{{ t('· 第一跳') }}</span></span>
             <button
               v-if="draft.upstream"
               type="button"
@@ -260,12 +226,13 @@ onMounted(() => {
             <option value="">{{ t('未选择中转节点') }}</option>
             <option v-for="node in availableNodes" :key="`upstream-${node}`" :value="node">{{ sanitizeNodeText(node) }}</option>
           </select>
+          <span v-if="draft.upstream" class="chain-hop-selection" aria-hidden="true">{{ sanitizeNodeText(draft.upstream) }}</span>
           <span class="text-xs leading-5 text-[var(--mn-ink-muted)]">{{ t('连接先到中转节点，再由它转发到落地节点。') }}</span>
         </label>
 
-        <label class="grid gap-2 text-sm font-medium">
+        <label class="chain-hop grid gap-2 text-sm font-medium">
           <span class="flex items-center justify-between gap-2">
-            <span>{{ t('落地节点') }} <span class="font-normal text-[var(--mn-ink-muted)]">{{ t('· 第二跳') }}</span></span>
+            <span><span class="chain-hop-index" aria-hidden="true">02</span>{{ t('落地节点') }} <span class="font-normal text-[var(--mn-ink-muted)]">{{ t('· 第二跳') }}</span></span>
             <button
               v-if="draft.exit"
               type="button"
@@ -282,11 +249,27 @@ onMounted(() => {
             <option value="">{{ t('未选择落地节点') }}</option>
             <option v-for="node in availableNodes" :key="`exit-${node}`" :value="node">{{ sanitizeNodeText(node) }}</option>
           </select>
+          <span v-if="draft.exit" class="chain-hop-selection" aria-hidden="true">{{ sanitizeNodeText(draft.exit) }}</span>
           <span class="text-xs leading-5 text-[var(--mn-ink-muted)]">{{ t('最终流量从落地节点访问目标站点。') }}</span>
         </label>
       </div>
 
-      <div class="grid gap-3">
+      <label class="chain-enable-control flex cursor-pointer items-start gap-3 rounded-[var(--mn-radius-md)] bg-[color-mix(in_srgb,var(--mn-ink)_5%,transparent)] p-4">
+        <input
+          v-model="draft.enabled"
+          type="checkbox"
+          class="mt-1 size-5 shrink-0 accent-[var(--mn-cactus)]"
+          :disabled="!loaded || isRunning('proxy-chain-apply')"
+        />
+        <span>
+          <span class="block text-base font-semibold">{{ t('启用链式代理') }}</span>
+          <span class="mt-1 block text-sm leading-6 text-[var(--mn-ink-muted)]">
+            {{ t('启用后，默认 proxy 出口切换到 chain；停用后恢复普通代理选择器，不会删除节点配置。') }}
+          </span>
+        </span>
+      </label>
+
+      <div class="chain-mode-workspace grid gap-3">
         <div class="text-sm font-medium">{{ t('落地选择模式') }}</div>
         <div class="grid gap-3 sm:grid-cols-2">
           <button
@@ -316,13 +299,15 @@ onMounted(() => {
       </div>
 
       <Button
+        class="chain-save-action"
         :disabled="!loaded || !dirty || validationErrors.length > 0"
         :loading="isRunning('proxy-chain-apply')"
         @click="requestApply"
       ><Save :size="17" />{{ t('保存并应用链式代理') }}</Button>
+      <p class="chain-source-note text-xs leading-5 text-[var(--mn-ink-muted)]">{{ t('节点来自当前 sing-box 订阅缓存；订阅更新后请点击刷新重新读取。') }}</p>
     </Card>
 
-    <Card class="grid gap-5">
+    <Card class="chain-confirmation-workspace grid gap-5" :class="pendingPlan ? 'chain-confirmation-workspace--pending' : ''">
       <CardHeading
         size="md"
         :overline="t('应用预览')"
@@ -347,7 +332,12 @@ onMounted(() => {
       <p v-else class="rounded-[var(--mn-radius-md)] bg-[var(--mn-ivory)] px-4 py-3 text-sm text-[var(--mn-ink-muted)]">{{ dirty ? t('保存按钮会在这里生成操作预览。') : t('当前没有待应用的链式代理变更。') }}</p>
     </Card>
 
-    <Card class="grid gap-5">
+    <details class="mn-disclosure chain-runtime-workspace" :open="status.enabled && !status.runtime.available">
+      <summary>
+        <span>{{ t('运行观察') }}</span>
+        <span class="chain-runtime-availability">{{ t('运行 API') }} · {{ status.runtime.available ? t('可用') : t('不可用') }}</span>
+      </summary>
+    <Card class="chain-observation-body grid gap-5">
       <CardHeading size="md" :overline="t('运行观察')" :title="t('链路选择器状态')" />
       <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
@@ -367,10 +357,74 @@ onMounted(() => {
         {{ t('这里显示的是设备当前 sing-box API 选择器状态；策略已启用但 API 不可用时，需要先检查 sing-box、cli transparent status 与当前数据面。') }}
       </p>
     </Card>
+    </details>
+
+    <details class="mn-disclosure chain-current-workspace">
+      <summary><span>{{ t('当前配置') }}</span><span>{{ status.mode === "auto" ? t('自动出口') : t('手动出口') }}</span></summary>
+    <Card class="chain-observation-body grid gap-5">
+      <CardHeading
+        :overline="t('当前配置')"
+        :description="t('保存后重新应用配置；节点凭据仍由订阅管理。')"
+      >
+        <template #title>
+          <span class="inline-flex items-center gap-2"><GitBranch :size="23" />{{ t('两跳链路') }}</span>
+        </template>
+        <Badge :tone="status.enabled ? 'success' : 'neutral'">{{ t('策略：') }}{{ status.enabled ? t('启用') : t('停用') }}</Badge>
+        <Badge tone="neutral">{{ status.mode === "auto" ? t('自动出口') : t('手动出口') }}</Badge>
+      </CardHeading>
+
+
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile :label="t('策略状态')" :value="status.enabled ? t('已启用') : t('已停用')" />
+        <StatTile :label="t('运行 API')" :value="status.runtime.available ? t('可用') : t('不可用')" />
+        <StatTile :label="t('proxy 当前出口')" :value="status.runtime.proxy || '—'" mono />
+        <StatTile :label="t('当前链路出口')" :value="status.runtime.exit || '—'" mono />
+      </div>
+    </Card>
+    </details>
   </div>
 </template>
 
 <style scoped>
+@media (max-width: 640px) {
+  .proxy-chain-page { min-width: 0; gap: 24px; }
+  .proxy-chain-page > :deep(.mn-page-header .mn-page-actions) { flex-wrap: wrap; gap: 8px; }
+  .proxy-chain-page > :deep(.mn-page-header button) { min-height: 44px; }
+  .chain-editor-workspace { min-width: 0; gap: 22px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .chain-editor-workspace > :deep(.mn-card-heading) { gap: 12px; }
+  .chain-hop-steps { position: relative; min-width: 0; gap: 24px; }
+  .chain-hop-steps::before { content: ""; position: absolute; top: 32px; bottom: 50%; inset-inline-start: 12px; width: 1px; background: var(--mn-border); pointer-events: none; }
+  .chain-hop { position: relative; min-width: 0; gap: 8px; padding-inline-start: 36px; }
+  .chain-hop > span:first-child { min-width: 0; min-height: 44px; gap: 4px; }
+  .chain-hop > span:first-child > span { min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
+  .chain-hop-index { position: absolute; top: 9px; inset-inline-start: 0; display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 25px; border-radius: 50%; background: var(--mn-surface-raised); color: var(--mn-ink-muted); font-size: .6875rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .chain-hop select { width: 100%; max-width: 100%; min-width: 0; min-height: 52px; font-size: 16px; }
+  .chain-hop-selection { min-width: 0; color: var(--mn-ink); font-size: .8125rem; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+  .chain-hop > span:last-child { font-size: .75rem; line-height: 1.6; }
+  .chain-hop button { min-height: 44px; min-width: 44px; padding-inline: 8px; flex-shrink: 0; }
+  .chain-enable-control { gap: 12px; padding: 16px 0; border-block: 1px solid var(--mn-border); border-radius: 0; background: transparent; }
+  .chain-enable-control > span { min-width: 0; }
+  .chain-enable-control > span > span:first-child { font-size: .9375rem; line-height: 1.6; }
+  .chain-enable-control > span > span:last-child { font-size: .75rem; line-height: 1.7; }
+  .chain-mode-workspace { min-width: 0; gap: 10px; }
+  .chain-mode-workspace > div:nth-child(2) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .proxy-chain-mode { min-width: 0; padding: 12px; border-radius: 10px; white-space: normal; overflow-wrap: anywhere; }
+  .proxy-chain-mode > span:first-child { font-size: .8125rem; line-height: 1.5; }
+  .proxy-chain-mode > span:last-child { font-size: .6875rem; line-height: 1.6; }
+  .chain-mode-workspace > p { padding: 0; border-radius: 0; background: transparent; line-height: 1.7; }
+  .chain-save-action { width: 100%; min-width: 0; min-height: 54px; white-space: normal; overflow-wrap: anywhere; }
+  .chain-source-note { margin-top: -10px; font-size: .75rem; line-height: 1.7; }
+  .chain-confirmation-workspace { gap: 14px; padding: 20px 0 0; border: 0; border-top: 1px solid var(--mn-border); border-radius: 0; background: transparent; box-shadow: none; }
+  .chain-confirmation-workspace--pending { padding: 18px; border: 1px solid var(--mn-border); border-radius: 12px; background: var(--mn-surface-raised); }
+  .chain-confirmation-workspace :deep(button) { min-height: 48px; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .chain-confirmation-workspace ol { min-width: 0; overflow-wrap: anywhere; }
+  .chain-runtime-workspace, .chain-current-workspace { min-width: 0; border-inline: 0; border-radius: 0; background: transparent; }
+  .chain-runtime-workspace > summary, .chain-current-workspace > summary { min-height: 60px; min-width: 0; padding-inline: 0; gap: 12px; }
+  .chain-runtime-workspace > summary > span, .chain-current-workspace > summary > span { min-width: 0; overflow-wrap: anywhere; }
+  .chain-runtime-availability, .chain-current-workspace > summary > span:last-child { margin-inline-start: auto; color: var(--mn-ink-muted); font-size: .75rem; font-weight: 400; text-align: end; }
+  .chain-observation-body { min-width: 0; padding: 8px 0 16px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .chain-observation-body > div { min-width: 0; }
+}
 @media (forced-colors: active) {
   .proxy-chain-mode { border: 1px solid ButtonText; }
   .proxy-chain-mode[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; }

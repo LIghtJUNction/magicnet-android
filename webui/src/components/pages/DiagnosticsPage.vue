@@ -221,10 +221,9 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
 </script>
 
 <template>
-  <div class="grid gap-4">
+  <div class="diagnostics-page grid">
     <PageHeader :overline="t('诊断')" :title="t('诊断')">
       <template #actions>
-        <Button :disabled="!state.hasKsu" :loading="isRunning('export-diagnostics')" @click="exportDiagnostics"><Download :size="17" />{{ t("一键导出诊断包") }}</Button>
         <Button :loading="isRunning('health')" @click="withAction('health', refreshDiagnostics)"><RefreshCw :size="17" />{{ t("健康检查") }}</Button>
         <Button variant="outline" :loading="isRunning('ping')" @click="withAction('ping', () => refreshPing())"><RadioTower :size="17" />{{ t("连通性测试") }}</Button>
         <details class="config-action-menu">
@@ -238,6 +237,27 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
     </PageHeader>
 
     <ConnectivityNotice v-if="state.hasKsu" :snapshot="state.connectivity" />
+    <Card class="diagnostics-summary grid gap-5">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <h3 class="inline-flex items-center gap-2 text-base font-medium"><ShieldCheck :size="17" />{{ t("检查结果") }}</h3>
+        <Button size="sm" variant="outline" :disabled="!state.health.length" @click="copyHealthSummary"><Copy :size="15" />{{ healthSummaryCopied ? t("已复制") : t("复制摘要") }}</Button>
+      </div>
+      <div class="rounded-md p-4" :class="statusToneClasses(healthSummary.level)" role="status">
+        <p class="font-medium">{{ healthSummary.label }}</p>
+        <p v-if="state.health.length" class="mt-2 text-sm leading-6">{{ healthSummary.detail }}</p>
+      </div>
+      <div class="diagnostics-counts">
+        <div v-for="status in ['fail', 'warn', 'info', 'ok']" :key="status">
+          <p class="text-xs text-[var(--mn-ink-muted)]">{{ t(healthLabels[status]) }}</p>
+          <p class="mt-2 text-2xl font-medium tabular-nums">{{ healthSummary.counts[status] }}</p>
+        </div>
+      </div>
+    </Card>
+
+    <section class="diagnostics-export" :aria-label="t('一键导出诊断包')">
+      <div class="diagnostics-export-heading">
+        <Button :disabled="!state.hasKsu" :loading="isRunning('export-diagnostics')" @click="exportDiagnostics"><Download :size="17" />{{ t("一键导出诊断包") }}</Button>
+      </div>
     <p class="text-sm leading-6 text-[var(--mn-ink-muted)]">{{ t("一个文件包含联网探测、路由、DNS、内核、订阅、恢复记录和日志；订阅凭据会自动遮蔽。") }}</p>
     <div v-if="exportedBundle" class="grid gap-2 rounded-md p-4" :class="statusToneClasses('ok')" role="status" data-testid="diagnostics-export-result">
       <p class="font-medium">{{ t("诊断包已保存到下载目录") }}</p>
@@ -247,24 +267,9 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
     </div>
     <p v-if="exportError" class="rounded-md p-4 text-sm" :class="statusToneClasses('danger')" role="alert">{{ t("诊断包导出失败") }} · {{ exportError }}</p>
 
-    <Card class="grid gap-5">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <h3 class="inline-flex items-center gap-2 text-base font-medium"><ShieldCheck :size="17" />{{ t("检查结果") }}</h3>
-        <Button size="sm" variant="outline" :disabled="!state.health.length" @click="copyHealthSummary"><Copy :size="15" />{{ healthSummaryCopied ? t("已复制") : t("复制摘要") }}</Button>
-      </div>
-      <div class="rounded-md p-4" :class="statusToneClasses(healthSummary.level)" role="status">
-        <p class="font-medium">{{ healthSummary.label }}</p>
-        <p v-if="state.health.length" class="mt-2 text-sm leading-6">{{ healthSummary.detail }}</p>
-      </div>
-      <div class="grid grid-cols-4 gap-3">
-        <div v-for="status in ['fail', 'warn', 'info', 'ok']" :key="status">
-          <p class="text-xs text-[var(--mn-ink-muted)]">{{ t(healthLabels[status]) }}</p>
-          <p class="mt-2 text-2xl font-medium tabular-nums">{{ healthSummary.counts[status] }}</p>
-        </div>
-      </div>
-    </Card>
+    </section>
 
-    <div v-if="state.health.length" class="grid">
+    <div v-if="state.health.length" class="diagnostics-results">
       <details v-for="item in state.health" :key="item.key" class="mn-disclosure" :open="item.status === 'fail' || item.status === 'warn'">
         <summary>
           <span class="min-w-0 break-words">{{ item.key }}</span>
@@ -279,6 +284,7 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
       <pre class="mt-3 max-h-[58vh] overflow-auto rounded-md bg-[var(--mn-carrier-deep)] p-3 text-xs leading-6 text-[var(--mn-ink-soft)] whitespace-pre-wrap">{{ state.pingtest }}</pre>
     </Card>
 
+    <section class="diagnostics-details" :aria-label="t('协助排查')">
     <details class="mn-disclosure">
       <summary>{{ t("协助排查") }}</summary>
     <Card>
@@ -385,6 +391,32 @@ const healthLabels: Record<string, string> = { fail: "失败", warn: "注意", i
     <details class="mn-disclosure"><summary>{{ t("当前连接") }}</summary><ConnectionsPanel /></details>
     <details class="mn-disclosure"><summary>{{ t("节点与代理组") }}</summary><ProxyGroupsPanel /></details>
     <details class="mn-disclosure"><summary>{{ t("节点测速") }}</summary><NodeDelayPanel /></details>
+    </section>
 
   </div>
 </template>
+
+
+<style scoped>
+.diagnostics-page { min-width: 0; gap: 32px; }
+.diagnostics-summary { border: 0; border-radius: var(--mn-radius-lg); padding: 20px; background: var(--mn-surface-raised); }
+.diagnostics-summary > [role="status"] { padding: 0; border: 0; background: transparent; }
+.diagnostics-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding-top: 4px; }
+.diagnostics-counts > div + div { padding-left: 12px; border-left: 1px solid var(--mn-border); }
+.diagnostics-counts p:last-child { font-size: 28px; font-weight: 450; }
+.diagnostics-export { display: grid; min-width: 0; gap: 12px; padding-block: 4px; }
+.diagnostics-export > p { font-size: 13px; line-height: 1.8; }
+.diagnostics-export-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.diagnostics-export-heading > button { width: 100%; }
+.diagnostics-results, .diagnostics-details { display: grid; min-width: 0; }
+.diagnostics-results :deep(.mn-disclosure > summary) { min-height: 64px; font-weight: 450; }
+.diagnostics-details :deep(.magic-card) { border: 0; background: transparent; }
+.diagnostics-page :deep(pre) { border: 0; overflow-wrap: anywhere; }
+@media (max-width: 380px) {
+  .diagnostics-summary { padding: 16px; }
+  .diagnostics-counts { gap: 8px; }
+  .diagnostics-counts > div + div { padding-left: 8px; }
+  .diagnostics-page :deep(.mn-page-actions) { width: 100%; }
+  .diagnostics-page :deep(.mn-page-actions > button) { flex: 1 1 auto; }
+}
+</style>

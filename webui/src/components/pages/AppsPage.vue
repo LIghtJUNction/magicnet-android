@@ -452,7 +452,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="grid gap-4">
+  <div class="apps-page grid gap-4">
     <PageHeader :overline="t('应用策略')" :title="t('应用名单')">
       <div class="flex flex-wrap gap-2">
         <Button class="px-2.5 sm:px-4" variant="outline" :loading="isRunning('refresh-apps')" @click="withAction('refresh-apps', () => refreshApps())"><RefreshCw :size="17" />{{ t('读取名单') }}</Button>
@@ -527,7 +527,7 @@ onMounted(() => {
       </Transition>
     </Teleport>
 
-    <Card class="grid gap-3">
+    <Card class="apps-policy-surface grid gap-3">
       <div class="flex flex-wrap items-center gap-3">
         <div class="mn-segmented">
           <button class="min-h-12 whitespace-nowrap rounded px-3 text-sm font-medium text-[var(--mn-ink-muted)] transition-colors disabled:cursor-progress disabled:opacity-60" :disabled="isRunning('mode-blacklist') || state.appPolicy.mode === 'blacklist'" :class="{ 'bg-[var(--mn-cactus)] text-[var(--mn-on-accent)]': state.appPolicy.mode === 'blacklist' }" @click="requestSetMode('blacklist')">{{ t('全局接管') }}</button>
@@ -545,14 +545,71 @@ onMounted(() => {
       </p>
     </Card>
 
-    <div class="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
-      <Card class="grid gap-3">
-        <div class="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+    <section class="apps-policy-lists grid gap-3 md:grid-cols-3" :aria-label="t('应用名单')">
+      <details class="apps-policy-list" :open="policySummary.conflicts.length > 0">
+        <summary>
+        <h3 class="mb-2 text-base font-medium">{{ t('代理名单') }}</h3>
+          <span class="apps-policy-count">{{ state.appPolicy.proxy.length }}</span>
+        </summary>
+        <Card class="apps-policy-list-body">
+        <div class="flex max-h-80 flex-wrap gap-2 overflow-auto">
+          <RemovableTag
+            v-for="pkg in state.appPolicy.proxy"
+            :key="pkg"
+            :disabled="isRunning(`remove-proxy-${pkg}`)"
+            :title="t('移除')"
+            @remove="requestRemoveApp(pkg, 'proxy')"
+          >{{ pkg }}</RemovableTag>
+          <em v-if="!state.appPolicy.proxy.length" class="mn-empty">{{ t('暂无应用') }}</em>
+        </div>
+        </Card>
+      </details>
+      <details class="apps-policy-list" :open="policySummary.conflicts.length > 0">
+        <summary>
+        <h3 class="mb-2 text-base font-medium">{{ t('MagicNet 内直连') }}</h3>
+          <span class="apps-policy-count">{{ state.appPolicy.direct.length }}</span>
+        </summary>
+        <Card class="apps-policy-list-body">
+        <div class="flex max-h-80 flex-wrap gap-2 overflow-auto">
+          <RemovableTag
+            v-for="pkg in state.appPolicy.direct"
+            :key="pkg"
+            :disabled="isRunning(`remove-direct-${pkg}`)"
+            :title="t('移除')"
+            @remove="requestRemoveApp(pkg, 'direct')"
+          >{{ pkg }}</RemovableTag>
+          <em v-if="!state.appPolicy.direct.length" class="mn-empty">{{ t('暂无应用') }}</em>
+        </div>
+        </Card>
+      </details>
+      <details class="apps-policy-list" :open="policySummary.conflicts.length > 0">
+        <summary>
+        <h3 class="mb-2 text-base font-medium">{{ t('绕过名单') }}</h3>
+          <span class="apps-policy-count">{{ state.appPolicy.bypass.length }}</span>
+        </summary>
+        <Card class="apps-policy-list-body">
+        <div class="flex max-h-80 flex-wrap gap-2 overflow-auto">
+          <RemovableTag
+            v-for="pkg in state.appPolicy.bypass"
+            :key="pkg"
+            :disabled="isRunning(`remove-bypass-${pkg}`)"
+            :title="t('移入回收站')"
+            @remove="requestRemoveApp(pkg, 'bypass')"
+          >{{ pkg }}</RemovableTag>
+          <em v-if="!state.appPolicy.bypass.length" class="mn-empty">{{ t('暂无应用') }}</em>
+        </div>
+        </Card>
+      </details>
+    </section>
+
+    <section class="apps-catalog-workspace">
+      <Card class="apps-catalog-surface grid gap-3">
+        <div class="apps-search-controls grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <SearchField v-model="state.packageQuery" :placeholder="t('搜索已安装应用包名')" @keyup.enter="searchPackages" />
           <Button variant="secondary" :loading="isRunning('search-packages')" @click="searchPackages">{{ t('重新读取') }}</Button>
         </div>
-        <p class="text-xs text-[var(--mn-ink-muted)]" role="status">{{ t('已显示 {visible} / {total} 个应用', { visible: filteredPackages.length, total: matchingPackages.length }) }}</p>
-        <div v-if="selectedPackages.length" class="flex min-w-0 flex-wrap items-center gap-2">
+        <p class="apps-catalog-count text-xs text-[var(--mn-ink-muted)]" role="status">{{ t('已显示 {visible} / {total} 个应用', { visible: filteredPackages.length, total: matchingPackages.length }) }}</p>
+        <div class="apps-batch-actions flex min-w-0 flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" :disabled="!visiblePackageNames.length" @click="selectVisiblePackages">
             <CheckCheck :size="15" />{{ allVisibleSelected ? t('取消可见项') : t('选择可见项') }}
           </Button>
@@ -562,9 +619,9 @@ onMounted(() => {
           <Button size="sm" variant="secondary" :disabled="!selectedPackages.length" :loading="isRunning('batch-bypass')" @click="requestBatchAdd('bypass')">{{ t('绕过') }}</Button>
           <Button v-if="selectedPackages.length" size="icon" variant="outline" :aria-label="t('清除已选应用')" :title="t('清除已选应用')" @click="selectedPackages = []"><X :size="15" /></Button>
         </div>
-        <div class="grid gap-2 sm:max-h-[32rem] sm:overflow-auto">
-          <div v-for="app in filteredPackages" :key="app.packageName" class="grid grid-cols-3 gap-2 border-b border-[var(--mn-border)] py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center">
-            <label class="col-span-3 flex min-h-12 min-w-0 cursor-pointer items-center gap-2 sm:col-span-1">
+        <div class="apps-catalog-list grid gap-2 sm:max-h-[32rem] sm:overflow-auto">
+          <div v-for="app in filteredPackages" :key="app.packageName" class="apps-catalog-row grid grid-cols-3 gap-2 border-b border-[var(--mn-border)] py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center">
+            <label class="apps-catalog-label col-span-3 flex min-h-12 min-w-0 cursor-pointer items-center gap-2 sm:col-span-1">
               <input
                 type="checkbox"
                 class="size-4 shrink-0 accent-[var(--mn-cactus)]"
@@ -574,9 +631,9 @@ onMounted(() => {
               >
               <span class="min-w-0 break-all text-sm text-[var(--mn-ink-soft)]">{{ app.appLabel }}<small v-if="app.appLabel !== app.packageName" class="block text-[var(--mn-ink-muted)]">{{ app.packageName }}</small></span>
             </label>
-            <Button size="sm" variant="outline" :loading="isRunning(`pick-proxy-${app.packageName}`)" @click="requestAddPackage(app.packageName, 'proxy', `pick-proxy-${app.packageName}`)">{{ t('代理') }}</Button>
-            <Button size="sm" variant="outline" :loading="isRunning(`pick-direct-${app.packageName}`)" @click="requestAddPackage(app.packageName, 'direct', `pick-direct-${app.packageName}`)">{{ t('直连') }}</Button>
-            <Button size="sm" variant="outline" :loading="isRunning(`pick-bypass-${app.packageName}`)" @click="requestAddPackage(app.packageName, 'bypass', `pick-bypass-${app.packageName}`)">{{ t('绕过') }}</Button>
+            <Button class="apps-classify-action" size="sm" variant="outline" :loading="isRunning(`pick-proxy-${app.packageName}`)" @click="requestAddPackage(app.packageName, 'proxy', `pick-proxy-${app.packageName}`)">{{ t('代理') }}</Button>
+            <Button class="apps-classify-action" size="sm" variant="outline" :loading="isRunning(`pick-direct-${app.packageName}`)" @click="requestAddPackage(app.packageName, 'direct', `pick-direct-${app.packageName}`)">{{ t('直连') }}</Button>
+            <Button class="apps-classify-action" size="sm" variant="outline" :loading="isRunning(`pick-bypass-${app.packageName}`)" @click="requestAddPackage(app.packageName, 'bypass', `pick-bypass-${app.packageName}`)">{{ t('绕过') }}</Button>
           </div>
           <em v-if="!filteredPackages.length" class="mn-empty">{{ state.packageQuery.trim() ? t('没有匹配的应用。') : t('暂无应用，点“刷新应用”读取。') }}</em>
         </div>
@@ -584,6 +641,9 @@ onMounted(() => {
           {{ t('显示更多应用（还有 {count} 个）', { count: matchingPackages.length - filteredPackages.length }) }}
         </Button>
       </Card>
+
+
+    </section>
 
       <details class="mn-disclosure">
         <summary>{{ t('推荐绕过') }}</summary>
@@ -601,9 +661,8 @@ onMounted(() => {
         </div>
       </Card>
       </details>
-    </div>
 
-    <AppPolicyRouteGuide
+    <AppPolicyRouteGuide class="apps-route-guide"
       :mode="state.appPolicy.mode"
       :reapply-loading="isRunning('reapply-app-policy')"
       @reapply="requestReapplyAppPolicy"
@@ -635,49 +694,11 @@ onMounted(() => {
       </Card>
     </details>
 
-    <div class="grid gap-3 md:grid-cols-3">
-      <Card>
-        <h3 class="mb-2 text-base font-medium">{{ t('代理名单') }}</h3>
-        <div class="flex max-h-80 flex-wrap gap-2 overflow-auto">
-          <RemovableTag
-            v-for="pkg in state.appPolicy.proxy"
-            :key="pkg"
-            :disabled="isRunning(`remove-proxy-${pkg}`)"
-            :title="t('移除')"
-            @remove="requestRemoveApp(pkg, 'proxy')"
-          >{{ pkg }}</RemovableTag>
-          <em v-if="!state.appPolicy.proxy.length" class="mn-empty">{{ t('暂无应用') }}</em>
-        </div>
-      </Card>
-      <Card>
-        <h3 class="mb-2 text-base font-medium">{{ t('MagicNet 内直连') }}</h3>
-        <div class="flex max-h-80 flex-wrap gap-2 overflow-auto">
-          <RemovableTag
-            v-for="pkg in state.appPolicy.direct"
-            :key="pkg"
-            :disabled="isRunning(`remove-direct-${pkg}`)"
-            :title="t('移除')"
-            @remove="requestRemoveApp(pkg, 'direct')"
-          >{{ pkg }}</RemovableTag>
-          <em v-if="!state.appPolicy.direct.length" class="mn-empty">{{ t('暂无应用') }}</em>
-        </div>
-      </Card>
-      <Card>
-        <h3 class="mb-2 text-base font-medium">{{ t('绕过名单') }}</h3>
-        <div class="flex max-h-80 flex-wrap gap-2 overflow-auto">
-          <RemovableTag
-            v-for="pkg in state.appPolicy.bypass"
-            :key="pkg"
-            :disabled="isRunning(`remove-bypass-${pkg}`)"
-            :title="t('移入回收站')"
-            @remove="requestRemoveApp(pkg, 'bypass')"
-          >{{ pkg }}</RemovableTag>
-          <em v-if="!state.appPolicy.bypass.length" class="mn-empty">{{ t('暂无应用') }}</em>
-        </div>
-      </Card>
-    </div>
 
-    <Card class="grid gap-3 border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)]/80 bg-[var(--mn-ivory)]/65">
+
+    <details class="mn-disclosure apps-recycle" :open="recycledBypass.length > 0">
+      <summary>{{ t('Bypass 回收站') }}<span>{{ recycledBypass.length }}</span></summary>
+    <Card class="apps-recycle-body grid gap-3">
       <div class="flex items-center justify-between gap-3">
         <div>
           <h3 class="text-base font-semibold">{{ t('Bypass 回收站') }}</h3>
@@ -701,5 +722,55 @@ onMounted(() => {
         <em v-if="!recycledBypass.length" class="mn-empty">{{ t('回收站为空') }}</em>
       </div>
     </Card>
+    </details>
   </div>
 </template>
+
+<style scoped>
+.apps-policy-list { min-width: 0; }
+.apps-policy-list > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 12px 0; cursor: pointer; list-style: none; }
+.apps-policy-list > summary::-webkit-details-marker { display: none; }
+.apps-policy-list > summary:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 4px; border-radius: 4px; }
+.apps-policy-list > summary h3 { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.apps-policy-count { flex: 0 0 auto; color: var(--mn-ink-muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) {
+  .apps-page { min-width: 0; gap: 24px; }
+  .apps-page > :deep(.mn-page-header) { gap: 12px; }
+  .apps-page > :deep(.mn-page-header .mn-page-actions) { width: 100%; }
+  .apps-page > :deep(.mn-page-header .mn-page-actions > div) { width: 100%; flex-wrap: wrap; gap: 6px; }
+  .apps-page > :deep(.mn-page-header button) { min-width: 0; min-height: 44px; padding-inline: 10px; white-space: normal; overflow-wrap: anywhere; }
+  .apps-policy-surface { gap: 10px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .apps-policy-surface > div:first-child { display: grid; gap: 10px; }
+  .apps-policy-surface .mn-segmented { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; padding: 4px; border: 0; border-radius: 12px; background: var(--mn-surface-sunken); }
+  .apps-policy-surface .mn-segmented button { min-width: 0; min-height: 48px; padding: 10px 8px; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+  .apps-policy-surface > div:first-child > span { font-size: .8125rem; line-height: 1.6; }
+  .apps-policy-surface > p { margin: 0; }
+  .apps-policy-lists { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; padding-block: 4px; border-block: 1px solid var(--mn-border); }
+  .apps-policy-list { padding-inline: 10px; }
+  .apps-policy-list + .apps-policy-list { border-inline-start: 1px solid var(--mn-border); }
+  .apps-policy-list > summary { min-height: 70px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px; padding-block: 10px; }
+  .apps-policy-list > summary h3 { font-size: .75rem; line-height: 1.6; font-weight: 500; color: var(--mn-ink-muted); }
+  .apps-policy-count { font-size: 1.125rem; line-height: 1.2; color: var(--mn-ink); }
+  .apps-policy-list[open] { grid-column: 1 / -1; padding-inline: 0; border-inline: 0; }
+  .apps-policy-list[open] > summary { min-height: 52px; flex-direction: row; align-items: center; justify-content: space-between; }
+  .apps-policy-list-body { padding: 0 0 16px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .apps-catalog-workspace { min-width: 0; }
+  .apps-catalog-surface { gap: 14px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .apps-search-controls { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+  .apps-search-controls > :deep(button) { min-width: 0; max-width: 108px; min-height: 48px; padding-inline: 10px; white-space: normal; overflow-wrap: anywhere; }
+  .apps-catalog-count { margin: 0; font-variant-numeric: tabular-nums; }
+  .apps-batch-actions { padding: 12px; border-radius: 12px; background: var(--mn-surface-raised); }
+  .apps-batch-actions > :deep(button) { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+  .apps-catalog-list { gap: 0; }
+  .apps-catalog-row { gap: 6px; min-width: 0; padding-block: 14px; }
+  .apps-catalog-label { gap: 12px; align-items: center; min-height: 44px; }
+  .apps-catalog-label > span { font-weight: 500; line-height: 1.5; word-break: normal; overflow-wrap: anywhere; }
+  .apps-catalog-label small { margin-top: 4px; font-size: .75rem; font-weight: 400; line-height: 1.5; overflow-wrap: anywhere; }
+  .apps-classify-action { min-width: 0; min-height: 44px; padding-inline: 8px; border-color: transparent; border-radius: 8px; background: var(--mn-surface-sunken); white-space: normal; overflow-wrap: anywhere; }
+  .apps-route-guide { margin-top: 4px; }
+  .apps-page > .mn-disclosure { border-inline: 0; border-radius: 0; background: transparent; }
+  .apps-page > .mn-disclosure > summary { min-height: 56px; padding-inline: 0; }
+  .apps-recycle > summary > span { margin-inline-start: auto; color: var(--mn-ink-muted); font-variant-numeric: tabular-nums; }
+  .apps-recycle-body { padding-inline: 0; border: 0; background: transparent; box-shadow: none; }
+}
+</style>

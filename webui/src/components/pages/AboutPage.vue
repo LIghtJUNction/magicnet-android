@@ -58,20 +58,22 @@ async function copyOverview(): Promise<void> {
 </script>
 
 <template>
-  <div class="mn-path-page grid gap-4 md:gap-5">
+  <div class="mn-path-page">
     <PageHeader :title="t('流量路径')">
       <template #actions>
-        <Button variant="outline" @click="copyOverview">
+        <Button variant="ghost" @click="copyOverview">
           <Copy :size="17" aria-hidden="true" />{{ copied ? t("已复制说明") : t("复制说明") }}
         </Button>
-        <Badge :tone="dataplaneTone" class="gap-2">
-          <StatusDot :tone="statusDotTone" />
-          {{ dataplaneLabel }}
-        </Badge>
       </template>
     </PageHeader>
 
     <Card class="mn-path-board !p-0">
+      <div class="mn-path-board__head">
+        <Badge :tone="dataplaneTone" class="gap-2">
+          <StatusDot :tone="statusDotTone" />
+          {{ dataplaneLabel }}
+        </Badge>
+      </div>
       <ol class="mn-path-flow" :aria-label="t('MagicNet 透明代理数据面路径')">
         <li
           v-for="(node, index) in pathNodes"
@@ -90,28 +92,18 @@ async function copyOverview(): Promise<void> {
           />
         </li>
       </ol>
-    </Card>
-
-    <Card class="grid gap-4 !p-4 md:!p-6">
-      <CardHeading
-        :title="t('可用的透明模式')"
-        :description="t('MagicNet 支持 TUN 和 eBPF；切换失败会恢复原来的配置。')"
-      />
-      <div class="mn-path-facts">
-        <article
-          v-for="fact in facts"
-          :key="fact.code"
-          class="mn-path-fact"
-        >
-          <h3>{{ fact.title }}</h3>
-          <p>{{ fact.detail }}</p>
-        </article>
+      <div class="mn-path-actions">
+        <Button variant="secondary" @click="emit('goto-tab', 'subs')">
+          <Activity :size="17" aria-hidden="true" />{{ t("去订阅") }} </Button>
+        <Button variant="secondary" @click="emit('goto-tab', 'health')">
+          <Stethoscope :size="17" aria-hidden="true" />{{ t("去健康检查") }} </Button>
       </div>
     </Card>
 
-    <Card class="grid gap-4 !p-4 md:!p-6">
+    <details class="mn-path-guide mn-disclosure">
+      <summary>{{ t("确认运行正常") }}</summary>
+      <Card class="mn-path-explanation grid gap-4">
       <CardHeading
-        :title="t('确认运行正常')"
         :description="t('检查服务、透明代理和 DNS。')"
       />
       <ol class="mn-path-steps">
@@ -127,13 +119,28 @@ async function copyOverview(): Promise<void> {
           </div>
         </li>
       </ol>
-      <div class="flex flex-wrap gap-2">
-        <Button variant="secondary" @click="emit('goto-tab', 'subs')">
-          <Activity :size="17" aria-hidden="true" />{{ t("去订阅") }} </Button>
-        <Button variant="secondary" @click="emit('goto-tab', 'health')">
-          <Stethoscope :size="17" aria-hidden="true" />{{ t("去健康检查") }} </Button>
+    </Card>
+    </details>
+
+    <details class="mn-path-modes mn-disclosure">
+      <summary>{{ t("可用的透明模式") }}</summary>
+      <Card class="mn-path-explanation grid gap-4">
+      <CardHeading
+        :description="t('MagicNet 支持 TUN 和 eBPF；切换失败会恢复原来的配置。')"
+      />
+      <div class="mn-path-facts">
+        <article
+          v-for="fact in facts"
+          :key="fact.code"
+          class="mn-path-fact"
+        >
+          <h3>{{ fact.title }}</h3>
+          <p>{{ fact.detail }}</p>
+        </article>
       </div>
     </Card>
+    </details>
+
 
     <details class="mn-disclosure">
       <summary>{{ t('诊断') }}</summary>
@@ -155,3 +162,23 @@ async function copyOverview(): Promise<void> {
     </details>
   </div>
 </template>
+
+<style scoped>
+.mn-path-page { display: grid; min-width: 0; gap: var(--mn-section-gap); }
+.mn-path-board { display: grid; gap: 20px; min-width: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
+.mn-path-board__head { padding: 0; }
+.mn-path-flow { border: 0; }
+.mn-path-flow__node { min-height: 52px; padding: 10px 0; border: 0; gap: 12px; }
+.mn-path-flow__index { width: 32px; height: 32px; border: 0; border-radius: var(--mn-radius-md); background: var(--mn-surface-sunken); color: var(--mn-ink-muted); font-weight: 500; }
+.mn-path-flow__body strong { font-size: 16px; font-weight: 550; line-height: 1.5; }
+.mn-path-flow__arrow { transform: rotate(90deg); }
+.mn-path-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mn-path-actions > button { min-width: 0; min-height: 48px; }
+.mn-path-explanation { padding-inline: 0; border: 0; border-radius: 0; background: transparent; }
+.mn-path-steps { border: 0; }
+.mn-path-step { align-items: start; border: 0; padding: 12px 0; }
+.mn-path-step__index { border: 0; background: var(--mn-surface-sunken); color: var(--mn-ink-muted); }
+.mn-path-step__body p { margin: 6px 0 0; color: var(--mn-ink-muted); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.mn-path-facts, .mn-path-checks { gap: 16px; }
+.mn-path-fact, .mn-path-check { padding: 8px 0; }
+</style>

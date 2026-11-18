@@ -1,4 +1,5 @@
 export default {
+  "网络": ["Network", "Сеть"],
   "Play 商店联网修复": ["Play Store network recovery", "Восстановление сети Play Маркета"],
   "解除联网限制": ["Remove restriction", "Снять ограничение"],
   "重新解除限制": ["Remove reapplied restriction", "Повторно снять ограничение"],

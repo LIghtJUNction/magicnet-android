@@ -29,6 +29,7 @@ test("the brand stays readable beside touch-sized toolbar controls", async ({ pa
 test("opening another page starts at its heading after a long page", async ({ page }) => {
   await navigateToPage(page, "about");
   await expect(page.locator(".mn-path-page")).toBeVisible();
+  await page.locator(".mn-path-guide > summary").click();
   await page.evaluate(() => window.scrollTo(0, 600));
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
   await navigateToPage(page, "apps");

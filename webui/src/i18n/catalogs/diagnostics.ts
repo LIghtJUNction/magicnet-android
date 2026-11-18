@@ -1,4 +1,9 @@
 export default {
+  "过滤当前输出": ["Filter current output", "Фильтр текущего вывода"],
+  "日志来源": ["Log source", "Источник журнала"],
+  "日志行数": ["Log lines", "Количество строк журнала"],
+  "过滤日志": ["Filter logs", "Фильтр журнала"],
+  "日志级别": ["Log level", "Уровень журнала"],
   "选择节点后确认切换。当前选择会优先展示。": ["Select a node, then confirm the switch. The current selection appears first.", "Выберите узел и подтвердите переключение. Текущий выбор показан первым."],
   "当前选择": ["Current selection", "Текущий выбор"],
   "已选择": ["Selected", "Выбран"],

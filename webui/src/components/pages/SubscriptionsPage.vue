@@ -78,6 +78,7 @@ const summaryCopied = ref(false);
 const subscriptionFileInput = ref<HTMLInputElement | null>(null);
 const userAgentCardRef = ref<InstanceType<typeof SubscriptionUserAgentCard> | null>(null);
 const subscriptionReady = computed(() => state.subscriptionReadStatus === "ready");
+const isLocalSource = computed(() => state.subscriptions.sourceMode === "local");
 const canWrite = computed(() => state.hasKsu && subscriptionReady.value
   && !state.busy && state.queueDepth === 0 && !backgroundTaskBlocksLaunch(state.backgroundTask));
 const readNotice = computed(() => !state.hasKsu
@@ -386,10 +387,7 @@ async function copySummary(): Promise<void> {
         <Button variant="ghost" :disabled="!state.hasKsu" :loading="state.subscriptionReadStatus === 'loading' || isRunning('refresh-subs')" :aria-label="t('重新读取订阅状态')" @click="withAction('refresh-subs', () => refreshSubs())">
           <RefreshCw :size="16" />{{ t("重新读取") }}
         </Button>
-        <Button v-if="configured" ref="manageSourcesButton" variant="outline" :aria-expanded="editorOpen" aria-controls="subscription-editor" @click="openEditor">
-          <Plus :size="16" />{{ t("管理来源") }} </Button>
-        <Button v-if="configured" :loading="lifecycleRunning || isRunning('update-all')" :disabled="!canWrite || sourceWriteRunning" @click="updateSubscriptions">
-          <RefreshCw :size="16" />{{ t("更新订阅") }} </Button>
+
       </template>
     </PageHeader>
 
@@ -398,18 +396,23 @@ async function copySummary(): Promise<void> {
       <p>{{ readNotice }}</p>
     </section>
 
+    <section v-if="configured || dirty" class="subscription-overview">
     <div v-if="configured || dirty" class="subscription-summary">
       <span v-if="configured">{{ t("{value} 个来源", { value: sourceCount }) }}<span v-if="state.subscriptions.lastImportedCount > 0"> {{ t("· {value} 个节点", { value: state.subscriptions.lastImportedCount }) }}</span><span v-if="!subscriptionReady"> · {{ t("上次读取") }}</span></span>
       <span v-if="dirty" class="unsaved-note">{{ t("有未保存的更改") }}</span>
     </div>
+      <div v-if="configured" class="subscription-primary-actions">
+        <Button class="subscription-update-action" :loading="lifecycleRunning || isRunning('update-all')" :disabled="!canWrite || sourceWriteRunning" @click="updateSubscriptions">
+          <RefreshCw :size="16" />{{ t("更新订阅") }} </Button>
+        <Button ref="manageSourcesButton" variant="outline" :aria-expanded="editorOpen" aria-controls="subscription-editor" @click="openEditor">
+          <Plus :size="16" />{{ t("管理来源") }} </Button>
+      </div>
+    </section>
 
     <p v-if="lifecycleMessage" class="subscription-feedback" role="status" :data-error="!lifecycleRunning">
       {{ lifecycleMessage }}
     </p>
     <p v-if="actionMessage" class="subscription-feedback" role="status">{{ actionMessage }}</p>
-
-    <SubscriptionUsageList v-if="configured" :rows="usageRows" :local="state.subscriptions.sourceMode === 'local'" />
-    <p v-if="configured && state.subscriptions.sourceMode !== 'local'" class="usage-footnote">{{ t("用量与到期时间由服务商提供，更新订阅时同步。") }}</p>
 
     <section v-if="editorOpen || !configured" id="subscription-editor" ref="editorPanel" class="source-editor" :aria-label="t('编辑订阅来源')">
       <div class="editor-heading">
@@ -436,13 +439,13 @@ async function copySummary(): Promise<void> {
       </div>
       <div class="editor-actions">
         <input ref="subscriptionFileInput" class="hidden" type="file" accept=".yaml,.yml,.json,.txt,.list,.conf,application/json,application/yaml,text/yaml,text/plain" @change="importLocalSubscriptions">
-        <div class="source-import-actions">
-          <Button variant="outline" :loading="isRunning('paste-subscriptions')" @click="pasteSubscriptions"><ClipboardPaste :size="16" />{{ t("粘贴链接") }}</Button>
-          <Button variant="outline" :loading="isRunning('apply-local-subscription')" :disabled="!canWrite || lifecycleRunning || state.busy || sourceWriteRunning" @click="chooseLocalSubscriptions"><FileUp :size="16" />{{ t("导入文件") }}</Button>
-        </div>
         <div class="source-save-actions">
           <Button v-if="configured" variant="ghost" :disabled="lifecycleRunning" @click="cancelEditing">{{ t("取消") }}</Button>
           <Button :disabled="!canWrite || !canApply || lifecycleRunning || state.busy || sourceWriteRunning" :loading="isRunning('apply-subscriptions')" @click="applySubscriptions"><component :is="subscriptionReady && configured && !canonicalDraft ? Trash2 : Save" :size="16" />{{ applyLabel }}</Button>
+        </div>
+        <div class="source-import-actions">
+          <Button variant="outline" :loading="isRunning('paste-subscriptions')" @click="pasteSubscriptions"><ClipboardPaste :size="16" />{{ t("粘贴链接") }}</Button>
+          <Button variant="outline" :loading="isRunning('apply-local-subscription')" :disabled="!canWrite || lifecycleRunning || state.busy || sourceWriteRunning" @click="chooseLocalSubscriptions"><FileUp :size="16" />{{ t("导入文件") }}</Button>
         </div>
       </div>
       <details v-if="subscriptionPreview.length" class="source-preview">
@@ -464,6 +467,11 @@ async function copySummary(): Promise<void> {
       detail="仅移除来源链接和本地订阅文件，当前核心配置不会删除或重启。"
       confirm-label="确认移除" confirm-variant="destructive" :loading="isRunning('clear-subscriptions')"
       @cancel="confirmClear = false" @confirm="clearSubscriptions" />
+
+    <section v-show="configured" class="subscription-usage-workspace">
+    <SubscriptionUsageList v-if="configured" :rows="usageRows" :local="isLocalSource" />
+    <p v-if="configured && !isLocalSource" class="usage-footnote">{{ t("用量与到期时间由服务商提供，更新订阅时同步。") }}</p>
+    </section>
 
     <div class="subscription-settings">
       <details class="settings-section">
@@ -531,5 +539,40 @@ details[open] > summary > svg:last-child { transform: rotate(180deg); }
   .source-import-actions, .source-save-actions { width: 100%; }
   .source-import-actions > *, .source-save-actions > :last-child { flex: 1; }
   .subscription-summary { flex-wrap: wrap; gap: 6px; }
+}
+
+.subscription-overview { margin: 20px 0 28px; }
+.subscription-primary-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.subscription-usage-workspace { min-width: 0; }
+@media (max-width: 640px) {
+  .subscriptions-page { min-width: 0; }
+  .subscription-overview { display: grid; gap: 18px; margin: 20px 0 28px; }
+  .subscription-summary { align-items: baseline; flex-wrap: wrap; gap: 8px 14px; margin: 0; }
+  .subscription-summary > span:first-child { min-width: 0; color: var(--mn-ink); font-size: 1.125rem; line-height: 1.5; font-weight: 550; overflow-wrap: anywhere; }
+  .subscription-summary > :last-child { margin-left: 0; }
+  .subscription-summary .unsaved-note { font-size: .8125rem; line-height: 1.5; font-weight: 500; }
+  .subscription-primary-actions { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 10px; }
+  .subscription-primary-actions > :deep(button) { min-width: 0; min-height: 52px; padding-inline: 14px; white-space: normal; overflow-wrap: anywhere; }
+  .subscription-read-notice, .subscription-feedback { margin: 16px 0; padding: 16px; border-radius: 12px; }
+  .source-editor { margin: 24px 0 32px; padding: 22px 0 0; border-top: 1px solid var(--mn-border); border-radius: 0; background: transparent; }
+  .editor-heading h3 { font-size: 1.0625rem; line-height: 1.5; }
+  .editor-heading p { max-width: 36ch; font-size: .8125rem; line-height: 1.7; }
+  .source-textarea { margin-top: 16px; min-height: 132px; border-radius: 12px; }
+  .editor-validation { margin-bottom: 16px; line-height: 1.6; }
+  .editor-actions { display: grid; gap: 12px; }
+  .source-save-actions { order: 0; display: flex; gap: 8px; width: 100%; }
+  .source-save-actions > :last-child { flex: 1; min-height: 52px; }
+  .source-import-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 8px; }
+  .source-import-actions > :deep(button) { min-height: 44px; min-width: 0; padding-inline: 10px; white-space: normal; overflow-wrap: anywhere; }
+  .source-save-actions > :deep(button) { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .source-preview { margin-top: 20px; }
+  .source-preview summary { min-height: 52px; }
+  .subscription-usage-workspace { padding-top: 4px; }
+  .usage-footnote { margin-bottom: 24px; font-size: .75rem; }
+  .subscription-settings { margin-top: 28px; }
+  .settings-section > summary { min-height: 64px; gap: 8px; }
+  .settings-section > summary > span:first-child { gap: 10px; overflow-wrap: anywhere; }
+  .settings-section > summary > :deep(.update-outcome) { min-width: 0; max-width: 48%; font-size: .75rem; white-space: normal; overflow-wrap: anywhere; }
+  .subscription-settings-content { gap: 24px; }
 }
 </style>

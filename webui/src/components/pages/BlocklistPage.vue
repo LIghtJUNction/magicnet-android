@@ -328,13 +328,18 @@ async function confirmBlockAction(): Promise<void> {
 </script>
 
 <template>
-  <div class="grid gap-4">
+  <div class="blocklist-page grid gap-4">
     <PageHeader :overline="t('规则')" :title="t('拦截规则')">
       <div class="flex flex-wrap items-center gap-2">
         <Button variant="outline" :loading="isRunning('refresh-block')" @click="withAction('refresh-block', () => refreshBlock())"><RefreshCw :size="17" />{{ t('读取') }}</Button>
         <Button :loading="isRunning('update-block')" @click="requestUpdateCommunityBlocklist"><DownloadCloud :size="17" />{{ t('更新社区库') }}</Button>
+        <details class="config-action-menu">
+          <summary>{{ t('更多') }}</summary>
+          <div>
         <Button variant="outline" :loading="isRunning('copy-blocklist-snapshot')" @click="withAction('copy-blocklist-snapshot', copyBlocklistSnapshot)"><Copy :size="17" />{{ snapshotCopied ? t('已复制快照') : t('复制快照') }}</Button>
         <Button variant="outline" @click="openExternal(issueUrl(), t('黑名单变更 Issue'))"><Github :size="17" />{{ t('创建 Issue') }}</Button>
+          </div>
+        </details>
       </div>
     </PageHeader>
 
@@ -350,8 +355,8 @@ async function confirmBlockAction(): Promise<void> {
       @confirm="confirmBlockAction"
     />
 
-    <Card class="grid gap-3">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <Card class="block-policy-surface grid gap-3">
+      <div class="block-policy-heading flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 class="text-base font-semibold">{{ t('策略') }}</h3>
           <p class="mt-1 text-sm leading-6 text-[var(--mn-ink-muted)]">{{ blockSummary.summary }}</p>
@@ -368,7 +373,15 @@ async function confirmBlockAction(): Promise<void> {
           {{ blockSummary.status === 'active' ? t('完整启用') : blockSummary.status === 'partial' ? t('部分启用') : blockSummary.status === 'empty' ? t('无有效规则') : t('已关闭') }}
         </span>
       </div>
-      <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+      <div class="block-policy-controls grid gap-2 sm:grid-cols-2">
+        <Button :variant="state.blocklist.enabled ? 'default' : 'outline'" :loading="isRunning('toggle-block')" @click="requestToggleBlocklist">
+          {{ isRunning('toggle-block') ? t('切换中') : state.blocklist.enabled ? t('黑名单已启用') : t('黑名单已关闭') }}
+        </Button>
+        <Button :variant="state.blocklist.community ? 'default' : 'outline'" :loading="isRunning('toggle-community')" @click="requestToggleCommunity">
+          {{ isRunning('toggle-community') ? t('切换中') : state.blocklist.community ? t('社区库已启用') : t('社区库已关闭') }}
+        </Button>
+      </div>
+      <div class="block-policy-metrics grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <InsightChip
           v-for="item in blockSummary.insights"
           :key="item.label"
@@ -377,24 +390,19 @@ async function confirmBlockAction(): Promise<void> {
           :tone="item.tone"
         />
       </div>
-      <div class="grid gap-2 sm:grid-cols-2">
-        <Button :variant="state.blocklist.enabled ? 'default' : 'outline'" :loading="isRunning('toggle-block')" @click="requestToggleBlocklist">
-          {{ isRunning('toggle-block') ? t('切换中') : state.blocklist.enabled ? t('黑名单已启用') : t('黑名单已关闭') }}
-        </Button>
-        <Button :variant="state.blocklist.community ? 'default' : 'outline'" :loading="isRunning('toggle-community')" @click="requestToggleCommunity">
-          {{ isRunning('toggle-community') ? t('切换中') : state.blocklist.community ? t('社区库已启用') : t('社区库已关闭') }}
-        </Button>
-      </div>
-      <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+    </Card>
+
+    <div class="block-search-workspace">
+      <SearchField v-model="blockQuery" :placeholder="t('过滤本地阻断、社区规则和广告放行白名单')" />
+    </div>
+
+    <section class="block-rule-workspaces grid gap-3 md:grid-cols-2">
+      <Card class="block-rule-surface block-manual-workspace">
+        <h3 class="mb-2 inline-flex items-center gap-2 text-base font-semibold"><ListFilter :size="16" />{{ t('阻断') }}</h3>
+      <div class="block-add-form grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
         <Input v-model="state.blocklist.newDomain" placeholder="malware.example.com" spellcheck="false" />
         <Button variant="secondary" :loading="isRunning(`add-domain-${state.blocklist.newDomain.trim()}`)" @click="requestAddDomain"><Plus :size="16" />{{ t('添加') }}</Button>
       </div>
-      <SearchField v-model="blockQuery" :placeholder="t('过滤本地阻断、社区规则和广告放行白名单')" />
-    </Card>
-
-    <div class="grid gap-3 md:grid-cols-2">
-      <Card>
-        <h3 class="mb-2 inline-flex items-center gap-2 text-base font-semibold"><ListFilter :size="16" />{{ t('阻断') }}</h3>
         <div class="flex max-h-80 flex-wrap gap-2 overflow-auto">
           <RemovableTag
             v-for="domain in visibleManualDomains"
@@ -407,27 +415,13 @@ async function confirmBlockAction(): Promise<void> {
         </div>
       </Card>
 
-      <Card>
-        <h3 class="mb-2 text-base font-semibold">{{ t('社区库缓存') }}</h3>
-        <div class="flex max-h-[26rem] flex-wrap gap-2 overflow-auto">
-          <RemovableTag
-            v-for="rule in visibleCommunityEntries.slice(0, 120)"
-            :key="rule"
-            :disabled="isRunning(`allow-${rule}`)"
-            :title="t('排除这条社区规则')"
-            @remove="requestAllowRule(rule)"
-          >{{ rule }}</RemovableTag>
-          <em v-if="!visibleCommunityEntries.length" class="mn-empty">{{ communityEntries.length ? t('没有匹配项') : t('未读取到社区规则') }}</em>
-        </div>
-      </Card>
-
-      <Card>
+      <Card class="block-rule-surface block-allow-workspace">
         <h3 class="mb-1 text-base font-semibold">{{ t('广告放行白名单') }}</h3>
-        <p class="mb-3 text-sm leading-6 text-[var(--mn-ink-muted)]">{{ t('优先于内置、规则集和社区广告规则；ad-allow 默认继承主策略，也可手动选择 Direct 或 Proxy。') }}</p>
-        <div class="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <div class="block-add-form mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
           <Input v-model="allowRuleInput" :placeholder="t('example.com 或 DOMAIN-SUFFIX,example.com')" spellcheck="false" @keyup.enter="requestAddAllowRule" />
           <Button variant="secondary" :loading="isRunning(`allow-${allowRuleInput.trim()}`)" @click="requestAddAllowRule"><Plus :size="16" />{{ t('加入白名单') }}</Button>
         </div>
+        <p class="mb-3 text-sm leading-6 text-[var(--mn-ink-muted)]">{{ t('优先于内置、规则集和社区广告规则；ad-allow 默认继承主策略，也可手动选择 Direct 或 Proxy。') }}</p>
         <div class="flex max-h-[26rem] flex-wrap gap-2 overflow-auto">
           <RemovableTag
             v-for="rule in visibleAllowRules"
@@ -441,6 +435,58 @@ async function confirmBlockAction(): Promise<void> {
           <em v-if="!visibleAllowRules.length" class="mn-empty">{{ state.blocklist.allowRules.length ? t('没有匹配项') : t('暂无白名单规则') }}</em>
         </div>
       </Card>
-    </div>
+    </section>
+
+    <details class="mn-disclosure block-community-workspace" :open="Boolean(blockQuery.trim())">
+      <summary>
+        <span>{{ t('社区库缓存') }}</span>
+        <span class="block-community-count">{{ communityEntries.length }}</span>
+      </summary>
+      <Card class="block-community-surface">
+
+        <div class="flex max-h-[26rem] flex-wrap gap-2 overflow-auto">
+          <RemovableTag
+            v-for="rule in visibleCommunityEntries.slice(0, 120)"
+            :key="rule"
+            :disabled="isRunning(`allow-${rule}`)"
+            :title="t('排除这条社区规则')"
+            @remove="requestAllowRule(rule)"
+          >{{ rule }}</RemovableTag>
+          <em v-if="!visibleCommunityEntries.length" class="mn-empty">{{ communityEntries.length ? t('没有匹配项') : t('未读取到社区规则') }}</em>
+        </div>
+
+      </Card>
+    </details>
   </div>
 </template>
+
+<style scoped>
+@media (max-width: 640px) {
+  .blocklist-page { min-width: 0; gap: 24px; }
+  .blocklist-page > :deep(.mn-page-header .mn-page-actions > div) { width: 100%; gap: 6px; }
+  .blocklist-page > :deep(.mn-page-header button) { min-width: 0; min-height: 44px; padding-inline: 10px; white-space: normal; overflow-wrap: anywhere; }
+  .block-policy-surface { gap: 16px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .block-policy-heading { align-items: flex-start; gap: 10px; }
+  .block-policy-heading > div { flex: 1 1 190px; min-width: 0; }
+  .block-policy-heading h3 { font-size: .75rem; font-weight: 500; color: var(--mn-ink-muted); }
+  .block-policy-heading p { margin-top: 8px; font-size: .9375rem; line-height: 1.6; color: var(--mn-ink); }
+  .block-policy-heading > span { flex: 0 1 auto; max-width: 100%; padding: 4px 8px; border-radius: 6px; line-height: 1.5; overflow-wrap: anywhere; }
+  .block-policy-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .block-policy-controls > :deep(button) { min-width: 0; min-height: 52px; padding: 10px; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+  .block-policy-metrics { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+  .block-policy-metrics :deep(.mn-insight-chip) { min-width: 0; padding: 0; border: 0; background: transparent; line-height: 1.7; white-space: normal; overflow-wrap: anywhere; }
+  .block-search-workspace { padding-top: 4px; }
+  .block-rule-workspaces { min-width: 0; gap: 28px; }
+  .block-rule-surface { min-width: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .block-rule-surface h3 { margin-bottom: 14px; font-size: .9375rem; font-weight: 550; }
+  .block-add-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-bottom: 16px; }
+  .block-add-form > :deep(button) { min-width: 0; max-width: 126px; min-height: 48px; padding-inline: 12px; white-space: normal; overflow-wrap: anywhere; }
+  .block-rule-surface > p { font-size: .75rem; line-height: 1.7; }
+  .block-rule-surface :deep(.mn-tag) { max-width: 100%; overflow-wrap: anywhere; }
+  .block-community-workspace { border-inline: 0; border-radius: 0; background: transparent; }
+  .block-community-workspace > summary { min-width: 0; min-height: 60px; padding-inline: 0; gap: 16px; }
+  .block-community-workspace > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+  .block-community-count { margin-inline-start: auto; color: var(--mn-ink-muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+  .block-community-surface { min-width: 0; padding: 12px 0 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+}
+</style>
