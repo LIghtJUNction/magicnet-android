@@ -148,6 +148,21 @@ impl State {
     }
 
     pub(super) fn json(&self, clock: Option<&Clock>, core: &str, disabled: bool) -> Value {
+        self.json_with_starttime(clock, core, disabled, |pid| {
+            crate::process::live_process_identity(pid)
+                .ok()
+                .flatten()
+                .map(|identity| identity.starttime)
+        })
+    }
+
+    fn json_with_starttime(
+        &self,
+        clock: Option<&Clock>,
+        core: &str,
+        disabled: bool,
+        read_starttime: impl FnOnce(u32) -> Option<u64>,
+    ) -> Value {
         let status = if disabled || core == "stopped" {
             "paused"
         } else if clock.is_none()
@@ -160,6 +175,19 @@ impl State {
             self.checked_at > 0 && now.uptime > self.next_uptime.saturating_add(120)
         }) {
             "stale"
+        } else if matches!(self.status, "present" | "missing")
+            && !self.core.as_ref().is_some_and(|observed| {
+                core.parse::<u32>()
+                    .ok()
+                    .filter(|pid| *pid > 0 && *pid <= libc::pid_t::MAX as u32)
+                    .is_some_and(|pid| {
+                        pid == observed.pid && read_starttime(pid) == Some(observed.starttime)
+                    })
+            })
+        {
+            // The supplied PID summary already establishes ownership. Reuse it
+            // without rescanning, but never project one core's FIB onto another.
+            "unknown"
         } else {
             self.status
         };

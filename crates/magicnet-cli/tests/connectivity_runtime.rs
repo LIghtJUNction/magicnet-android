@@ -1427,3 +1427,61 @@ fn connectivity_failed_inner_compensation_is_not_mislabeled_as_a_completed_rollb
         "persistent intent is still restored independently"
     );
 }
+
+#[test]
+fn connectivity_tun_cached_generation_projection_is_read_only() {
+    let fixture = Fixture::new();
+    fixture.run(&["connectivity", "tick"]);
+    assert_eq!(fixture.calls(), 3);
+    assert_eq!(fixture.status()["tun_auto_route"]["status"], "not_required");
+
+    let pid = fixture.core.id();
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    let starttime: u64 = stat
+        .rsplit_once(") ")
+        .unwrap()
+        .1
+        .split_whitespace()
+        .nth(19)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let saved_path = fixture.root.join(".state/machines/connectivity.state");
+    for cached_status in ["present", "missing"] {
+        for (saved_pid, saved_starttime, expected) in [
+            (pid, starttime, cached_status),
+            (if pid == 1 { 2 } else { 1 }, starttime, "unknown"),
+            (pid, starttime + 1, "unknown"),
+        ] {
+            // Seed earlier observations while keeping the real owned core alive.
+            // Neither status command may rewrite these persisted observations.
+            fixture.edit_state(&[
+                ("tun_status", cached_status),
+                ("tun_core_pid", &saved_pid.to_string()),
+                ("tun_core_starttime", &saved_starttime.to_string()),
+                ("tun_attempts", "2"),
+                ("tun_failures", "2"),
+            ]);
+            let before = fs::read(&saved_path).unwrap();
+            let connectivity = fixture.status();
+            let output = fixture.run(&["--json", "service", "status"]);
+            let service: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(service["schema"], 1);
+            assert_eq!(service["ok"], true);
+            for projected in [
+                &connectivity["tun_auto_route"],
+                &service["data"]["connectivity"]["tun_auto_route"],
+            ] {
+                assert_eq!(projected["status"], expected);
+                assert_eq!(projected["warning"], expected != "present");
+                assert_eq!(projected["recovery_attempts"], 2);
+                assert_eq!(projected["consecutive_failures"], 2);
+                assert!(projected.get("core_pid").is_none());
+                assert!(projected.get("core_starttime").is_none());
+            }
+            assert_eq!(fs::read(&saved_path).unwrap(), before);
+            assert_eq!(fixture.calls(), 3, "status triggered a network probe");
+            assert!(!fixture.root.join("actions").exists());
+        }
+    }
+}
