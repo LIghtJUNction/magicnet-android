@@ -47,21 +47,29 @@ test.beforeEach(async ({ page }) => {
 test("overview opens a configured local Zashboard and keeps common destinations reachable", async ({ page }, info) => {
   await expect(page.getByRole("heading", { name: "网络已连接", exact: true })).toBeVisible();
   const open = page.locator(".mn-dashboard-open");
-  await expect(open).toBeInViewport({ ratio: 1 });
   const globalOpen = page.locator(".mn-dashboard-global");
   const compactToolbar = page.viewportSize().width <= 639;
   await expect(page.getByRole("button", { name: "快速跳转", exact: true })).toBeInViewport();
   if (compactToolbar) await expect(globalOpen).toBeHidden();
-  else await expect(globalOpen).toBeVisible();
+  else {
+    await expect(globalOpen.getByText("Zashboard", { exact: true })).toBeVisible();
+    const bounds = await globalOpen.boundingBox();
+    expect(bounds.width).toBeGreaterThanOrEqual(44);
+    expect(bounds.height).toBeGreaterThanOrEqual(44);
+  }
+  // Portrait uses the overview action; a short landscape uses the named toolbar action.
+  const firstScreenOpen = compactToolbar ? open : globalOpen;
+  await expect(firstScreenOpen).toBeInViewport({ ratio: 1 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath("overview-entry-viewport.png"), fullPage: false });
   await page.screenshot({ path: info.outputPath("overview-online.png"), fullPage: true });
-  await open.click();
+  await firstScreenOpen.click();
   await expect.poll(() => page.evaluate(() => window.__dashboardFixture.commands.filter(value => value.includes("am start")).length)).toBe(1);
   const commands = await page.evaluate(() => window.__dashboardFixture.commands);
   expect(commands.some(value => value.includes("api groups"))).toBe(false);
   expect(commands.find(value => value.includes("am start"))).toContain("#/setup?hostname=127.0.0.1&port=9090");
   if (!compactToolbar) {
-    await globalOpen.click();
+    await open.click();
     await expect.poll(() => page.evaluate(() => window.__dashboardFixture.commands.filter(value => value.includes("am start")).length)).toBe(2);
   }
   for (const [tab, selector] of [["subs", ".page-surface[data-page='subs']"],

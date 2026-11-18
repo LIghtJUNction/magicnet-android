@@ -12,7 +12,7 @@ const pages = [
   ["configure", "subs", "订阅"],
   ["configure", "tailscale", "Tailscale"],
   ["configure", "config", "配置文件"],
-  ["configure", "webui", "面板配置"],
+  ["configure", "webui", "Zashboard"],
   ["diagnose", "health", "诊断"],
   ["diagnose", "terminal", "终端"],
   ["diagnose", "output", "最近输出"],

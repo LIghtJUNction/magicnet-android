@@ -80,9 +80,9 @@ test("User-Agent edits made during a save survive later device reads", async ({ 
 
 test("filter edits made during a save survive the next subscription refresh", async ({ page }) => {
   await mount(page);
-  const add = page.getByRole("button", { name: "添加过滤关键词", exact: true });
-  const input = page.getByLabel("自定义节点过滤关键词", { exact: true });
-  const save = page.getByRole("button", { name: "保存过滤词", exact: true });
+  const add = page.getByRole("button", { name: "添加排除关键词", exact: true });
+  const input = page.getByLabel("自定义节点排除关键词", { exact: true });
+  const save = page.getByRole("button", { name: "保存排除词", exact: true });
   await input.fill("first");
   await add.click();
   await save.click();
@@ -92,7 +92,7 @@ test("filter edits made during a save survive the next subscription refresh", as
   await releaseWrite(page, save);
   expect(await page.evaluate(() => window.__settings.data.configuration.filters)).toEqual(["first"]);
   await refresh(page);
-  await expect(page.getByRole("button", { name: "移除过滤词 later", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "移除排除词 later", exact: true })).toBeVisible();
   await expect(save).toBeEnabled();
   await save.click();
   await expect.poll(() => page.evaluate(() => window.__settings.data.configuration.filters)).toEqual(["first", "later"]);

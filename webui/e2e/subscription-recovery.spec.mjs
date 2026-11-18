@@ -40,9 +40,9 @@ test("a failed first read protects existing subscriptions and keeps every draft 
   await userAgent.fill("draft-agent");
   const interval = page.getByLabel("更新频率", { exact: true });
   await interval.selectOption("48");
-  await page.getByLabel("自定义节点过滤关键词", { exact: true }).fill("draft-filter");
-  await page.getByRole("button", { name: "添加过滤关键词", exact: true }).click();
-  for (const label of ["保存 User-Agent", "保存过滤词", "保存更新设置"]) {
+  await page.getByLabel("自定义节点排除关键词", { exact: true }).fill("draft-filter");
+  await page.getByRole("button", { name: "添加排除关键词", exact: true }).click();
+  for (const label of ["保存 User-Agent", "保存排除词", "保存更新设置"]) {
     await expect(page.getByRole("button", { name: label, exact: true })).toBeDisabled();
   }
   expect(await page.evaluate(() => window.__recovery.writes)).toEqual([]);
@@ -56,8 +56,9 @@ test("a failed first read protects existing subscriptions and keeps every draft 
   await expect(page.getByRole("button", { name: "导入文件", exact: true })).toBeEnabled();
   await expect(userAgent).toHaveValue("draft-agent");
   await expect(interval).toHaveValue("48");
-  await expect(page.getByRole("button", { name: "移除过滤词 draft-filter", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "移除排除词 draft-filter", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存更新设置", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "保存并应用排除词", exact: true })).toBeEnabled();
   for (const save of await page.getByRole("button", { name: "保存并刷新订阅", exact: true }).all()) {
     await expect(save).toBeEnabled();
   }
