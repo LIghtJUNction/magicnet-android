@@ -339,6 +339,24 @@ attachment is reported by `transparent.status`) or `unknown`. Interface names,
 subnets and client identities are never returned. The bundled WebUI reads this
 command instead of parsing human `hotspot status` text.
 
+Hotspot IPv4 FIB coverage uses the same range observer as ordinary TUN health.
+It derives the required destinations from the unique effective `tun-in`:
+`route_address` (or the full family by default) minus static
+`route_exclude_address`. A complete set of fragmented routes is valid; a
+literal default route is not required. Nonzero or unrecognized TOS/DS, source
+and multipath selectors, or overlapping competing routes retain `unknown`.
+Conditions outside the required destinations do not affect coverage. Explicit
+zero TOS/DS values retain normal matching, while linkdown routes contribute no
+coverage. Known missing required routes, RPDB or FORWARD rules remain
+`pending`; full IPv4 exclusion also remains `pending`.
+
+The configuration read is bounded to 4 MiB and rejects nonregular or symlink
+sources. Missing, malformed or ambiguous effective configuration, a non-TUN
+inbound, another interface/table, or unobserved dynamic route ranges retain
+`unknown`. Hotspot ingress still uses `magicnet0` and numeric table 2022.
+These are necessary routing observations, not a client connectivity test.
+Status remains read-only and performs no public network requests.
+
 For TUN, the return-path observation derives the internal peer from the single
 live `magicnet0` IPv4 address, verifies its connected main-table route and owned
 destination rule, and queries the actual UID 0 route without forcing an output

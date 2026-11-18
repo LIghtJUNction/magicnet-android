@@ -121,7 +121,7 @@ The repository's durable runtime files fall into three groups.
 | app mode + `.state/app-policy/*uids.list` | `app-policy.state` | policy mode and resolved UID counts |
 | fswatch/Wi-Fi/kernel/hotspot supervisor PID/owner evidence | `supervisors.state` | supervisor lifecycle |
 | Wi-Fi config + `.state/wifi-policy/last-state.conf` | `wifi.state` | policy and last confirmed effective decision |
-| hotspot offload ownership + TUN route rule ownership | `hotspot.state` | disabled/waiting/active/shared state |
+| hotspot offload ownership + TUN route rule ownership | `hotspot.state` | disabled/waiting/pending/active/shared/unknown state |
 | `.state/dns-leak-guard.ifaces` | `dns.state` | owned DNS guard interface count |
 | MCP config + `.state/magicnet-mcp.pid` | `mcp.state` | enabled/process/secret-presence state |
 | sing-box Tailscale endpoint config + auth-material presence | `tailscale.state` | endpoint cardinality/configuration state |

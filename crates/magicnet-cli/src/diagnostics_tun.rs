@@ -40,6 +40,29 @@ pub(crate) fn auto_route_observation(inbound: &Value) -> AutoRouteObservation {
     })
 }
 
+/// Hotspot ingress uses the core's IPv4 table, including its static exclusions.
+/// This observes necessary FIB coverage, not end-to-end packet delivery.
+pub(crate) fn hotspot_routes_cover(inbound: &Value, text: &str) -> Result<bool, &'static str> {
+    if inbound["type"] != "tun" || inbound["interface_name"] != "magicnet0" {
+        return Err("hotspot-inbound-unobserved");
+    }
+    let expected = RouteExpectation::from_inbound(inbound, cfg!(target_os = "android"))?
+        .ok_or("hotspot-route-policy-unobserved")?;
+    if expected.table != 2022
+        || !expected
+            .families
+            .iter()
+            .any(|(family, _)| *family == Family::V4)
+    {
+        return Err("hotspot-route-policy-unobserved");
+    }
+    let required = routes::expected_ranges(inbound, Family::V4)?;
+    if required.is_empty() {
+        return Ok(false);
+    }
+    routes::routes_cover(text, Family::V4, &required)
+}
+
 fn read_snapshot(
     command: Command,
     timeout: Duration,
