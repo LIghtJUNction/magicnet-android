@@ -172,6 +172,9 @@ const transparentEffectiveLabel = computed(() => {
   if (effective === "hybrid") return "eBPF hybrid";
   return t("状态未知");
 });
+const transparentOverviewLabel = computed(() =>
+  state.runtime.transparentEffectiveMode === "tun" ? "TUN" : transparentEffectiveLabel.value,
+);
 const transparentDescription = computed(() => {
   if (state.runtime.transparentMode === "unknown") {
     return t("无法读取透明代理状态；当前模式不会按 TUN 或 eBPF 猜测。");
@@ -526,7 +529,7 @@ onMounted(() => {
       <dl class="mn-control-metrics" :aria-label="t('运行证据')">
         <div>
           <dt>{{ t("实际模式") }}</dt>
-          <dd>{{ state.hasKsu ? transparentEffectiveLabel : t("未确认") }}</dd>
+          <dd>{{ state.hasKsu ? transparentOverviewLabel : t("未确认") }}</dd>
         </div>
         <div>
           <dt>Google</dt>
