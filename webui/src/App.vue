@@ -448,6 +448,8 @@ function closePalette(): void {
 }
 
 function handlePaletteShortcut(event: KeyboardEvent): void {
+  // Page-owned dialogs must keep their keyboard and focus until they close.
+  if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[aria-modal="true"]'))) return;
   if (showPalette.value || showMobilePages.value || showOnboarding.value || state.issueReporter.open) return;
   if (!isPaletteShortcut(event)) return;
   event.preventDefault();
