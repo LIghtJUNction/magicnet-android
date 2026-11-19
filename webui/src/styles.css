@@ -53,10 +53,10 @@ html[data-theme="light"] {
   --mn-ink-muted: #636974;
   --mn-ink-faint: #646b76;
   /* Actions and selection */
-  --mn-primary: #24282e;
-  --mn-primary-strong: #080a0d;
-  --mn-accent: #414a59;
-  --mn-accent-soft: #e9ebef;
+  --mn-primary: #1a73e8;
+  --mn-primary-strong: #1558b0;
+  --mn-accent: #185abc;
+  --mn-accent-soft: #e8f0fe;
   --mn-cactus: var(--mn-primary);
   --mn-cactus-deep: var(--mn-primary-strong);
   --mn-heather: #e3e5e9;
@@ -70,7 +70,7 @@ html[data-theme="light"] {
   /* Lines */
   --mn-border: #e8e9ec;
   --mn-border-strong: #a5aab3;
-  --mn-focus: #4c6b9a;
+  --mn-focus: #1a73e8;
   /* Semantics */
   --mn-danger: #ad2e2a;
   --mn-warning: #8a5d12;
@@ -125,10 +125,10 @@ html[data-theme="dark"] {
   --mn-ink-soft: #d1d4db;
   --mn-ink-muted: #a4a9b3;
   --mn-ink-faint: #989faa;
-  --mn-primary: #e4e9f2;
-  --mn-primary-strong: #ffffff;
-  --mn-accent: #c7d4e8;
-  --mn-accent-soft: #252b35;
+  --mn-primary: #a8c7fa;
+  --mn-primary-strong: #d3e3fd;
+  --mn-accent: #aecbfa;
+  --mn-accent-soft: #1b2b43;
   --mn-cactus: var(--mn-primary);
   --mn-cactus-deep: var(--mn-primary-strong);
   --mn-heather: #30343b;
@@ -635,10 +635,10 @@ a {
   gap: 2px;
   margin-inline: auto;
   padding: 6px 8px;
-  border: 1px solid var(--mn-border);
+  border: 0;
   border-radius: 20px;
   background: var(--mn-surface-raised);
-  box-shadow: var(--mn-shadow-float);
+  box-shadow: 0 4px 24px rgb(0 0 0 / 8%);
 }
 
 .mn-keyboard-open {
@@ -685,7 +685,7 @@ a {
 
 .mobile-nav button.mn-nav-active {
   background: transparent;
-  color: var(--mn-ink);
+  color: var(--mn-primary-strong);
 }
 
 .mobile-nav button.mn-nav-active span {
@@ -699,8 +699,8 @@ a {
 
 
 .mn-nav-active {
-  background: var(--mn-surface-sunken);
-  color: var(--mn-ink);
+  background: var(--mn-accent-soft);
+  color: var(--mn-primary-strong);
 }
 
 /* ---------- Sheets, palette, toasts ---------- */
@@ -834,9 +834,9 @@ a {
 /* Group related settings once; nested sections stay flat and share the inset. */
 .magic-card {
   border: 0;
-  border-radius: var(--mn-radius-xl);
-  padding: var(--mn-panel-padding);
-  background: var(--mn-surface-raised);
+  border-radius: 0;
+  padding: var(--mn-panel-padding) 0;
+  background: transparent;
   box-shadow: none;
 }
 
