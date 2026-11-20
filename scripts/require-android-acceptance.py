@@ -382,10 +382,13 @@ def uplink_observation(value, interface, uid, minimum_attempts):
                     for key in ('next_check_at', 'retry_in_seconds', 'last_recovery_at')),
             'Local uplink lacks a present production route observation')
     routes = text_rows(value.get('routes'), 'uplink routes')
-    require(matches(value, {'selected_default': True, 'ready': True})
+    selected_interface = value.get('selected_interface')
+    require(selected_interface in ('wlan0', 'eth0')
+            and (interface is None or selected_interface == interface)
+            and matches(value, {'selected_default': True, 'ready': True})
             and any(row.startswith('default ') and 'linkdown' not in row
-                    and re.search(r'\bdev ' + interface + r'(?: |$)', row) for row in routes),
-            'Local uplink lacks its original default route or service readiness')
+                    and re.search(r'\bdev ' + selected_interface + r'(?: |$)', row) for row in routes),
+            'Local uplink lacks the kernel-selected default route or service readiness')
     tcp = value.get('tcp')
     result = tcp.get('result') if isinstance(tcp, dict) else None
     require(matches(tcp, {'called': True}) and 'reason' not in tcp
