@@ -68,6 +68,28 @@ if a == ['-o', 'addr', 'show', 'dev', 'magicnet0']:
     done(0, s.get('addr4', '7: magicnet0 inet 172.20.0.1/30 scope global magicnet0'))
 kind, op = a[:2]; a = a[2:]
 key = kind + family
+table_names = s.get('table_names', {})
+def table_id(value):
+    if value in ('main', 'local', 'default', 'unspec'):
+        return value
+    # ip resolves a table name before parsing a number, unless a leading
+    # space makes the name impossible to match.
+    if not value.startswith(' '):
+        for number, name in table_names.items():
+            if value == name:
+                return number
+    return str(int(value))
+def lookup_table(rule):
+    words = rule.split()
+    return words[words.index('lookup') + 1] if 'lookup' in words else None
+def render_rule(rule):
+    words = rule.split()
+    if 'lookup' in words:
+        index = words.index('lookup') + 1
+        words[index] = table_names.get(words[index], words[index])
+    return ' '.join(words)
+if s.get('track_queries'):
+    s.setdefault('queries', []).append(['ip', family, kind, op] + a)
 if kind == 'route' and op == 'get':
     assert len(a) == 5 and a[1] == 'from' and a[3:] == ['uid', '0'], a
     s.setdefault('lookups', []).append(a)
@@ -79,12 +101,25 @@ if op == 'show':
     if kind == 'route':
         if a == ['table', 'main', 'dev', 'magicnet0', 'scope', 'link']:
             done(0, s.get('main4', '172.20.0.0/30 dev magicnet0 proto kernel scope link src 172.20.0.1'))
-        assert a == ['table', '2022'], a
-    done(0, '\n'.join(s[key]))
+        assert len(a) == 2 and a[0] == 'table', a
+        if table_id(a[1]) != '2022':
+            done(0, '\n'.join(s.get('foreign_' + key, [])))
+        done(0, '\n'.join(s[key]))
+    rules = s[key]
+    if a:
+        assert len(a) == 2 and a[0] == 'table', a
+        if s.get('fail_filter' + family): done(2, 'table filter unavailable')
+        rules = [rule for rule in rules if lookup_table(rule) == table_id(a[1])]
+        rules = s.get('filtered_rule' + family, rules)
+    done(0, '\n'.join(render_rule(rule) for rule in rules))
 s['writes'].append(['ip', family, kind, op] + a)
 if kind == 'rule':
     assert a[0] == 'priority', a
-    record = a[1] + ': ' + ('from all ' if a[2] in ('iif', 'to') else '') + ' '.join(a[2:])
+    normalized = a[:]
+    if 'lookup' in normalized:
+        index = normalized.index('lookup') + 1
+        normalized[index] = table_id(normalized[index])
+    record = normalized[1] + ': ' + ('from all ' if a[2] in ('iif', 'to') else '') + ' '.join(normalized[2:])
     if op == 'del':
         if s.get('fail_delete'): done(2)
         if record not in s[key]: done(1)
@@ -101,9 +136,10 @@ if kind == 'rule':
         s[key].append(record)
     else: raise AssertionError(op)
 elif kind == 'route':
-    assert op == 'flush' and a == ['table', '2022', 'dev', 'magicnet0'], a
+    assert op == 'flush' and len(a) == 4 and a[0] == 'table' and a[2:] == ['dev', 'magicnet0'], a
     if s.get('fail_flush'): done(2)
-    s[key] = [r for r in s[key] if 'dev magicnet0' not in r.split(' scope ')[0]]
+    selected = key if table_id(a[1]) == '2022' else 'foreign_' + key
+    s[selected] = [r for r in s.get(selected, []) if 'dev magicnet0' not in r.split(' scope ')[0]]
 else: raise AssertionError(kind)
 done()
 '''
@@ -262,6 +298,103 @@ magicnet_hotspot_proxy_enabled() {{ fixture enabled; }}
         before = s['writes'][:]
         self.run_helper('magicnet_lifecycle_after_stop')
         self.assertEqual(self.read()['writes'], before, 'repeated stop must not write kernel state')
+
+    def test_named_table_rules_are_recorded_and_cleaned_by_numeric_identity(self):
+        self.change(table_names={'2022': 'magicnet'})
+        self.active()
+        self.assertIn('rule4=9000: from all fwmark 0x200000 lookup 2022', self.state.read_text())
+        self.change(kernel=1)
+        self.run_helper('magicnet_lifecycle_after_stop')
+        self.assertEqual(self.read()['rule4'], ['9002: from 192.0.2.0/24 lookup 2022'])
+        self.assertFalse(self.state.exists())
+
+    def test_table_name_change_does_not_lose_recorded_ownership(self):
+        self.active()
+        self.change(kernel=1, table_names={'2022': 'renamed'})
+        self.run_helper('magicnet_lifecycle_after_stop')
+        self.assertEqual(self.read()['rule4'], ['9002: from 192.0.2.0/24 lookup 2022'])
+        self.assertFalse(self.state.exists())
+
+    def test_numeric_looking_table_alias_cannot_redirect_reads_or_deletes(self):
+        foreign_routes = ['default dev magicnet0 scope link']
+        self.change(table_names={'2022': 'magicnet', '100': '2022'},
+                    foreign_route4=foreign_routes, track_queries=True)
+        self.active()
+        self.change(kernel=1)
+        self.run_helper('magicnet_lifecycle_after_stop')
+        state = self.read()
+        self.assertEqual(state['rule4'], ['9002: from 192.0.2.0/24 lookup 2022'])
+        self.assertEqual(state['route4'], ['10.0.0.0/8 dev wlan0'])
+        self.assertEqual(state['foreign_route4'], foreign_routes)
+        deletion = next(write for write in state['writes'] if write[2:4] == ['rule', 'del'])
+        self.assertEqual(deletion[deletion.index('lookup') + 1], ' 2022')
+        for write in state['writes']:
+            if write[2:4] == ['route', 'flush']:
+                self.assertEqual(write[write.index('table') + 1], ' 2022')
+
+    def test_table_filtered_snapshot_failure_or_race_retains_ownership(self):
+        self.active()
+        for fault in ({'fail_filter4': True},
+                      {'filtered_rule4': []},
+                      {'filtered_rule4': ['9004: from all lookup 2022']}):
+            with self.subTest(fault=fault):
+                self.change(kernel=1, writes=[], **fault)
+                self.run_helper('magicnet_kernel_route_cleanup_after_stop', 2)
+                self.assertEqual(self.read()['writes'], [])
+                self.assertTrue(self.state.exists())
+                state = self.read()
+                for key in fault:
+                    state.pop(key, None)
+                self.save(state)
+
+    def test_numeric_alias_foreign_rule_never_becomes_owned(self):
+        self.active()
+        foreign = '9003: from all lookup 100'
+        self.change(kernel=1, table_names={'100': '2022'},
+                    rule4=self.read()['rule4'] + [foreign])
+        self.run_helper('magicnet_kernel_route_cleanup_after_stop', 2)
+        self.assertEqual(self.read()['writes'], [])
+        self.assertIn(foreign, self.read()['rule4'])
+        self.assertTrue(self.state.exists())
+
+    def test_identical_printed_rule_from_another_table_is_ambiguous(self):
+        self.active()
+        foreign = '9000: from all fwmark 0x200000 lookup 100'
+        self.change(kernel=1, table_names={'100': '2022'},
+                    rule4=self.read()['rule4'] + [foreign])
+        self.run_helper('magicnet_kernel_route_cleanup_after_stop', 2)
+        self.assertEqual(self.read()['writes'], [])
+        self.assertIn(foreign, self.read()['rule4'])
+        self.assertTrue(self.state.exists())
+
+    def test_legacy_prepared_names_never_authorize_new_ownership(self):
+        foreign = '9002: from 192.0.2.0/24 lookup 2022'
+        own = '9000: from all fwmark 0x200000 lookup 2022'
+        for name in ('magicnet', '100'):
+            with self.subTest(name=name):
+                self.state.unlink(missing_ok=True)
+                self.change(kernel=1, rule4=[foreign], route4=[],
+                            table_names={'2022': name}, writes=[])
+                self.run_helper('magicnet_kernel_route_state_begin')
+                old = self.state.read_text().replace('rule_table_format=verified-2022\n', '')
+                old = old.replace('lookup 2022', 'lookup ' + name)
+                self.state.write_text(old)
+                self.change(kernel=0, rule4=[foreign, own], route4=['default dev magicnet0'])
+                self.run_helper('magicnet_kernel_route_state_capture', 2)
+                self.assertEqual(self.state.read_text(), old)
+                self.assertEqual(self.read()['writes'], [])
+
+                # A later stopped core with no TUN routes can establish a
+                # fresh baseline; it still never adopts the foreign rule.
+                self.change(kernel=1, rule4=[foreign], route4=[])
+                self.run_helper('magicnet_kernel_route_state_begin')
+                self.assertIn('rule_table_format=verified-2022\n', self.state.read_text())
+                self.change(kernel=0, rule4=[foreign, own], route4=['default dev magicnet0'])
+                self.run_helper('magicnet_kernel_route_state_capture')
+                active = self.state.read_text()
+                self.assertNotIn('rule_table_format=', active)
+                self.assertIn('rule4=' + own, active)
+                self.assertNotIn('rule4=' + foreign, active)
 
     def test_late_rule_is_not_adopted_on_repeated_capture(self):
         self.active()
