@@ -1,3 +1,4 @@
+import { navigateToPage } from "./navigation.mjs";
 import { test, expect } from "@playwright/test";
 import { connectReadOnlyNativeFixture } from "./read-only-native-fixture.mjs";
 
@@ -11,7 +12,7 @@ const pages = [
   ["configure", "subs", "订阅"],
   ["configure", "tailscale", "Tailscale"],
   ["configure", "config", "配置文件"],
-  ["configure", "webui", "面板配置"],
+  ["configure", "webui", "Zashboard"],
   ["diagnose", "health", "诊断"],
   ["diagnose", "terminal", "终端"],
   ["diagnose", "output", "最近输出"],
@@ -34,17 +35,7 @@ async function settle(page) {
 }
 
 async function navigate(page, workspace, tab, heading) {
-  const desktopPage = page.locator(`.desktop-rail [data-tab="${tab}"]`);
-  if (await desktopPage.isVisible()) {
-    await desktopPage.click();
-  } else {
-    const workspaceButton = page.locator(`[data-workspace="${workspace}"]:visible`);
-    // Re-tapping the current workspace opens its page sheet on phones.
-    if (await workspaceButton.getAttribute("aria-current") !== "page") {
-      await workspaceButton.click();
-    }
-    await page.locator(`.mn-section-tabs [data-tab="${tab}"]:visible`).click();
-  }
+  await navigateToPage(page, tab);
   if (heading)
     await expect(page.locator(".page-surface h2").first()).toHaveText(heading);
   else await expect(page.locator(".mn-control")).toBeVisible();
@@ -97,7 +88,6 @@ async function expectNoHorizontalOverflow(page) {
       ),
     ]
       .filter((element) => {
-        if (element.closest(".mn-section-tabs")) return false; // intentionally scrollable tabs
         if (
           !element.checkVisibility({
             visibilityProperty: true,
@@ -200,6 +190,7 @@ test("mode changes use a focus-trapped confirmation, never optimistic state", as
   page,
 }) => {
   await seedView(page);
+  await page.locator(".mn-section-disclosure > summary").filter({ hasText: "网络设置" }).click();
   const target = page.getByRole("button", { name: "eBPF", exact: true });
   await target.click();
   const dialog = page.getByRole("alertdialog", { name: "确认控制操作" });
@@ -265,10 +256,10 @@ test("device unavailable, stopped, unknown, and failed states remain distinct", 
     command => /\bservice (?:start|stop|restart|toggle)\b/.test(command),
   ))).toEqual([]);
   await seedView(page, {
-    transparentRecentError: "Fixture: capability check failed",
+    transparentRecentError: "recorded",
   });
   await expect(
-    page.getByRole("alert").filter({ hasText: "capability check failed" }),
+    page.getByRole("alert").filter({ hasText: "最近一次网络操作出现错误" }),
   ).toBeVisible();
   await seedView(page, { singBoxState: "stopped", transparentRecentError: "" });
   await page.evaluate(async () => {
@@ -310,7 +301,8 @@ test("native editor preserves drafts and blocks empty or invalid saves", async (
 test("toolbar menus fit the page when opened", async ({ page }) => {
   for (const [workspace, tab, heading] of pages.filter(([, tab]) => ["apps", "config", "health"].includes(tab))) {
     await navigate(page, workspace, tab, heading);
-    const menu = page.locator(".mn-page-actions .config-action-menu");
+    const menu = page.locator(`.page-surface[data-page="${tab}"] .config-action-menu`);
+    await expect(menu).toHaveCount(1);
     await menu.locator("summary").click();
     await expect(menu).toHaveAttribute("open", "");
     await expectNoHorizontalOverflow(page);

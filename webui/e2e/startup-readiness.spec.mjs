@@ -35,7 +35,7 @@ for (const theme of ['light','dark']) {
     await setFixture(page);
     await expect(page.locator('.mn-control-hero')).toHaveAttribute('data-service-state','ready');
     await expect(page.locator('.mn-control-status h2')).toHaveText('运行中');
-    await expect(page.locator('.mn-control-hero .mn-control-notice')).toHaveCount(0);
+    await expect(page.locator('.mn-control > .mn-control-notice')).toHaveCount(0);
     await assertFits(page);
     // Diagnostic capture only (not a correctness assertion): a full-page
     // screenshot can exceed the shared 5s actionTimeout under loaded/parallel
@@ -43,25 +43,31 @@ for (const theme of ['light','dark']) {
     await page.screenshot({path:info.outputPath(`${theme}-ready.png`),fullPage:true,timeout:20_000});
     await setFixture(page,{runtime:{serviceReady:null}});
     await expect(page.locator('.mn-control-status h2')).toHaveText('状态待确认');
-    await expect(page.locator('.mn-control-eyebrow .mn-status-dot-ok')).toHaveCount(0);
-    await expect(page.locator('.mn-control-hero .mn-control-notice')).toBeVisible();
+    await expect(page.locator('.mn-control-status .mn-status-dot-ok')).toHaveCount(0);
+    await expect(page.locator('.mn-control > .mn-control-notice')).toBeVisible();
+    await expect(page.locator('.mn-control > .mn-control-notice')).toHaveAttribute('role','status');
+    await expect(page.locator('.mn-control > .mn-control-notice h3')).toHaveText('状态待确认');
+    await expect(page.locator('.mn-control > .mn-control-notice p')).toHaveText('核心进程存在，但尚未确认服务是否就绪。刷新状态不会重启服务。');
     await setFixture(page,{runtime:{serviceReady:false}});
     await expect(page.locator('.mn-control-status h2')).toHaveText('服务未就绪');
-    await expect(page.locator('.mn-control-eyebrow .mn-status-dot-ok')).toHaveCount(0);
+    await expect(page.locator('.mn-control-status .mn-status-dot-ok')).toHaveCount(0);
+    await expect(page.locator('.mn-control > .mn-control-notice')).toBeVisible();
+    await expect(page.locator('.mn-control > .mn-control-notice h3')).toHaveText('服务未就绪');
+    await expect(page.locator('.mn-control > .mn-control-notice p')).toHaveText('核心进程存在，但服务就绪检查未通过。不要仅凭进程存在判断代理可用。');
     await setFixture(page,{runtime:{singBoxState:'stopped',serviceReady:false,transparentEffectiveMode:'unknown'},state:{phase:'error',output:'[warn] Startup step failed: stage=config-check exit=1\n[warn] sing-box startup failed; see the preceding core or network error.\n[error] MAGICNET_SUB_CONFIG_LOCK_TIMEOUT=2 magicnet_start_kernel failed with status 1'}});
-    await expect(page.locator('.mn-control-hero .mn-control-notice')).toHaveAttribute('role','alert');
-    await expect(page.locator('.mn-control-hero .mn-control-notice h3')).toContainText('配置校验');
-    await expect(page.locator('.mn-control-hero .mn-control-notice p')).toBeVisible();
+    await expect(page.locator('.mn-control > .mn-control-notice')).toHaveAttribute('role','alert');
+    await expect(page.locator('.mn-control > .mn-control-notice h3')).toContainText('配置校验');
+    await expect(page.locator('.mn-control > .mn-control-notice p')).toBeVisible();
     await assertFits(page);
     // Same diagnostic-capture rationale as above.
     await page.screenshot({path:info.outputPath(`${theme}-failure.png`),fullPage:true,timeout:20_000});
-    await page.locator('.mn-control-hero .mn-control-notice').getByRole('button',{name:'查看输出'}).click();
-    await expect(page.locator('.page-surface pre').last()).toContainText('Startup step failed: stage=config-check');
+    await page.locator('.mn-control > .mn-control-notice').getByRole('button',{name:'查看输出'}).click();
+    await expect(page.locator('.page-surface[data-page="output"] .output-console')).toContainText('Startup step failed: stage=config-check');
     // A read-only log refresh may fail in the display mock, but must not
     // erase the original startup failure or replace its foreground history.
-    await page.getByRole('button',{name:'刷新',exact:true}).click();
-    await expect(page.locator('.page-surface pre').first()).toContainText('machine.unsupported_command');
-    await expect(page.locator('.page-surface pre').last()).toContainText('Startup step failed: stage=config-check');
+    await page.locator('.page-surface[data-page="output"] .output-runtime').getByRole('button',{name:'刷新',exact:true}).click();
+    await expect(page.locator('.page-surface[data-page="output"] .output-runtime pre')).toContainText('machine.unsupported_command');
+    await expect(page.locator('.page-surface[data-page="output"] .output-console')).toContainText('Startup step failed: stage=config-check');
     expect(await page.evaluate(async () => (await import('/src/composables/useMagicNet.ts')).useMagicNet().state.hasKsu)).toBe(true);
     expect(errors).toEqual([]);
   });

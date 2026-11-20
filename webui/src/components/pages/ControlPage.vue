@@ -4,6 +4,7 @@ import {
   Copy,
   DownloadCloud,
   Plus,
+  PanelsTopLeft,
   Power,
   Radar,
   RotateCcw,
@@ -11,6 +12,7 @@ import {
   ArrowUpRight,
   ArrowRight,
   Route,
+  Stethoscope,
   Save,
   Share2,
   ShieldCheck,
@@ -29,7 +31,7 @@ import RemovableTag from "@/components/ui/RemovableTag.vue";
 import StatTile from "@/components/ui/StatTile.vue";
 import StatusDot from "@/components/ui/StatusDot.vue";
 import ModuleUpdateCard from "./ModuleUpdateCard.vue";
-import ConstellationPath from "./ConstellationPath.vue";
+import SectionDisclosure from "@/components/ui/SectionDisclosure.vue";
 import ConnectivityNotice from "@/components/ConnectivityNotice.vue";
 import {
   applyConfigAction,
@@ -43,7 +45,7 @@ import {
 } from "@/components/pages/controlDangerActions";
 import { useActionLock } from "@/composables/useActionLock";
 import { backgroundTaskBlocksLaunch, formatBackgroundDuration } from "@/composables/backgroundTasks";
-import { servicePresentation } from "@/lib/servicePresentation";
+import { connectionPresentation, servicePresentation } from "@/lib/servicePresentation";
 import { machineFailureText, parseMachineHotspot, type HotspotRouteState } from "@/composables/machineStatus";
 import { useMagicNet } from "@/composables/useMagicNet";
 import { restoreFocusAfterUpdate, trapFocusWithin } from "@/lib/focus";
@@ -65,12 +67,15 @@ const {
   refreshStatus,
   refreshSubs,
   refreshWifiPolicy,
+  openSingBoxUi,
+  openingSingBoxUi,
+  singBoxUiError,
   shellQuote,
 } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
 
 const emit = defineEmits<{
-  (e: "goto-tab", tab: "about" | "health" | "output" | "subs" | "proxies"): void;
+  (e: "goto-tab", tab: "about" | "health" | "output" | "subs" | "proxies" | "webui"): void;
 }>();
 type HotspotPolicyPhase = "loading" | "ready" | "error";
 
@@ -109,6 +114,7 @@ const pendingDangerMessage = computed(
   () => pendingDangerAction.value?.message ?? "",
 );
 const serviceStatus = computed(() => servicePresentation(state.runtime, state.hasKsu));
+const connectionStatus = computed(() => connectionPresentation(state.runtime, state.hasKsu, state.connectivity));
 const runtimeInsight = computed(() =>
   buildControlRuntimeInsight({
     hasKsu: state.hasKsu,
@@ -143,7 +149,7 @@ const showRuntimeNotice = computed(() => state.hasKsu && (
   (runtimeInsight.value.status !== "ok" && state.runtime.singBoxState === "sing-box")
 ));
 const servicePendingLabel = computed(() => pendingServiceLabel(state.backgroundTask));
-const controlTitle = computed(() => servicePendingLabel.value || serviceStatus.value.label);
+const controlTitle = computed(() => servicePendingLabel.value || connectionStatus.value.label);
 const coreFact = computed(() => !state.hasKsu || state.runtime.singBoxState === "unknown" ? t("未确认")
   : state.runtime.singBoxState === "sing-box" ? t("进程存在") : t("已停止"));
 const readinessFact = computed(() => !state.hasKsu || state.runtime.serviceReady == null ? t("未确认")
@@ -153,16 +159,12 @@ const controlDescription = computed(() => {
   if (servicePendingLabel.value) return t("已等待 {duration}。任务完成后自动更新状态。", {
     duration: formatBackgroundDuration(state.backgroundTask),
   });
+  if (connectionStatus.value.description) return connectionStatus.value.description;
   if (serviceStatus.value.state === "ready") return t("服务已就绪。实际联网情况可在诊断中确认。");
   if (serviceStatus.value.state === "stopped") return t("启动前确认订阅已配置；现有配置和节点会保留。");
   return t("先确认服务状态，再继续操作。刷新不会重启服务。");
 });
 
-const transparentModeLabel = computed(() => {
-  if (state.runtime.transparentMode === "tun") return "TUN";
-  if (state.runtime.transparentMode === "ebpf") return "eBPF";
-  return t("状态未知");
-});
 const transparentEffectiveLabel = computed(() => {
   const effective = state.runtime.transparentEffectiveMode;
   if (effective === "tun") return "TUN · magicnet0";
@@ -170,6 +172,9 @@ const transparentEffectiveLabel = computed(() => {
   if (effective === "hybrid") return "eBPF hybrid";
   return t("状态未知");
 });
+const transparentOverviewLabel = computed(() =>
+  state.runtime.transparentEffectiveMode === "tun" ? "TUN" : transparentEffectiveLabel.value,
+);
 const transparentDescription = computed(() => {
   if (state.runtime.transparentMode === "unknown") {
     return t("无法读取透明代理状态；当前模式不会按 TUN 或 eBPF 猜测。");
@@ -496,73 +501,97 @@ onMounted(() => {
 <template>
   <div class="mn-control">
     <section v-if="nextStep" class="mn-next-step" :data-step="nextStep.action" :aria-label="t('下一步')">
-      <div>
-        <span class="mn-next-step-label">{{ t("下一步") }}</span>
-        <h3>{{ nextStep.title }}</h3>
-        <p>{{ nextStep.detail }}</p>
-      </div>
+      <div><span class="mn-next-step-label">{{ t("下一步") }}</span><h3>{{ nextStep.title }}</h3><p>{{ nextStep.detail }}</p></div>
       <Button :loading="isRunning('refresh-control-subs') || isRunning('rebuild-node-cache')" @click="followNextStep">{{ nextStep.label }}<ArrowRight :size="16" /></Button>
     </section>
 
     <section class="mn-control-hero" :data-service-state="serviceStatus.state" :aria-label="t('服务概览')">
       <div class="mn-control-overview">
         <div class="mn-control-status" role="status" aria-live="polite">
-          <div class="mn-control-state-heading">
-            <h2>{{ controlTitle }}</h2>
-            <p class="mn-control-label"><StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />{{ t("代理服务") }}<span v-if="state.hasKsu && state.runtime.transparentMode !== 'unknown'" class="mn-control-mode">{{ transparentModeLabel }}</span></p>
-            <p class="mn-control-description">{{ controlDescription }}</p>
-          </div>
-          <dl v-if="state.hasKsu && state.runtime.singBoxState === 'sing-box'" class="mn-control-memory">
-            <dt>{{ t("内核内存（RSS）") }}</dt>
-            <dd :data-unavailable="state.runtime.singBoxRssKib == null">
-              <template v-if="state.runtime.singBoxRssKib != null">{{ (state.runtime.singBoxRssKib / 1024).toFixed(1) }} <span>MiB</span></template>
-              <template v-else>{{ t("暂不可用") }}</template>
-            </dd>
-          </dl>
+          <p class="mn-control-label">
+            <StatusDot :tone="servicePendingLabel ? 'unknown' : serviceStatus.tone" />
+            {{ t("代理服务") }}<span class="mn-control-service-label">{{ serviceStatus.label }}</span>
+          </p>
+          <h2>{{ controlTitle }}</h2>
+          <p class="mn-control-description">{{ controlDescription }}</p>
         </div>
         <div class="mn-control-actions">
-          <Button class="mn-control-power" :data-running="state.runtime.singBoxState === 'sing-box'" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('toggle-sing-box') || isRunning('refresh-control-status') || Boolean(servicePendingLabel)" @click="toggleSingBox">
-            <component :is="state.runtime.singBoxState === 'unknown' ? RefreshCw : Power" :size="18" />{{ powerLabel }}
+          <Button class="mn-control-power" :variant="state.runtime.singBoxState === 'sing-box' ? 'secondary' : 'default'" :data-running="state.runtime.singBoxState === 'sing-box'" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('toggle-sing-box') || isRunning('refresh-control-status') || Boolean(servicePendingLabel)" @click="toggleSingBox">
+            <component :is="state.runtime.singBoxState === 'unknown' ? RefreshCw : Power" :size="22" />
+            <span>{{ powerLabel }}</span>
           </Button>
-          <div class="mn-control-shortcuts">
-            <Button variant="ghost" :disabled="!state.hasKsu" :loading="isRunning('refresh-control-status')" @click="withAction('refresh-control-status', () => refreshStatus())">
-              <RefreshCw :size="16" />{{ t("刷新状态") }}
-            </Button>
-            <Button variant="ghost" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('restart-sing-box')" @click="requestDangerAction(restartSingBoxAction(), $event.currentTarget)">
-              <RotateCcw :size="16" />{{ t("重启服务") }}
-            </Button>
-          </div>
+          <Button class="mn-control-refresh" variant="ghost" size="sm" :disabled="!state.hasKsu" :loading="isRunning('refresh-control-status')" @click="withAction('refresh-control-status', () => refreshStatus())">
+            <RefreshCw :size="14" />{{ t("刷新状态") }}
+          </Button>
         </div>
       </div>
-      <ConstellationPath :runtime="state.runtime" :has-device="state.hasKsu" />
+
+      <dl class="mn-control-metrics" :aria-label="t('运行证据')">
+        <div>
+          <dt>{{ t("实际模式") }}</dt>
+          <dd>{{ state.hasKsu ? transparentOverviewLabel : t("未确认") }}</dd>
+        </div>
+        <div>
+          <dt>Google</dt>
+          <dd v-if="state.hasKsu && state.connectivity.status === 'online' && state.connectivity.latencyMs !== null">{{ state.connectivity.latencyMs }}<small>ms</small></dd>
+          <dd v-else class="mn-metric-unknown">{{ t("未确认") }}</dd>
+        </div>
+        <div>
+          <dt>{{ t("内核内存（RSS）") }}</dt>
+          <dd v-if="state.hasKsu && state.runtime.singBoxState === 'sing-box' && state.runtime.singBoxRssKib != null">{{ (state.runtime.singBoxRssKib / 1024).toFixed(1) }}<small>MiB</small></dd>
+          <dd v-else class="mn-metric-unknown">{{ t("暂不可用") }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <div v-if="state.hasKsu" class="mn-control-connectivity">
+      <ConnectivityNotice :snapshot="state.connectivity">
+        <Button v-if="state.connectivity.warning" variant="ghost" class="justify-self-start" @click="emit('goto-tab', 'health')">{{ t("打开诊断") }}<ArrowUpRight :size="16" /></Button>
+      </ConnectivityNotice>
+    </div>
+    <p v-if="state.hasKsu && state.runtime.transparentRecentError" role="alert" class="text-sm leading-6 text-[var(--mn-danger)]">
+      {{ t("最近一次网络操作出现错误。请打开诊断查看原因。") }}
+    </p>
+    <section v-if="showRuntimeNotice" class="mn-control-notice" :class="controlInsightTone(runtimeInsight.status)" :role="state.phase === 'error' ? 'alert' : 'status'" aria-live="polite">
+      <h3><StatusDot tone="current" />{{ runtimeInsight.title }}</h3>
+      <p>{{ runtimeInsight.detail }}</p>
+      <div class="mn-notice-actions">
+        <Button v-if="missingNodeCache" variant="outline" :disabled="runtimeBusy" :loading="isRunning('rebuild-node-cache')" @click="rebuildNodeCache"><DownloadCloud :size="17" />{{ t("更新订阅并重建节点") }}</Button>
+        <Button variant="outline" @click="emit('goto-tab', 'output')">{{ t("查看输出") }}<ArrowUpRight :size="16" /></Button>
+        <Button variant="ghost" @click="emit('goto-tab', 'health')">{{ t("打开诊断") }}</Button>
+      </div>
+    </section>
+
+    <section class="mn-home-workspace" :aria-label="t('常用入口')">
+      <header class="mn-home-section-heading"><h3>{{ t("常用入口") }}</h3></header>
+      <nav class="mn-control-destinations" :aria-label="t('常用入口')">
+        <button type="button" @click="emit('goto-tab', 'proxies')"><Route :size="21" /><span>{{ t("切换节点") }}<small>{{ t("选择节点与代理组") }}</small></span><ArrowUpRight :size="16" /></button>
+        <button type="button" @click="emit('goto-tab', 'subs')"><DownloadCloud :size="21" /><span>{{ t("订阅与节点") }}<small>{{ t("管理来源与更新") }}</small></span><ArrowUpRight :size="16" /></button>
+        <button type="button" :aria-label="t('检查网络')" @click="emit('goto-tab', 'health')"><Stethoscope :size="21" /><span>{{ t("检查网络") }}<small>{{ t("查看连接与恢复建议") }}</small></span><ArrowUpRight :size="16" /></button>
+        <button type="button" @click="emit('goto-tab', 'webui')"><PanelsTopLeft :size="21" /><span>{{ t("面板设置") }}<small>{{ t("安装、校验与修复") }}</small></span><ArrowUpRight :size="16" /></button>
+      </nav>
+
+      <section class="mn-dashboard-entry" :aria-label="t('Zashboard 快捷入口')">
+        <div class="mn-dashboard-copy"><p class="mn-dashboard-kicker">{{ t("代理控制台") }}</p><h3>Zashboard</h3></div>
+        <div class="mn-dashboard-action">
+          <Button class="mn-dashboard-open" variant="outline" :disabled="!state.hasKsu" :loading="openingSingBoxUi" @click="openSingBoxUi('zashboard')">
+            <PanelsTopLeft :size="18" />{{ openingSingBoxUi ? t("正在连接 Zashboard") : t("打开 Zashboard") }}<ArrowUpRight :size="17" />
+          </Button>
+        </div>
+        <p class="mn-dashboard-hint">{{ t(state.hasKsu ? "自动连接当前设备的本地面板" : "在模块管理器中打开后可使用") }}</p>
+        <p class="mn-dashboard-description">{{ t("切换节点、管理代理组、查看实时连接。") }}</p>
+        <div v-if="singBoxUiError" class="mn-dashboard-error" role="alert"><p>{{ t(singBoxUiError) }}</p><Button variant="ghost" @click="emit('goto-tab', 'webui')">{{ t("面板设置与修复") }}<ArrowRight :size="16" /></Button></div>
+      </section>
+    </section>
+
+    <SectionDisclosure :title="t('运行详情')">
       <dl class="mn-service-facts" :aria-label="t('运行证据')">
         <div><dt>sing-box</dt><dd>{{ coreFact }}</dd></div>
         <div><dt>{{ t("服务检查") }}</dt><dd>{{ readinessFact }}</dd></div>
         <div><dt>{{ t("实际模式") }}</dt><dd>{{ state.hasKsu ? transparentEffectiveLabel : t("未确认") }}</dd></div>
       </dl>
-      <ConnectivityNotice v-if="state.hasKsu" :snapshot="state.connectivity">
-        <Button v-if="state.connectivity.warning" variant="ghost" class="justify-self-start" @click="emit('goto-tab', 'health')">{{ t("打开诊断") }}<ArrowUpRight :size="16" /></Button>
-      </ConnectivityNotice>
-      <section v-if="showRuntimeNotice" class="mn-control-notice" :class="controlInsightTone(runtimeInsight.status)" :role="state.phase === 'error' ? 'alert' : 'status'" aria-live="polite">
-        <h3><StatusDot tone="current" />{{ runtimeInsight.title }}</h3>
-        <p>{{ runtimeInsight.detail }}</p>
-        <div class="mn-notice-actions">
-          <Button v-if="missingNodeCache" variant="outline" :disabled="runtimeBusy" :loading="isRunning('rebuild-node-cache')" @click="rebuildNodeCache">
-            <DownloadCloud :size="17" />{{ t("更新订阅并重建节点") }}
-          </Button>
-          <Button variant="outline" @click="emit('goto-tab', 'output')">{{ t("查看输出") }}<ArrowUpRight :size="16" /></Button>
-          <Button variant="ghost" @click="emit('goto-tab', 'health')">{{ t("打开诊断") }}</Button>
-        </div>
-      </section>
-    </section>
-
-    <nav class="mn-control-destinations" :aria-label="t('常用入口')">
-      <button type="button" @click="emit('goto-tab', 'subs')"><DownloadCloud :size="19" /><span>{{ t("订阅与节点") }}<small>{{ t("管理来源与更新") }}</small></span><ArrowUpRight :size="16" /></button>
-      <button type="button" @click="emit('goto-tab', 'proxies')"><Route :size="19" /><span>{{ t("切换节点") }}<small>{{ t("选择节点与代理组") }}</small></span><ArrowUpRight :size="16" /></button>
-    </nav>
-    <ModuleUpdateCard />
-    <div class="mn-control-section-title"><h3>{{ t("网络设置") }}</h3><span>{{ t("按需调整，无需反复重启") }}</span></div>
-
+    </SectionDisclosure>
+    <SectionDisclosure :title="t('网络设置')">
     <div class="mn-control-settings">
       <Card class="grid gap-5">
         <CardHeading :title="t('代理模式')">
@@ -642,9 +671,6 @@ onMounted(() => {
         >
           <Radar :size="17" />{{ t("重新应用当前模式") }} </Button>
         </details>
-        <p v-if="state.runtime.transparentRecentError" role="alert" class="text-sm leading-6 text-[var(--mn-danger)]">
-          {{ state.runtime.transparentRecentError }}
-        </p>
       </Card>
 
       <Card class="grid gap-2" :aria-busy="hotspotPolicyPhase === 'loading' || hotspotTaskPending">
@@ -793,6 +819,9 @@ onMounted(() => {
         <summary>{{ t("服务管理") }}</summary>
         <div class="mn-disclosure__body">
           <div class="grid grid-cols-2 gap-3">
+            <Button variant="outline" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('restart-sing-box')" @click="requestDangerAction(restartSingBoxAction(), $event.currentTarget)">
+              <RotateCcw :size="16" />{{ t("重启服务") }}
+            </Button>
             <Button variant="secondary" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('apply-config')" @click="requestDangerAction(applyConfigAction(), $event.currentTarget)">
               <Save :size="17" />{{ t("应用配置") }} </Button>
             <Button variant="secondary" :disabled="runtimeBusy || !state.hasKsu" :loading="isRunning('repair')" @click="requestDangerAction(repairAction(), $event.currentTarget)">
@@ -807,6 +836,8 @@ onMounted(() => {
         </div>
       </details>
     </div>
+    </SectionDisclosure>
+    <ModuleUpdateCard />
 
     <Teleport to="body">
       <Transition name="sheet">
@@ -835,65 +866,85 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.mn-control { max-width: 1040px; margin-inline: auto; }
-.mn-control-hero { padding: 12px 0 8px; }
+.mn-control { max-width: 920px; margin-inline: auto; }
+.mn-control-hero { padding: 32px 0 0; }
 .mn-control-overview { display: grid; gap: 28px; }
-.mn-control-status { display: grid; gap: 18px; min-width: 0; }
-.mn-control-state-heading { min-width: 0; }
-.mn-control-label { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 16px 0 0; color: var(--mn-ink-muted); font-size: 13px; font-weight: 500; }
-.mn-control-mode { padding: 2px 8px; border-radius: 6px; background: var(--mn-surface-sunken); color: var(--mn-ink-soft); font-family: var(--font-mono); font-size: 12px; }
-.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-family: var(--font-sans); font-size: clamp(32px, 7vw, 48px); font-weight: 550; line-height: 1.15; letter-spacing: -.03em; overflow-wrap: anywhere; }
-.mn-control-hero[data-service-state="ready"] .mn-control-status h2 { color: var(--mn-ink); }
-.mn-control-description { margin: 12px 0 0; max-width: 46ch; color: var(--mn-ink-muted); font-size: 15px; line-height: 1.7; }
-.mn-control-memory { display: inline-flex; width: fit-content; align-items: baseline; gap: 12px; margin: 0; padding: 8px 14px; border-radius: 999px; background: var(--mn-surface-sunken); }
-.mn-control-memory dt { color: var(--mn-ink-muted); font-size: 12px; }
-.mn-control-memory dd { margin: 0; color: var(--mn-ink); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.mn-control-memory dd > span { color: var(--mn-ink-muted); font-size: 12px; font-weight: 400; }
-.mn-control-memory dd[data-unavailable="true"] { color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; }
-.mn-control-actions { align-self: center; min-width: 0; }
-.mn-control-power { width: 100%; min-height: 56px; border-radius: var(--mn-radius-lg); font-size: 15px; font-weight: 600; }
-.mn-control-power[data-running="true"] { border-color: var(--mn-ink); background: var(--mn-ink); color: var(--mn-ivory); box-shadow: none; }
-.mn-control-power[data-running="true"]:hover { border-color: var(--mn-ink-soft); background: var(--mn-ink-soft); }
-.mn-control-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
-.mn-control-shortcuts > button { padding-inline: 6px; }
-.mn-service-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 24px 0 0; }
-.mn-service-facts > div { min-width: 0; padding: 8px 0; }
-.mn-service-facts dt { color: var(--mn-ink-muted); font-size: 12px; overflow-wrap: anywhere; }
-.mn-service-facts dd { margin: 6px 0 0; color: var(--mn-ink); font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.mn-control-status { min-width: 0; text-align: left; }
+.mn-control-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px; margin: 0 0 14px; color: var(--mn-ink-muted); font-size: 12px; font-weight: 500; }
+.mn-control-service-label { padding-inline-start: 9px; border-inline-start: 1px solid var(--mn-border); }
+.mn-control-status h2 { margin: 0; color: var(--mn-ink); font-size: clamp(34px, 8vw, 48px); font-weight: 550; line-height: 1.16; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.mn-control-description { max-width: 46ch; margin: 14px 0 0; color: var(--mn-ink-muted); font-size: 14px; line-height: 1.7; }
+.mn-control-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.mn-control-power { min-width: 160px; min-height: 56px; height: auto; border-radius: 12px; padding: 14px 22px; font-size: 14px; }
+.mn-control-power :deep(.mn-button__content) { gap: 10px; }
+.mn-control-power[data-running="true"] { border-color: transparent; background: var(--mn-surface-sunken); color: var(--mn-ink); }
+.mn-control-refresh { min-height: 48px; padding-inline: 12px; color: var(--mn-ink-muted); font-size: 13px; }
+.mn-control-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 32px 0 0; padding: 24px 0; border-bottom: 1px solid var(--mn-border); }
+.mn-control-metrics > div { display: grid; min-width: 0; align-content: start; gap: 10px; text-align: left; }
+.mn-control-metrics dt { color: var(--mn-ink-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.mn-control-metrics dd { margin: 0; color: var(--mn-ink); font-size: 22px; font-weight: 500; line-height: 1.3; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mn-control-metrics > div:first-child dd, .mn-control-metrics dd.mn-metric-unknown { font-size: 14px; line-height: 1.6; }
+.mn-control-metrics dd small { margin-inline-start: 4px; color: var(--mn-ink-muted); font-size: 11px; font-weight: 400; }
+.mn-control-connectivity { margin-top: 12px; }
+.mn-control-connectivity :deep([role="status"]) { padding: 8px 0; text-align: left; }
+.mn-control-connectivity :deep([role="alert"]) { padding: 16px; }
 .mn-control-notice { margin-top: 20px; border: 1px solid var(--mn-current-tone-border, var(--mn-border)); border-radius: var(--mn-radius-md); padding: 16px; font-size: 13px; }
-.mn-control-notice h3 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.mn-control-notice h3 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .mn-control-notice p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
 .mn-notice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.mn-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin: 0 0 24px; padding: 24px; border-radius: var(--mn-radius-lg); background: var(--mn-accent-soft); }
+.mn-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 24px 0; padding: 20px; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); }
 .mn-next-step > div { flex: 1 1 260px; min-width: 0; }
-.mn-next-step-label { color: var(--mn-primary-strong); font-size: 12px; font-weight: 600; }
-.mn-next-step h3 { margin: 8px 0 0; color: var(--mn-ink); font-size: 20px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
-.mn-next-step p { margin: 8px 0 0; color: var(--mn-ink-soft); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.mn-next-step-label { color: var(--mn-ink-muted); font-size: 12px; font-weight: 500; }
+.mn-next-step h3 { margin: 6px 0 0; color: var(--mn-ink); font-size: 18px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+.mn-next-step p { margin: 8px 0 0; color: var(--mn-ink-soft); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
 .mn-next-step > button { max-width: 100%; }
-.mn-control-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 24px 0 40px; }
-.mn-control-destinations > button { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 80px; padding: 16px; border: 0; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); color: var(--mn-ink); text-align: left; cursor: pointer; transition: background-color 160ms ease-out; }
-.mn-control-destinations > button:hover:not(:disabled) { background: var(--mn-surface-sunken); }
+.mn-home-workspace { margin: 36px 0 28px; }
+.mn-home-section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.mn-home-section-heading h3 { margin: 0; font-size: 16px; font-weight: 550; letter-spacing: -.01em; }
+.mn-control-destinations { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; }
+.mn-control-destinations > button { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; min-width: 0; min-height: 76px; gap: 14px; padding: 14px 0; border: 0; border-bottom: 1px solid var(--mn-border); border-radius: 0; background: transparent; color: var(--mn-ink); text-align: left; cursor: pointer; transition: color 160ms ease-out, background-color 160ms ease-out; }
+.mn-control-destinations > button > svg:first-child { box-sizing: content-box; padding: 10px; border-radius: 12px; background: var(--mn-surface-sunken); color: var(--mn-ink-soft); }
+.mn-control-destinations > button > svg:last-child { color: var(--mn-ink-faint); }
+.mn-control-destinations > button > span { min-width: 0; font-size: 14px; font-weight: 550; overflow-wrap: anywhere; }
+.mn-control-destinations small { display: block; margin-top: 3px; color: var(--mn-ink-muted); font-size: 12px; font-weight: 400; line-height: 1.5; }
+.mn-control-destinations > button:hover { color: var(--mn-primary-strong); background: color-mix(in srgb, var(--mn-accent) 4%, transparent); }
 .mn-control-destinations > button:focus-visible { outline: 2px solid var(--mn-focus); outline-offset: 3px; }
-.mn-control-destinations > button:disabled { cursor: not-allowed; opacity: .55; }
-.mn-control-destinations svg { flex-shrink: 0; }
-.mn-control-destinations > button > svg:first-child { box-sizing: content-box; padding: 9px; border-radius: 12px; background: var(--mn-accent-soft); color: var(--mn-primary-strong); }
-.mn-control-destinations span { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-.mn-control-destinations small { display: block; margin-top: 4px; color: var(--mn-ink-muted); font-size: 13px; font-weight: 400; line-height: 1.5; }
-.mn-control-section-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin: 8px 0 20px; }
-.mn-control-section-title h3 { margin: 0; color: var(--mn-ink); font-family: var(--font-serif); font-size: 22px; font-weight: 500; letter-spacing: -.02em; }
-.mn-control-section-title > span { color: var(--mn-ink-muted); font-size: 13px; }
-.mn-control-settings { display: grid; gap: 24px; }
+.mn-dashboard-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; margin-top: 28px; padding: 24px; border: 0; border-radius: 16px; background: var(--mn-surface-raised); }
+.mn-dashboard-copy { min-width: 0; }
+.mn-dashboard-kicker { margin: 0 0 5px; color: var(--mn-ink-muted); font-size: 11px; }
+.mn-dashboard-copy h3 { margin: 0; font-size: 20px; font-weight: 550; letter-spacing: -.02em; }
+.mn-dashboard-action { min-width: 0; max-width: 100%; }
+.mn-dashboard-open { min-height: 48px; max-width: 100%; border-color: transparent; background: var(--mn-accent-soft); color: var(--mn-primary-strong); }
+.mn-dashboard-open :deep(.mn-button__content > svg:first-child) { display: none; }
+.mn-dashboard-hint, .mn-dashboard-description { grid-column: 1 / -1; margin: 0; color: var(--mn-ink-muted); font-size: 12px; line-height: 1.6; }
+.mn-dashboard-description { margin-top: -4px; }
+.mn-dashboard-error { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; color: var(--mn-danger); font-size: 13px; }
+.mn-dashboard-error p { flex: 1 1 240px; margin: 0; }
+.mn-dashboard-error > button { padding-inline: 0; }
+.mn-service-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin: 0; padding: 8px 0; }
+.mn-service-facts > div { min-width: 0; }
+.mn-service-facts dt { color: var(--mn-ink-muted); font-size: 12px; overflow-wrap: anywhere; }
+.mn-service-facts dd { margin: 6px 0 0; color: var(--mn-ink); font-size: 14px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.mn-control-settings { display: grid; gap: 32px; }
 @media (min-width: 760px) {
-  .mn-control-overview { grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 36px; }
+  .mn-control-hero { padding-top: 36px; }
+  .mn-control-overview { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 40px; }
+  .mn-control-actions { display: grid; justify-items: stretch; }
+  .mn-control-status { text-align: left; }
+  .mn-control-label { justify-content: flex-start; }
+  .mn-control-description { margin-inline: 0; }
+  .mn-control-metrics { margin-top: 32px; padding-block: 24px; }
+  .mn-control-metrics > div { text-align: left; }
+  .mn-control-connectivity :deep([role="status"]) { text-align: left; }
+  .mn-control-destinations { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mn-control-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }
-@media (max-width: 420px) {
-  .mn-control-destinations { grid-template-columns: minmax(0, 1fr); gap: 12px; margin-bottom: 32px; }
-  .mn-control-destinations > button { min-height: 72px; }
-  .mn-service-facts { gap: 16px; }
+@media (max-width: 639px) {
+  .mn-dashboard-entry { grid-template-columns: minmax(0, 1fr); }
+  .mn-dashboard-action, .mn-dashboard-open { width: 100%; }
 }
 @media (forced-colors: active) {
-  .mn-control-destinations > button { border: 1px solid ButtonText; }
+  .mn-control-power, .mn-control-destinations > button { border: 1px solid ButtonText; }
 }
 @media (prefers-reduced-motion: reduce) {
   .mn-control-destinations > button { transition: none; }

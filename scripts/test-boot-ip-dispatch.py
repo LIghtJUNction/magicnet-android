@@ -41,12 +41,12 @@ if [ "$1" = __args ]; then
 fi
 [ "$1" != -6 ] || shift
 case "$*" in
-    'rule show')
+    'rule show'|'rule show table  2022')
         if [ -f "$MODDIR/core.started" ]; then
             printf '9000: from all lookup 2022\\n'
         fi
         exit 0 ;;
-    'route show table 2022')
+    'route show table  2022')
         if [ "${IP_MODE:-ok}" = denied ]; then
             printf 'RTNETLINK answers: Operation not permitted\\n' >&2
             exit 2
@@ -148,7 +148,7 @@ class BootIpDispatchTest(unittest.TestCase):
                 f.run(shell, str(f.root / f"{phase}.sh"))
                 self.assertFalse((f.root / "core.started").exists())
                 self.assertEqual(f.state.read_text(), OLD_STATE)
-                self.assertIn("route show table 2022", (f.root / "wrong-ip.log").read_text())
+                self.assertIn("route show table  2022", (f.root / "wrong-ip.log").read_text())
 
     def test_both_boot_hooks_rebase_old_ledger_and_capture_current_generation(self):
         for shell, phase in self.cases():
@@ -163,9 +163,9 @@ class BootIpDispatchTest(unittest.TestCase):
                 self.assertNotIn("previous-boot", state)
                 self.assertIn("rule4=9000: from all lookup 2022\n", state)
                 calls = (f.root / "system-ip.log").read_text()
-                self.assertIn("route show table 2022", calls)
+                self.assertIn("route show table  2022", calls)
                 if Path("/proc/net/if_inet6").exists():
-                    self.assertIn("-6 route show table 2022", calls)
+                    self.assertIn("-6 route show table  2022", calls)
                     self.assertIn("rule6=9000: from all lookup 2022\n", state)
                 self.assertFalse((f.root / "wrong-ip.log").exists())
 

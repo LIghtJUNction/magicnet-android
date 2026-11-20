@@ -234,7 +234,7 @@ assert.match(
 assert.match(
   app,
   /createIssue|refreshAll|openExternal/,
-  "header actions must remain wired",
+  "utility actions must remain wired",
 );
 const header = app.slice(
   app.indexOf("<header"),
@@ -260,16 +260,6 @@ assert.doesNotMatch(
   headerButton("refreshAll"),
   /mn-desktop-action/,
   "refresh must remain visible on mobile",
-);
-assert.match(
-  headerButton("openExternal(REPO, 'GitHub')"),
-  /mn-desktop-action/,
-  "GitHub belongs to desktop chrome and the mobile utility sheet",
-);
-assert.match(
-  headerButton("createIssue"),
-  /mn-desktop-action/,
-  "feedback must move to the utility sheet on mobile",
 );
 assert.match(
   app,
@@ -320,7 +310,7 @@ assert.match(controlPage, /requestTransparentMode\('ebpf'/);
 // The shared presenter replaces per-page optimistic PID-only status. Exercise
 // the real helper as well as both call sites, not the old implementation shape.
 assert.match(controlPage, /servicePresentation\(state\.runtime, state\.hasKsu\)/);
-assert.match(app, /servicePresentation\(state\.runtime, state\.hasKsu\)/);
+assert.match(app, /connectionPresentation\(state\.runtime, state\.hasKsu, state\.connectivity\)/);
 const { servicePresentation } = await import("./src/lib/servicePresentation.ts");
 for (const serviceReady of [false, null]) {
   const status = servicePresentation({ singBoxState: "sing-box", serviceReady });

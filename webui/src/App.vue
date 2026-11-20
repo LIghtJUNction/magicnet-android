@@ -4,11 +4,10 @@ import {
   AppWindow,
   Bug,
   Coffee,
-  ChevronUp,
+  ChevronDown,
   DownloadCloud,
   FileCode2,
   Gauge,
-  GitBranch,
   Github,
   HeartPulse,
   Link2,
@@ -18,6 +17,7 @@ import {
   MoreHorizontal,
   Network,
   PanelsTopLeft,
+  ArrowUpRight,
   RefreshCw,
   Route,
   ScrollText,
@@ -25,13 +25,12 @@ import {
   Settings,
   ShieldBan,
   SquareTerminal,
-  Stethoscope,
   Sun,
   Wrench,
   X,
 } from "lucide-vue-next";
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch, watchEffect, type Component } from "vue";
-import { t } from "@/i18n";
+import { locale, t } from "@/i18n";
 import LanguageSelect from "@/components/LanguageSelect.vue";
 import { MAGICNET_LOGO_URL } from "@/branding";
 import IssueReporterDialog from "@/components/IssueReporterDialog.vue";
@@ -41,7 +40,7 @@ import type { PaletteItem } from "@/components/CommandPalette.vue";
 import { isPaletteShortcut } from "@/components/commandPalette";
 import Button from "@/components/ui/Button.vue";
 import StatusDot from "@/components/ui/StatusDot.vue";
-import { servicePresentation } from "@/lib/servicePresentation";
+import { connectionPresentation } from "@/lib/servicePresentation";
 import { useMagicNet } from "@/composables/useMagicNet";
 import { setPendingSubscriptionDraft } from "@/components/pages/subscriptionDraft";
 import { useTheme } from "@/composables/useTheme";
@@ -66,8 +65,6 @@ type TabDefinition = {
 type WorkspaceDefinition = {
   key: WorkspaceKey;
   label: string;
-  mobileLabel?: string;
-  icon: Component;
 };
 
 const ONBOARDING_STORAGE_KEY = "magicnet.webui.onboarding.v1";
@@ -118,28 +115,14 @@ const tabs: readonly TabDefinition[] = [
 ];
 
 const workspaces: readonly WorkspaceDefinition[] = [
-  {
-    key: "run",
-    label: "运行",
-    icon: Gauge,
-  },
-  {
-    key: "route",
-    label: "路由",
-    icon: GitBranch,
-  },
-  {
-    key: "configure",
-    label: "配置",
-    mobileLabel: "订阅",
-    icon: Settings,
-  },
-  {
-    key: "diagnose",
-    label: "诊断",
-    icon: Stethoscope,
-  },
+  { key: "run", label: "运行" },
+  { key: "route", label: "路由" },
+  { key: "configure", label: "配置" },
+  { key: "diagnose", label: "诊断" },
 ];
+const primaryKeys: readonly TabKey[] = ["control", "proxies", "subs", "apps"];
+const primaryTabs = primaryKeys.map((key) => tabs.find((tab) => tab.key === key)!);
+const secondaryTabs = tabs.filter((tab) => !primaryKeys.includes(tab.key));
 
 const {
   state,
@@ -156,12 +139,18 @@ const {
   closeIssueReporter,
   submitIssue,
   openExternal,
+  openSingBoxUi,
+  openingSingBoxUi,
   REPO,
   AUTHOR_WHISPER_URL,
 } = useMagicNet();
 const { preference: themePreference, label: themeLabel, cycleTheme } = useTheme();
 const { keyboardOpen } = useMobileKeyboard();
 const { viewportStyle } = useDialogViewport();
+
+async function openDashboard(): Promise<void> {
+  if (!await openSingBoxUi("zashboard")) setTab("webui");
+}
 
 function readTabFromLocation(): TabKey | null {
   if (typeof window === "undefined") return null;
@@ -178,11 +167,9 @@ function writeTabToLocation(tab: TabKey, replace = false): void {
 }
 
 const activeTab = ref<TabKey>(readTabFromLocation() ?? "control");
-const lastTabByWorkspace = ref<Record<WorkspaceKey, TabKey>>({
-  run: "control",
-  route: "apps",
-  configure: "subs",
-  diagnose: "health",
+const showAdvancedPages = ref(!primaryKeys.includes(activeTab.value));
+watch(activeTab, (tab) => {
+  if (!primaryKeys.includes(tab)) showAdvancedPages.value = true;
 });
 const showUtilityMenu = ref(false);
 const showPalette = ref(false);
@@ -207,60 +194,15 @@ watch(() => state.issueReporter.open, (open) => {
   }
 }, { flush: "sync" });
 
-const easterEggVisitors = [
-  {
-    name: "GPT-6",
-    title: "GPT-6 到此一游",
-    body: "少画几个框，多留一点位置给内容。",
-  },
-  {
-    name: "SOL",
-    title: "准备好你的太阳镜 😎",
-    body: "SOL 到此一游 · 光太亮，别直视内核。",
-  },
-  {
-    name: "Grok 4.5",
-    title: "Grok 4.5 到此一游 ✨",
-    body: "xAI 路过 MagicNet · 路由已嗅探，彩蛋已落盘。",
-  },
-  {
-    name: "Kimi K3",
-    title: "Kimi K3 到此一游 🌙",
-    body: "月之暗面打卡成功 · 上下文很长，短签也行。",
-  },
-  {
-    name: "Fable 5",
-    title: "Fable 5 到此一游 📖",
-    body: "Claude Fable 5 翻过这页 · 故事继续，彩蛋已签收。",
-  },
-  {
-    name: "Opus 5.5",
-    title: "Opus 5.5 到此一游 ✦",
-    body: "Claude Opus 5.5 连起了这片星座 · 虚线是路，星星是你的数据包。",
-  },
-] as const;
-
-const easterEggVisible = ref(false);
-const easterEggShownIndex = ref(0);
-let easterEggNextIndex = 0;
-const easterEggPayload = computed(
-  () => easterEggVisitors[easterEggShownIndex.value] ?? easterEggVisitors[0],
-);
-let brandClickCount = 0;
-let brandClickWindowStartedAt = 0;
-let easterEggTimer: number | undefined;
 let bodyOverflowBeforeDialog = "";
 let idleWarmup: number | undefined;
 let delayedWarmup: number | undefined;
+let navigationFrame: number | undefined;
+let navigationObserver: ResizeObserver | undefined;
+let navigationMounted = false;
 
 const activeTabDefinition = computed(
   () => tabs.find((item) => item.key === activeTab.value) ?? tabs[0],
-);
-const activeWorkspace = computed(
-  () => workspaces.find((item) => item.key === activeTabDefinition.value.workspace) ?? workspaces[0],
-);
-const activeSectionTabs = computed(() =>
-  tabs.filter((item) => item.workspace === activeWorkspace.value.key),
 );
 const activeComponent = computed(() => asyncPages[activeTab.value]);
 watchEffect(() => { document.title = `${t(activeTabDefinition.value.label)} · MagicNet`; });
@@ -270,7 +212,7 @@ function focusPageContent(): void {
 }
 
 const statusMessage = computed(() => (state.task ? t("正在执行：{task}", { task: t(state.task) }) : t(state.notice)));
-const serviceStatus = computed(() => servicePresentation(state.runtime, state.hasKsu));
+const serviceStatus = computed(() => connectionPresentation(state.runtime, state.hasKsu, state.connectivity));
 const runtimeStateLabel = computed(() => serviceStatus.value.label);
 const routeStackState = computed(() => serviceStatus.value.routeState);
 const transparentRouteData = computed(() => {
@@ -291,7 +233,7 @@ const coreMemoryLabel = computed(() =>
 const tabsByWorkspace = computed(() =>
   workspaces.map((workspace) => ({
     workspace,
-    items: tabs.filter((tab) => tab.workspace === workspace.key),
+    items: secondaryTabs.filter((tab) => tab.workspace === workspace.key),
   })),
 );
 
@@ -316,35 +258,60 @@ const paletteItems = computed<PaletteItem[]>(() => {
   ];
 });
 
+function revealActiveNavigation(): void {
+  const target = Array.from(
+    document.querySelectorAll<HTMLElement>(`[data-tab="${activeTab.value}"]`),
+  ).find((item) => item.offsetParent !== null);
+  if (!target) return;
+  const rail = target.closest<HTMLElement>(".desktop-rail");
+  if (!rail) {
+    target.scrollIntoView({ block: "nearest", inline: "center" });
+    return;
+  }
+  // The rail begins below the toolbar. Its scroll area must fit the remaining
+  // viewport so revealing a deep link never scrolls the page heading away.
+  const top = Math.max(16, rail.getBoundingClientRect().top);
+  rail.style.maxHeight = `${Math.max(44, window.innerHeight - top - 16)}px`;
+  const visible = rail.getBoundingClientRect();
+  const selected = target.getBoundingClientRect();
+  // Scroll offsets can round to whole pixels while translated labels retain
+  // fractional geometry. Keep a small inset inside the actual scrollport.
+  const visibleTop = Math.max(0, visible.top + rail.clientTop) + 1;
+  const visibleBottom = Math.min(window.innerHeight, visible.top + rail.clientTop + rail.clientHeight) - 1;
+  if (selected.bottom > visibleBottom) rail.scrollTop += Math.ceil(selected.bottom - visibleBottom);
+  else if (selected.top < visibleTop) rail.scrollTop -= Math.ceil(visibleTop - selected.top);
+}
+
+function scheduleNavigationReveal(): void {
+  if (!navigationMounted || navigationFrame !== undefined) return;
+  navigationFrame = window.requestAnimationFrame(() => {
+    navigationFrame = undefined;
+    revealActiveNavigation();
+  });
+}
+
+watch(locale, scheduleNavigationReveal, { flush: "post" });
+
 function setTab(tab: TabKey, options: { updateLocation?: boolean } = {}): void {
   const changed = tab !== activeTab.value;
   if (changed) {
     activeTab.value = tab;
-    const definition = tabs.find((item) => item.key === tab);
-    if (definition) lastTabByWorkspace.value[definition.workspace] = tab;
     warmActiveTab(tab);
   }
   if (options.updateLocation !== false) writeTabToLocation(tab);
   void nextTick(() => {
-    const target = Array.from(
-      document.querySelectorAll<HTMLElement>(`[data-tab="${tab}"]`),
-    ).find((item) => item.offsetParent !== null);
-    target?.scrollIntoView({ block: "nearest", inline: "center" });
     // Cached long pages retain their height. Start explicit navigation at the
     // heading; browser history can still restore its own scroll position.
     if (changed && options.updateLocation !== false) {
       window.scrollTo({ top: 0, behavior: "instant" });
     }
+    scheduleNavigationReveal();
   });
 }
 
-function setWorkspace(workspace: WorkspaceKey, event: MouseEvent): void {
-  if (activeWorkspace.value.key === workspace) {
-    mobilePagesTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-    showMobilePages.value = true;
-    return;
-  }
-  setTab(workspace === "configure" ? "subs" : lastTabByWorkspace.value[workspace]);
+function openMobilePages(event: MouseEvent): void {
+  mobilePagesTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  showMobilePages.value = true;
 }
 
 function closeMobilePages(): void {
@@ -481,31 +448,12 @@ function closePalette(): void {
 }
 
 function handlePaletteShortcut(event: KeyboardEvent): void {
+  // Page-owned dialogs must keep their keyboard and focus until they close.
+  if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[aria-modal="true"]'))) return;
   if (showPalette.value || showMobilePages.value || showOnboarding.value || state.issueReporter.open) return;
   if (!isPaletteShortcut(event)) return;
   event.preventDefault();
   openPalette();
-}
-
-function closeEasterEgg(): void {
-  easterEggVisible.value = false;
-  if (easterEggTimer !== undefined) window.clearTimeout(easterEggTimer);
-  easterEggTimer = undefined;
-}
-
-function handleBrandMarkClick(): void {
-  const now = Date.now();
-  if (now - brandClickWindowStartedAt > 2400) brandClickCount = 0;
-  if (brandClickCount === 0) brandClickWindowStartedAt = now;
-  brandClickCount += 1;
-  if (brandClickCount < 5) return;
-
-  brandClickCount = 0;
-  easterEggShownIndex.value = easterEggNextIndex % easterEggVisitors.length;
-  easterEggNextIndex = (easterEggShownIndex.value + 1) % easterEggVisitors.length;
-  easterEggVisible.value = true;
-  if (easterEggTimer !== undefined) window.clearTimeout(easterEggTimer);
-  easterEggTimer = window.setTimeout(closeEasterEgg, 5200);
 }
 
 function dismissActionMenus(event: PointerEvent): void {
@@ -533,7 +481,6 @@ function handleEscape(event: KeyboardEvent): void {
     menu.querySelector("summary")?.focus();
     return;
   }
-  closeEasterEgg();
 }
 
 function prefetchTab(tab: TabKey): void {
@@ -562,25 +509,14 @@ function warnBeforeDiscardingConfig(event: BeforeUnloadEvent): void {
   event.returnValue = "";
 }
 
-function revealInitialSectionTab(): void {
-  const track = document.querySelector<HTMLElement>(".mn-section-tabs");
-  const selected = track?.querySelector<HTMLElement>('[aria-current="page"]');
-  if (!track || !selected) return;
-  const label = selected.getBoundingClientRect();
-  const visible = track.getBoundingClientRect();
-  if (label.left >= visible.left && label.right <= visible.right) return;
-  // Avoid scrollIntoView here: it can change the keyboard navigation starting point.
-  // Move only this track so the first Tab still reaches the skip link.
-  track.scrollLeft += label.left - visible.left - (visible.width - label.width) / 2;
-}
 
 onMounted(() => {
+  navigationMounted = true;
   const initialTab = activeTab.value;
   const initialReads = Promise.all([
     refreshStatus(),
     initialTab === "control" ? refreshSubs(true, undefined, false) : Promise.resolve(false),
   ]);
-  void nextTick(revealInitialSectionTab);
   // A deep link is already the active tab, so setTab would not warm it.
   if (initialTab !== "control") warmActiveTab(initialTab);
   document.addEventListener("keydown", handleEscape);
@@ -590,6 +526,18 @@ onMounted(() => {
   window.addEventListener("hashchange", syncTabFromLocation);
   window.addEventListener("beforeunload", warnBeforeDiscardingConfig);
   writeTabToLocation(activeTab.value, true);
+  // Lazy-page content, font loading and translated labels can change the rail
+  // after mount. Reveal against the settled layout without scrolling the body.
+  if (typeof ResizeObserver !== "undefined") {
+    navigationObserver = new ResizeObserver(scheduleNavigationReveal);
+    for (const element of document.querySelectorAll(".mn-command-bar, .mn-workspace-frame, .desktop-rail, .desktop-rail nav")) {
+      navigationObserver.observe(element);
+    }
+  }
+  void nextTick(scheduleNavigationReveal);
+  void document.fonts.ready.then(scheduleNavigationReveal);
+  void initialReads.then(scheduleNavigationReveal);
+  window.addEventListener("resize", scheduleNavigationReveal);
   if (state.hasKsu && !readOnboardingPreference()) {
     void initialReads.then(([serviceObserved, subscriptionsObserved]) => {
       if (!serviceObserved || !subscriptionsObserved || activeTab.value !== "control" ||
@@ -611,6 +559,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  navigationMounted = false;
+  navigationObserver?.disconnect();
+  if (navigationFrame !== undefined) window.cancelAnimationFrame(navigationFrame);
   if (idleWarmup !== undefined) window.cancelIdleCallback?.(idleWarmup);
   if (delayedWarmup !== undefined) window.clearTimeout(delayedWarmup);
   document.removeEventListener("keydown", handleEscape);
@@ -619,7 +570,7 @@ onUnmounted(() => {
   window.removeEventListener("popstate", syncTabFromLocation);
   window.removeEventListener("hashchange", syncTabFromLocation);
   window.removeEventListener("beforeunload", warnBeforeDiscardingConfig);
-  if (easterEggTimer !== undefined) window.clearTimeout(easterEggTimer);
+  window.removeEventListener("resize", scheduleNavigationReveal);
   if (showUtilityMenu.value) document.body.style.overflow = bodyOverflowBeforeDialog;
 });
 </script>
@@ -632,9 +583,9 @@ onUnmounted(() => {
         <button
           class="mn-brand-mark brand-mark"
           type="button"
-          :aria-label="t('MagicNet 品牌标记')"
+          :aria-label="`MagicNet · ${t('返回运行总览')}`"
           title="MagicNet"
-          @click="handleBrandMarkClick"
+          @click="setTab('control')"
         >
           <img
             :src="MAGICNET_LOGO_URL"
@@ -646,11 +597,14 @@ onUnmounted(() => {
         </button>
         <div class="mn-brand-copy">
           <h1>MagicNet</h1>
-          <p>{{ t("透明网络工作台") }}</p>
+          <p class="mn-header-page">{{ t(activeTabDefinition.label) }}</p>
         </div>
       </div>
 
       <div class="mn-global-actions">
+        <Button class="mn-dashboard-global" variant="secondary" :disabled="!state.hasKsu" :loading="openingSingBoxUi" :aria-label="t('打开 Zashboard')" :title="t('打开 Zashboard')" @click="openDashboard">
+          <PanelsTopLeft :size="18" aria-hidden="true" /><span>Zashboard</span><ArrowUpRight :size="15" aria-hidden="true" />
+        </Button>
         <button
           class="mn-palette-trigger"
           type="button"
@@ -687,34 +641,6 @@ onUnmounted(() => {
           <RefreshCw :size="17" aria-hidden="true" />
         </Button>
         <Button
-          class="mn-desktop-action"
-          variant="outline"
-          size="sm"
-          :aria-label="t('打开新手引导')"
-          @click="requestOnboarding"
-        >
-          <ScrollText :size="16" aria-hidden="true" />{{ t('引导') }}
-        </Button>
-        <Button
-          class="mn-desktop-action"
-          variant="outline"
-          size="sm"
-          :loading="state.task === '创建 GitHub issue'"
-          :aria-label="t('创建 GitHub Issue')"
-          @click="createIssue"
-        >
-          <Bug :size="16" aria-hidden="true" />{{ t('反馈') }}
-        </Button>
-        <Button
-          class="mn-desktop-action"
-          variant="outline"
-          size="sm"
-          :aria-label="t('打开 GitHub')"
-          @click="openExternal(REPO, 'GitHub')"
-        >
-          <Github :size="16" aria-hidden="true" />GitHub
-        </Button>
-        <Button
           class="mn-more-action"
           variant="ghost"
           size="icon"
@@ -723,7 +649,7 @@ onUnmounted(() => {
           :aria-expanded="showUtilityMenu"
           @click="openUtilityMenu"
         >
-          <MoreHorizontal :size="18" aria-hidden="true" />
+          <Settings :size="18" aria-hidden="true" />
         </Button>
       </div>
     </header>
@@ -756,12 +682,10 @@ onUnmounted(() => {
     <div class="mn-workspace-frame">
       <aside class="desktop-rail" :aria-label="t('MagicNet 工作区')">
         <nav :aria-label="t('全部页面')">
-          <div v-for="group in tabsByWorkspace" :key="group.workspace.key" class="mn-nav-group">
-            <div class="mn-rail-label">
-              <span>{{ t(group.workspace.label) }}</span>
-            </div>
+          <div class="mn-nav-group mn-primary-navigation">
+            <p class="mn-rail-label">{{ t("常用入口") }}</p>
             <button
-              v-for="item in group.items"
+              v-for="item in primaryTabs"
               :key="item.key"
               :data-tab="item.key"
               :class="activeTab === item.key ? 'mn-nav-active' : 'mn-nav-idle'"
@@ -771,9 +695,33 @@ onUnmounted(() => {
               @focus="prefetchTab(item.key)"
               @click="setTab(item.key)"
             >
-              <component :is="item.icon" :size="17" aria-hidden="true" />
-              <span>{{ t(item.label) }}</span>
+              <component :is="item.icon" :size="18" aria-hidden="true" />
+              <span><strong>{{ t(item.key === 'proxies' ? '节点' : item.label) }}</strong><small>{{ t(item.hint) }}</small></span>
             </button>
+          </div>
+          <div class="mn-nav-more">
+            <button class="mn-nav-more-toggle" type="button" :aria-expanded="showAdvancedPages" aria-controls="mn-secondary-navigation" @click="showAdvancedPages = !showAdvancedPages">
+              <MoreHorizontal :size="18" aria-hidden="true" /><span>{{ t('更多功能') }}</span><ChevronDown :size="16" aria-hidden="true" />
+            </button>
+            <div v-show="showAdvancedPages" id="mn-secondary-navigation" class="mn-secondary-navigation">
+              <div v-for="group in tabsByWorkspace" :key="group.workspace.key" class="mn-nav-group">
+                <div class="mn-rail-label">{{ t(group.workspace.label) }}</div>
+                <button
+                  v-for="item in group.items"
+                  :key="item.key"
+                  :data-tab="item.key"
+                  :class="activeTab === item.key ? 'mn-nav-active' : 'mn-nav-idle'"
+                  type="button"
+                  :aria-current="activeTab === item.key ? 'page' : undefined"
+                  @pointerenter="prefetchTab(item.key)"
+                  @focus="prefetchTab(item.key)"
+                  @click="setTab(item.key)"
+                >
+                  <component :is="item.icon" :size="17" aria-hidden="true" />
+                  <span>{{ t(item.label) }}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </nav>
         <button
@@ -797,25 +745,7 @@ onUnmounted(() => {
       </aside>
 
       <main id="mn-main" class="mn-workspace-main" tabindex="-1">
-        <header class="mn-workspace-header">
-          <nav class="mn-section-tabs" :aria-label="t('{workspace}分区', { workspace: t(activeWorkspace.label) })">
-            <button
-              v-for="item in activeSectionTabs"
-              :key="item.key"
-              :data-tab="item.key"
-              :class="activeTab === item.key ? 'is-active' : undefined"
-              type="button"
-              :aria-current="activeTab === item.key ? 'page' : undefined"
-              @pointerenter="prefetchTab(item.key)"
-              @focus="prefetchTab(item.key)"
-              @click="setTab(item.key)"
-            >
-              <span>{{ t(item.label) }}</span>
-            </button>
-          </nav>
-        </header>
-
-        <!-- KeepAlive preserves form state across all four workspaces. -->
+        <!-- Preserve unfinished forms while switching pages. -->
         <section class="page-surface" :data-page="activeTab">
           <Suspense>
             <KeepAlive :max="tabs.length">
@@ -835,29 +765,28 @@ onUnmounted(() => {
 
     <nav v-show="!keyboardOpen" class="mobile-nav" :aria-label="t('MagicNet 移动导航')">
       <button
-        v-for="workspace in workspaces"
-        :key="workspace.key"
-        :data-workspace="workspace.key"
-        :class="activeWorkspace.key === workspace.key ? 'mn-nav-active' : 'mn-nav-idle'"
+        v-for="item in primaryTabs"
+        :key="item.key"
+        :data-tab="item.key"
+        :class="activeTab === item.key ? 'mn-nav-active' : 'mn-nav-idle'"
         type="button"
-        :aria-current="activeWorkspace.key === workspace.key ? 'page' : undefined"
-        :aria-haspopup="activeWorkspace.key === workspace.key ? 'dialog' : undefined"
-        :aria-expanded="activeWorkspace.key === workspace.key ? showMobilePages : undefined"
-        :title="activeWorkspace.key === workspace.key ? t('打开分区页面') : undefined"
-        @click="setWorkspace(workspace.key, $event)"
+        :aria-current="activeTab === item.key ? 'page' : undefined"
+        @click="setTab(item.key)"
       >
-        <component :is="workspace.icon" :size="19" aria-hidden="true" />
-        <span>{{ t(workspace.mobileLabel ?? workspace.label) }}</span>
-        <ChevronUp v-if="activeWorkspace.key === workspace.key" class="mn-nav-expand" :size="12" aria-hidden="true" />
+        <component :is="item.icon" :size="20" aria-hidden="true" />
+        <span>{{ t(item.key === 'proxies' ? '节点' : item.label) }}</span>
+      </button>
+      <button type="button" :class="!primaryKeys.includes(activeTab) ? 'mn-nav-active' : 'mn-nav-idle'" :aria-label="t('更多功能')" :aria-current="!primaryKeys.includes(activeTab) ? 'page' : undefined" aria-haspopup="dialog" :aria-expanded="showMobilePages" @click="openMobilePages">
+        <MoreHorizontal :size="20" aria-hidden="true" /><span>{{ t('更多') }}</span>
       </button>
     </nav>
 
     <Transition name="sheet">
       <MobileWorkspaceSheet
         v-if="showMobilePages"
-        :workspace="activeWorkspace.label"
+        :workspace="t('更多功能')"
         :current-page="activeTab"
-        :pages="activeSectionTabs"
+        :pages="secondaryTabs"
         @close="closeMobilePages"
         @select="selectMobilePage"
       />
@@ -931,27 +860,6 @@ onUnmounted(() => {
       @confirm="submitIssue"
     />
 
-    <Transition name="toast">
-      <aside v-if="easterEggVisible" class="mn-easter-egg" role="status" aria-live="polite">
-        <div class="mn-easter-mark">
-          <img :src="MAGICNET_LOGO_URL" alt="" width="38" height="38" decoding="async" />
-        </div>
-        <div class="mn-easter-copy">
-          <strong>{{ t(easterEggPayload.title) }}</strong>
-          <p>{{ t(easterEggPayload.body) }}</p>
-          <p class="mn-visitor-line">
-            <span>{{ t('来访') }}</span>
-            <template v-for="(visitor, index) in easterEggVisitors" :key="visitor.name">
-              <span aria-hidden="true">/</span>
-              <span :class="index === easterEggShownIndex ? 'is-current' : undefined">{{ visitor.name }}</span>
-            </template>
-          </p>
-        </div>
-        <button type="button" :aria-label="t('关闭彩蛋')" @click="closeEasterEgg">
-          <X :size="16" aria-hidden="true" />
-        </button>
-      </aside>
-    </Transition>
   </div>
 </template>
 
@@ -988,9 +896,6 @@ onUnmounted(() => {
 }
 
 .mn-rail-status__meta > span {
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--mn-surface-raised);
   color: var(--mn-ink-muted);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1004,6 +909,10 @@ onUnmounted(() => {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.mn-rail-status[data-state="attention"] .mn-rail-status__line {
+  color: var(--mn-danger);
 }
 
 .mn-rail-status[data-state="active"] .mn-rail-status__line {

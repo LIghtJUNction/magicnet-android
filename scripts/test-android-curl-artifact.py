@@ -224,26 +224,75 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(result.returncode, 127)
         self.assertIn('offline host installer fixture', result.stderr)
 
-    def test_corrupt_source_cache_stops_before_compiler_or_download(self):
-        ndk = self.root / 'ndk'
-        tools = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin'
+    def fetch_fixture(self, cached, downloaded):
+        scripts = self.root / 'scripts'
+        scripts.mkdir()
+        for path in (ARTIFACT.BUILDER_PATH, Path(ARTIFACT.__file__)):
+            shutil.copyfile(path, scripts / path.name)
+        trusted = self.root / 'trusted'
+        trusted.write_bytes(b'verified source fixture')
+        inputs = ARTIFACT.lock()
+        source = inputs['sources']['curl']
+        source['sha256'] = ARTIFACT.digest(trusted)
+        (scripts / 'android-curl-lock.json').write_text(json.dumps(inputs))
+        payload = self.root / 'download'
+        payload.write_bytes(downloaded)
+        requests = self.root / 'requests'
+        tools = self.root / 'ndk/toolchains/llvm/prebuilt/linux-x86_64/bin'
         tools.mkdir(parents=True)
-        (ndk / 'source.properties').write_text('Pkg.Revision = 29.0.14206865\n')
+        (self.root / 'ndk/source.properties').write_text('Pkg.Revision = 29.0.14206865\n')
         for name in ('aarch64-linux-android21-clang', 'llvm-ar', 'llvm-ranlib', 'llvm-nm', 'llvm-strip'):
             tool = tools / name
             tool.write_text('#!/bin/sh\nprintf compiler-must-not-run >&2\nexit 99\n')
             tool.chmod(0o755)
+        curl = tools / 'curl'
+        curl.write_text("""#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    case "$1" in -o) output="$2"; shift ;; https://*) url="$1" ;; esac
+    shift
+done
+printf '%s\\n' "$url" >> "$MAGICNET_TEST_REQUESTS"
+if [ "$url" != "$MAGICNET_TEST_FIRST_SOURCE" ]; then
+    printf fixture-stop-after-fetch >&2
+    exit 88
+fi
+cp "$MAGICNET_TEST_DOWNLOAD" "$output"
+""")
+        curl.chmod(0o755)
         cache = self.root / 'cache'
         cache.mkdir()
-        (cache / ARTIFACT.lock()['sources']['curl']['file']).write_bytes(b'corrupt cached source')
-        result = subprocess.run(['bash', str(ARTIFACT.BUILDER_PATH), 'arm64', str(self.root / 'out')],
-                                env=dict(os.environ, ANDROID_NDK_HOME=str(ndk),
-                                         MAGICNET_CURL_SOURCE_CACHE=str(cache), MAGICNET_CURL_NDK_SHA256=''),
+        cached_path = cache / source['file']
+        if cached is not None:
+            cached_path.write_bytes(cached)
+        result = subprocess.run(['bash', str(scripts / ARTIFACT.BUILDER_PATH.name),
+                                 'arm64', str(self.root / 'out')],
+                                env=dict(os.environ, ANDROID_NDK_HOME=str(self.root / 'ndk'),
+                                         MAGICNET_CURL_SOURCE_CACHE=str(cache), MAGICNET_CURL_NDK_SHA256='',
+                                         MAGICNET_TEST_REQUESTS=str(requests), MAGICNET_TEST_DOWNLOAD=str(payload),
+                                         MAGICNET_TEST_FIRST_SOURCE=source['url'], PATH=f"{tools}:{os.environ['PATH']}"),
                                 text=True, capture_output=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('FAILED', result.stdout)
         self.assertNotIn('compiler-must-not-run', result.stderr)
         self.assertFalse((self.root / 'out/curl').exists())
+        return result, cached_path, requests.read_text().splitlines(), inputs
+
+    def test_corrupt_source_cache_is_replaced_only_with_verified_download(self):
+        result, cached, requests, inputs = self.fetch_fixture(b'corrupt cache', b'verified source fixture')
+        self.assertIn('fixture-stop-after-fetch', result.stderr)
+        self.assertEqual(cached.read_bytes(), b'verified source fixture')
+        self.assertEqual(requests, [inputs['sources'][name]['url'] for name in ('curl', 'openssl')])
+
+    def test_verified_source_cache_skips_download(self):
+        result, cached, requests, inputs = self.fetch_fixture(b'verified source fixture', b'must not be fetched')
+        self.assertIn('fixture-stop-after-fetch', result.stderr)
+        self.assertEqual(cached.read_bytes(), b'verified source fixture')
+        self.assertEqual(requests, [inputs['sources']['openssl']['url']])
+
+    def test_http_success_with_untrusted_content_is_not_cached_or_compiled(self):
+        result, cached, requests, inputs = self.fetch_fixture(None, b'<html>download unavailable</html>')
+        self.assertIn('source checksum mismatch', result.stderr)
+        self.assertFalse(cached.exists())
+        self.assertEqual(requests, [inputs['sources']['curl']['url']])
 
 
 if __name__ == '__main__':

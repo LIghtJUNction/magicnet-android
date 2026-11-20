@@ -1,3 +1,4 @@
+import { navigateToPage } from "./navigation.mjs";
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
@@ -7,14 +8,9 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("proxy groups are directly reachable from the routing workspace", async ({ page }) => {
+test("proxy groups are one tap away from the overview", async ({ page }) => {
   await page.goto("/", { waitUntil: "networkidle" });
-  const desktop = page.locator('.desktop-rail [data-tab="proxies"]');
-  if (await desktop.isVisible()) await desktop.click();
-  else {
-    await page.locator('.mobile-nav [data-workspace="route"]').click();
-    await page.locator('.mn-section-tabs [data-tab="proxies"]').click();
-  }
+  await navigateToPage(page, "proxies");
   await expect(page).toHaveURL(/#\/proxies$/);
   await expect(page.getByRole("heading", { name: "节点与代理组", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "代理组", exact: true })).toBeVisible();

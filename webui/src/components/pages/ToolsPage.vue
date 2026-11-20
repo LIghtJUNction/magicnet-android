@@ -325,7 +325,7 @@ function selectWarpGlobal(enabled: boolean): void {
 </script>
 
 <template>
-  <div class="tools-page grid gap-4">
+  <div class="tools-page grid">
     <PageHeader :overline="t('工具')" :title="t('工具')">
       <Button variant="outline" :loading="toolsRefreshing" @click="refreshTools">
         <RefreshCw :size="17" />{{ t("刷新") }}
@@ -341,9 +341,14 @@ function selectWarpGlobal(enabled: boolean): void {
     />
 
     <div class="tools-sections min-w-0">
+      <section class="tools-group" aria-labelledby="tools-network-heading">
+        <header class="tools-group-heading"><h3 id="tools-network-heading">{{ t("网络") }}</h3><span>01</span></header>
       <SectionDisclosure :title="t('Play 商店联网修复')"><PlayNetworkRecoveryCard /></SectionDisclosure>
       <SectionDisclosure title="UDP / IPv6"><NetworkPolicyCard /></SectionDisclosure>
       <SectionDisclosure title="DNS"><DnsToolsCard /></SectionDisclosure>
+      </section>
+      <section class="tools-group" aria-labelledby="tools-config-heading">
+        <header class="tools-group-heading"><h3 id="tools-config-heading">{{ t("配置") }}</h3><span>02</span></header>
       <SectionDisclosure :title="t('WARP 出站')">
 
       <Card class="grid gap-3">
@@ -403,6 +408,9 @@ allowed_ips={{ state.warp.allowedIps }}</pre>
       </Card>
 
       </SectionDisclosure>
+      </section>
+      <section class="tools-group" aria-labelledby="tools-debug-heading">
+        <header class="tools-group-heading"><h3 id="tools-debug-heading">{{ t("诊断") }}</h3><span>03</span></header>
       <SectionDisclosure title="eCapture"><EcaptureToolsCard /></SectionDisclosure>
       <SectionDisclosure title="MCP"><McpToolsCard /></SectionDisclosure>
       <SectionDisclosure :title="t('拓扑 / 路由')">
@@ -416,11 +424,25 @@ allowed_ips={{ state.warp.allowedIps }}</pre>
       </Card>
       <NetworkSnapshotPanel :topology="state.topology" :sysroute="state.sysroute" />
       </SectionDisclosure>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.tools-page { max-width: 832px; margin-inline: auto; }
-.tools-sections { border-top: 1px solid var(--mn-border); }
+.tools-page { min-width: 0; max-width: 832px; margin-inline: auto; gap: 28px; }
+.tools-sections { display: grid; gap: 36px; }
+.tools-group { min-width: 0; }
+.tools-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.tools-group-heading h3 { font-size: 13px; font-weight: 500; color: var(--mn-ink-muted); }
+.tools-group-heading > span { font: 12px var(--font-mono); color: var(--mn-ink-faint); }
+.tools-group :deep(.mn-section-disclosure:first-of-type) { border-top: 0; }
+.tools-group :deep(.mn-section-disclosure > summary) { min-height: 68px; font-size: 16px; font-weight: 450; }
+.tools-group :deep(.magic-card) { border: 0; background: transparent; }
+.tools-group :deep(pre) { border: 0; overflow-wrap: anywhere; }
+.tools-group :deep(.mn-field) { font-size: 16px; }
+@media (max-width: 600px) {
+  .tools-page { gap: 24px; }
+  .tools-group :deep(.grid > button) { min-height: 48px; }
+}
 </style>

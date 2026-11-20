@@ -44,17 +44,28 @@ assert.equal(launch.preview.includes(basename), false);
 assert.equal(launch.args.includes("subscription-url"), false);
 
 const httpPlan = buildSubscriptionSavePlan("http://example.invalid/sub");
-assert.equal(httpPlan.status, "error", "HTTP subscriptions must be rejected before device submission");
+assert.equal(httpPlan.status, "warning", "HTTP sources require explicit device authorization before fetching");
 assert.equal(httpPlan.http, 1);
-assert.match(httpPlan.message, /HTTPS/);
+assert.match(httpPlan.message, /可信来源授权/);
 const httpSummary = summarizeSubscriptionInput("http://example.invalid/sub\nhttps://secure.example.invalid/sub");
-assert.equal(httpSummary.valid, 1, "only HTTPS subscriptions count as valid");
+assert.equal(httpSummary.valid, 2, "both URL schemes reach the device policy validator");
+assert.deepEqual(buildSubscriptionSavePlan("HTTP://NAS.invalid:00080/sub?token=secret").lines, ["http://nas.invalid/sub?token=secret"]);
+assert.deepEqual(buildSubscriptionSavePlan("http://NAS.invalid:443/sub").lines, ["http://nas.invalid:443/sub"]);
+assert.deepEqual(buildSubscriptionSavePlan("https://NAS.invalid:80/sub").lines, ["https://nas.invalid:80/sub"]);
+const localPreview = buildSubscriptionPreview("http://nas.invalid:25500/private/path?token=SECRET")[0];
+assert.equal(localPreview.status, "ok");
+assert.match(localPreview.notes.join(" "), /可信来源授权/);
+assert.equal(JSON.stringify(localPreview).includes("SECRET"), false);
+assert.equal(buildSubscriptionSavePlan("http://user:secret@nas.invalid/sub").status, "error");
+for (const host of ["2130706433", "0177.0.0.1", "0x7f000001", "127.1"]) {
+  assert.equal(buildSubscriptionSavePlan(`http://${host}/sub`).status, "error", "numeric aliases must not be rewritten into a trusted authority");
+}
 const credentialPlan = buildSubscriptionSavePlan("https://user:secret@example.invalid/sub");
 assert.equal(credentialPlan.status, "error", "subscription credentials must be rejected before device submission");
 assert.match(credentialPlan.message, /凭据/);
 assert.equal(credentialPlan.invalid, 1, "credential-bearing URLs must be counted as invalid");
 const summary = summarizeSubscriptionInput("https://EXAMPLE.invalid/sub\nhttps://example.invalid/sub\nhttp://other.invalid/sub");
-assert.deepEqual(summary, { raw: 3, valid: 2, duplicate: 1, overLimit: 0 });
+assert.deepEqual(summary, { raw: 3, valid: 3, duplicate: 1, overLimit: 0 });
 const previews = buildSubscriptionPreview([
   "not-a-url",
   "https://one.invalid/sub",

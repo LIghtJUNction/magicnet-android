@@ -51,10 +51,9 @@ update_bundled_rule() (
     fi
     identity="bundled:sha256:$digest"
     [ ! -f "$hash_file" ] || old_ref=$(cat "$hash_file") || return 1
-    if [ "$old_ref" = "$identity" ] && cmp -s -- "$staged" "$RULE_DIR/$file"; then
-        return 0
-    fi
-    if ! cmp -s -- "$staged" "$RULE_DIR/$file"; then
+    if cmp -s -- "$staged" "$RULE_DIR/$file"; then
+        [ "$old_ref" != "$identity" ] || return 0
+    else
         chmod 0644 "$staged" || return 1
         mv -f -- "$staged" "$RULE_DIR/$file" || return 1
     fi

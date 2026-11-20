@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -25,7 +26,7 @@ class UninstallTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.module = self.root / "MagicNet"
-        for name in ("uninstall.sh", "lib/magicnet/uninstall.sh",
+        for name in ("uninstall.sh", "lib/magicnet/uninstall.sh", "lib/magicnet/primitives.sh",
                      "lib/kamfw/launcher.sh", "lib/magicnet/farewell/index.html"):
             target = self.module / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -34,6 +35,10 @@ class UninstallTests(unittest.TestCase):
         (self.module / "module.prop").write_text("id=MagicNet\nversion=v1.5.4+test\n")
         cli = self.module / "cli"
         cli.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >>"$TEST_CALLS"\n'
+                       'if [ "${TEST_HOLD:-0}" = 1 ] && [ "$*" = "mcp stop" ]; then\n'
+                       '  : >"$TEST_ROOT/cleanup-started"\n'
+                       '  while [ ! -f "$TEST_ROOT/cleanup-release" ]; do sleep 0.05; done\n'
+                       'fi\n'
                        '[ "$*" != "${TEST_FAIL:-}" ]\n')
         cli.chmod(0o755)
         self.calls = self.root / "calls"
@@ -129,9 +134,66 @@ class UninstallTests(unittest.TestCase):
         self.assertEqual((self.root / "opened").read_text().splitlines(), ["attempt"])
         self.assertEqual(len(self.calls.read_text().splitlines()), 8)
 
-    def test_existing_lock_does_not_start_duplicate_cleanup(self) -> None:
+    def test_stale_directory_does_not_skip_cleanup(self) -> None:
         (self.module / ".state/uninstall.lock").mkdir(parents=True)
         self.assert_ok(self.run_shell("magicnet_uninstall_main"))
+        self.assertEqual(self.calls.read_text().splitlines(),
+                         ["mcp stop", "supervisor stop all", "service stop", "state reconcile"])
+        self.assertFalse((self.module / ".state/uninstall.lock").exists())
+
+    def held_cleanup(self) -> subprocess.Popen[str]:
+        # Keep the fixture's cleanup worker in this process group so SIGKILL
+        # covers the whole interrupted attempt; production timeout semantics
+        # are exercised by the ordinary lifecycle tests above.
+        script = ('. "$1"; magicnet_uninstall_run() { shift; "$@"; }; '
+                  'magicnet_uninstall_main')
+        process = subprocess.Popen([str(BUSYBOX), "ash", "-c", script,
+                                    "test-uninstall", str(self.lib)],
+                                   env=dict(self.env, TEST_HOLD="1", MAGICNET_NONINTERACTIVE="1"),
+                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+
+        def cleanup() -> None:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.communicate(timeout=3)
+
+        self.addCleanup(cleanup)
+        deadline = time.monotonic() + 4
+        while not (self.root / "cleanup-started").exists() and time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.fail(f"cleanup exited early: {process.communicate()}")
+            time.sleep(0.02)
+        self.assertTrue((self.root / "cleanup-started").exists())
+        return process
+
+    def test_concurrent_uninstall_retains_single_cleanup_owner(self) -> None:
+        process = self.held_cleanup()
+        self.assert_ok(self.run_shell("magicnet_uninstall_main", MAGICNET_NONINTERACTIVE="1"))
+        self.assertEqual(self.calls.read_text().splitlines(), ["mcp stop"])
+        (self.root / "cleanup-release").touch()
+        stdout, stderr = process.communicate(timeout=3)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.assertEqual(self.calls.read_text().splitlines(),
+                         ["mcp stop", "supervisor stop all", "service stop", "state reconcile"])
+
+    def test_killed_cleanup_can_be_retried(self) -> None:
+        process = self.held_cleanup()
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=3)
+        self.assert_ok(self.run_shell("magicnet_uninstall_main", MAGICNET_NONINTERACTIVE="1"))
+        self.assertEqual(self.calls.read_text().splitlines(),
+                         ["mcp stop", "mcp stop", "supervisor stop all", "service stop", "state reconcile"])
+
+    def test_guard_failure_is_not_reported_as_success(self) -> None:
+        state = self.module / ".state"
+        state.mkdir()
+        sentinel = self.root / "sentinel"
+        sentinel.write_text("keep")
+        (state / "uninstall.lock.guard").symlink_to(sentinel)
+        result = self.run_shell("magicnet_uninstall_main", MAGICNET_NONINTERACTIVE="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(sentinel.read_text(), "keep")
         self.assertFalse(self.calls.exists())
 
     def test_failed_staging_removes_temporary_files(self) -> None:

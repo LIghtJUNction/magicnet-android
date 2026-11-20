@@ -2,6 +2,7 @@
 """Check packaged routing policy and default-template references without a device."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -61,8 +62,14 @@ class RoutingTemplateTests(unittest.TestCase):
         subprocess.run(["python3", "generate.py", "--check"], cwd=TEMPLATE, check=True)
 
     def test_normalizer_preserves_lmm_route_and_dns(self):
+        original = copy.deepcopy(self.config)
         normalized = self.optimizer.optimize_config(self.config)
+        self.assertEqual(self.config, original, "normalization must not mutate its input")
         self.assertEqual(self.optimizer.optimize_config(normalized), normalized)
+        # Service classifiers have intentional Google/WeChat normalization.
+        # The DNS preparation/mode prefix must retain its entire original order.
+        prefix_end = next(i for i, rule in enumerate(original["dns"]["rules"]) if "rule_set" in rule)
+        self.assertEqual(normalized["dns"]["rules"][:prefix_end], original["dns"]["rules"][:prefix_end])
         for config in (self.config, normalized):
             for domain in ("lmm.best", "api.lmm.best", "msg.lmm.best", "donate.lmm.best", "nested.api.lmm.best"):
                 for mode in ("Rule", "Direct", "Global"):
@@ -70,8 +77,17 @@ class RoutingTemplateTests(unittest.TestCase):
                         with self.subTest(domain=domain, mode=mode, network=network):
                             self.assertEqual(self.matcher.first_action(config, domain=domain, mode=mode,
                                 network=network, tags=("lyc-geosite-cn", "lyc-geoip-cn", "lyc-geosite-ads")), "proxy")
-            self.assertEqual(config["dns"]["rules"][0],
-                             {"domain_suffix": ["lmm.best"], "server": "doh-cloudflare"})
+            dns_rules = config["dns"]["rules"]
+            self.assertEqual(dns_rules[0], {
+                "domain_suffix": ["local", "254.169.in-addr.arpa", "8.e.f.ip6.arpa",
+                                  "9.e.f.ip6.arpa", "a.e.f.ip6.arpa", "b.e.f.ip6.arpa"],
+                "server": "lan-mdns",
+            })
+            lmm_rule = {"domain_suffix": ["lmm.best"], "server": "doh-cloudflare"}
+            self.assertEqual(dns_rules.count(lmm_rule), 1)
+            lmm_index = dns_rules.index(lmm_rule)
+            for mode, server in (("Direct", "bootstrap-local-dns"), ("Global", "doh-cloudflare")):
+                self.assertLess(lmm_index, dns_rules.index({"clash_mode": mode, "server": server}))
             dns = next(server for server in config["dns"]["servers"] if server["tag"] == "doh-cloudflare")
             self.assertEqual(dns["detour"], "proxy")
             self.assertEqual(config["route"]["default_domain_resolver"], "bootstrap-local-dns")

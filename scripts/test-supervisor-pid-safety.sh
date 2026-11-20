@@ -246,10 +246,13 @@ unset wifi_match_attempt wifi_matched
 # immediate check makes the supervisor appear intermittently absent and can
 # start duplicate watchers on the next lifecycle pass.
 (
-  wifi_match_attempts=0
+  wifi_match_counter="$fixture/wifi-match-attempts"
+  printf '0\n' >"$wifi_match_counter"
   magicnet_module_disabled() { return 1; }
   magicnet_wifi_policy_pid_matches() {
+    wifi_match_attempts=$(cat "$wifi_match_counter")
     wifi_match_attempts=$((wifi_match_attempts + 1))
+    printf '%s\n' "$wifi_match_attempts" >"$wifi_match_counter"
     test "$wifi_match_attempts" -ge 4
   }
   wifi_pid=''
@@ -265,7 +268,7 @@ unset wifi_match_attempt wifi_matched
   printf '%s\n' 'MAGICNET_WIFI_POLICY_ENABLED=1' >"$MODDIR/.config/magicnet/wifi-policy.conf"
   magicnet_wifi_policy_start
   wifi_pid="$(sed -n '1p' "$(magicnet_wifi_policy_pid_file)")"
-  test "$wifi_match_attempts" -ge 4
+  test "$(cat "$wifi_match_counter")" -ge 4
 )
 
 sh -c 'sleep 60 & wait' "$MODDIR/cli wifi watch decoy" &

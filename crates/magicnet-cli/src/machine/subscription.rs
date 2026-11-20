@@ -106,7 +106,7 @@ fn source_usage(app: &App, urls: &[String], result: &str) -> Vec<Value> {
     let pending = app.moddir.join(SUBSCRIPTION_TRANSACTION).exists();
     let force_cached = matches!(result, "failed" | "interrupted");
     urls.iter().enumerate().map(|(index, url)| {
-        let identity = crate::subscriptions::canonical_subscription_url(url)
+        let identity = crate::subscriptions::canonical_subscription_source_url(app, url)
             .unwrap_or_else(|_| url.clone());
         let id = format!("{:x}", Sha256::digest(identity.as_bytes()));
         let source = app.moddir.join(".state/sing-box/subscription-work/sources")

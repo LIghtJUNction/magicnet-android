@@ -45,6 +45,11 @@ try {
   });
 
   assert.deepEqual(mod.parseProxyNodeList("relay-jp\nrelay-jp\n[error] ignored\nexit-us\n"), ["relay-jp", "exit-us"]);
+
+  assert.deepEqual(
+    mod.parseProxyNodeList("[HK] 香港-选择\r\n[US] US-fallback-01\n[HK] 香港-选择\n[info] loading\n[warning] skipped\n\n"),
+    ["[HK] 香港-选择", "[US] US-fallback-01"],
+  );
   assert.deepEqual(mod.mergeProxyChainNodes(["relay-jp"], "missing-exit", "relay-jp"), ["relay-jp", "missing-exit"]);
 
   const current = mod.createProxyChainStatus();

@@ -17,6 +17,7 @@ patterns=(
     '(^|/)(\.gitignore|\.gitattributes|\.gitmodules|\.DS_Store|Thumbs\.db)$|\.py[co]$'
     '(^|/)(tests?|__tests__|fixtures?|__fixtures__|__snapshots__|bench|benches|benchmarks?|coverage|htmlcov|node_modules)/'
     '^\.local/subscriptions\.env$'
+    '^\.config/sing-box/subscription-trust\.list($|/)'
     '(^|/)(mihomo|__mihomo__)(\.sh)?($|/)'
     '^bin/magicnet-ebpf$'
     '^\.config/sing-box/\.dns-.*\.json$'
@@ -26,7 +27,7 @@ entries="$(unzip -Z1 "$zip_path")"
 pattern="$(IFS='|'; printf '%s' "${patterns[*]}")"
 removed="$(printf '%s\n' "$entries" | grep -E "$pattern" || true)"
 if [ -n "$removed" ]; then
-    log_info "Removing development and retired files from module artifact"
+    log_info "Removing development, private and retired files from module artifact"
     if ! printf '%s\n' "$removed" | zip -q -d "$zip_path" -@ >/dev/null 2>&1; then
         printf 'Failed to remove archive entry: cleanup batch\n' >&2
         exit 1

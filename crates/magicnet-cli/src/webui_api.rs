@@ -14,9 +14,15 @@ use crate::connection_control::{
 use crate::node_delay::encode_path_segment;
 use crate::process::run_magicnet_function_status;
 use crate::selector_store;
-use crate::service::{apply_config, singbox_webui};
+
+#[path = "selector_change.rs"]
+mod selector_change;
+use crate::service::{apply_config, singbox_webui, singbox_webui_ready};
 use crate::subscriptions::{download_pinned_https_url, validate_subscription_url};
 use crate::{run_magicnet_function, write_text_file, App};
+pub(crate) use selector_change::{
+    change_selector_locked, rollback_selector_locked, SelectorChange,
+};
 
 pub(crate) fn api_cmd(app: &App, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str).unwrap_or_default() {
@@ -450,18 +456,14 @@ pub(crate) fn api_response(
     limit: usize,
 ) -> Result<Vec<u8>, String> {
     if !crate::process::trusted_curl_path(app).is_file() {
-        let body = crate::local_http::request_with_timeout(
+        return crate::local_http::request_with_timeout(
             &app.api,
             method,
             path,
             payload,
             Duration::from_secs(seconds),
-        )?;
-        return if body.len() <= limit {
-            Ok(body)
-        } else {
-            Err("local API response exceeds the read limit".into())
-        };
+            limit,
+        );
     }
     let endpoint = format!("{}{path}", app.api);
     let timeout = seconds.to_string();
@@ -501,12 +503,31 @@ pub(crate) fn current_clash_mode(app: &App) -> Result<String, String> {
 
 pub(crate) fn set_clash_mode(app: &App, mode: &str) -> Result<(), String> {
     let mode = normalize_clash_mode(mode)?;
-    let payload = json!({ "mode": mode }).to_string();
-    curl_patch_json(app, "/configs", &payload)?;
-    if let Err(err) = curl_delete(app, "/connections") {
-        eprintln!("[warn] mode changed, but stale connections could not be closed: {err}");
+    let result = (|| {
+        // A user or Wi-Fi policy change must serialize with automatic recovery.
+        let _guard = crate::service::config_apply_lock(app)?;
+        let payload = json!({ "mode": mode }).to_string();
+        curl_patch_json(app, "/configs", &payload)?;
+        let observed = curl_get_json(app, "/configs")?;
+        if observed["mode"]
+            .as_str()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+            != Some(mode)
+        {
+            return Err("mode.runtime_mismatch".into());
+        }
+        if curl_delete(app, "/connections").is_err() {
+            eprintln!("[warn] mode.committed_connection_cleanup_failed");
+        }
+        Ok(())
+    })();
+    // A failed response may follow a committed runtime write. Invalidate old
+    // health evidence after releasing the lifecycle lock on either outcome.
+    if let Err(error) = crate::connectivity::request_check(app) {
+        eprintln!("[warning] mode connectivity check deferred: {error}");
     }
-    Ok(())
+    result
 }
 
 fn normalize_clash_mode(mode: &str) -> Result<&'static str, String> {
@@ -542,28 +563,17 @@ pub(crate) fn select_proxy(app: &App, group: &str, node: &str) -> Result<(), Str
     if clean_group == "hotspot" {
         return set_hotspot_policy(app, clean_node);
     }
-    let payload = json!({ "name": clean_node }).to_string();
-    curl_put_selection(app, clean_group, &payload)?;
-    let persist_error = selector_store::save(app, clean_group, clean_node).err();
-    match classify_selector_cleanup(close_connections_through_chain(app, clean_group)) {
-        SelectorCleanupOutcome::Complete(summary) => {
-            if let Some(err) = persist_error {
-                eprintln!("[warn] runtime applied, persistence failed: {err}");
-            }
-            println!(
-                "[info] {clean_group} selector set to {clean_node}; closed {}/{} stale connections",
-                summary.closed, summary.targets
-            );
-        }
-        SelectorCleanupOutcome::Degraded(err) => {
-            if let Some(persist_error) = persist_error {
-                eprintln!("[warn] runtime applied, persistence failed: {persist_error}");
-            }
-            println!(
-                "[warning] {clean_group} selector set to {clean_node}; stale connections were not fully closed: {err}"
-            );
-        }
+    let result = (|| {
+        let guard = crate::service::config_apply_lock(app)?;
+        change_selector_locked(app, &guard, clean_group, clean_node, None)
+    })();
+    // Invalidate old health evidence even if an ambiguous write needed rollback.
+    // Never request the outer producer lock while holding config-apply.
+    if let Err(error) = crate::connectivity::request_check(app) {
+        eprintln!("[warning] selector connectivity check deferred: {error}");
     }
+    result?;
+    println!("[info] {clean_group} selector saved and applied");
     Ok(())
 }
 
@@ -645,10 +655,7 @@ mod mode_tests {
 fn webui_status(app: &App) {
     let local_dir = app.moddir.join(".config/sing-box/zashboard");
     println!("local_dir={}", local_dir.display());
-    println!(
-        "local_ready={}",
-        local_dir.join("index.html").exists() as u8
-    );
+    println!("local_ready={}", singbox_webui_ready(app) as u8);
     println!("sing-box={}", singbox_webui(app));
     println!(
         "version={}",

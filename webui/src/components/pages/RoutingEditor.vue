@@ -93,14 +93,14 @@ function addOutbound() {
     if (!members.length || members.includes(tag) || members.some((v) => !choices.value.some((target) => target.tag === v))) { message.value = t("请选择存在的组成员，不能引用自身。"); failed.value = true; return; }
     item.outbounds = members;
     if (endpoint.type === "selector") item.default = typeof item.default === "string" && members.includes(item.default) ? item.default : members[0];
-    else { item.url = "https://www.gstatic.com/generate_204"; item.interval = "3m"; }
+    else { item.url ??= "https://www.gstatic.com/generate_204"; item.interval ??= "3m"; }
   } else {
     const port = Number(endpoint.port);
     if (!endpoint.server.trim() || !Number.isInteger(port) || port < 1 || port > 65535) { message.value = t("请填写服务器与有效端口。"); failed.value = true; return; }
     item.server = endpoint.server.trim(); item.server_port = port;
     for (const key of ["username", "password", "uuid", "encryption", "method"]) delete item[key];
-    if (endpoint.username) item.username = endpoint.username;
-    if (endpoint.password) item.password = endpoint.password;
+    if (["socks", "http"].includes(endpoint.type) && endpoint.username) item.username = endpoint.username;
+    if (endpoint.type !== "vless" && endpoint.password) item.password = endpoint.password;
     if (endpoint.type === "shadowsocks") item.method = endpoint.method;
     if (endpoint.type === "vless") {
       item.uuid = endpoint.uuid;

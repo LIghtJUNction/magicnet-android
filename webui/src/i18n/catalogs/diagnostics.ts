@@ -1,4 +1,9 @@
 export default {
+  "过滤当前输出": ["Filter current output", "Фильтр текущего вывода"],
+  "日志来源": ["Log source", "Источник журнала"],
+  "日志行数": ["Log lines", "Количество строк журнала"],
+  "过滤日志": ["Filter logs", "Фильтр журнала"],
+  "日志级别": ["Log level", "Уровень журнала"],
   "选择节点后确认切换。当前选择会优先展示。": ["Select a node, then confirm the switch. The current selection appears first.", "Выберите узел и подтвердите переключение. Текущий выбор показан первым."],
   "当前选择": ["Current selection", "Текущий выбор"],
   "已选择": ["Selected", "Выбран"],
@@ -249,7 +254,7 @@ export default {
   "取消": ["Cancel", "Отмена"],
   "收集并创建": ["Collect and create", "Собрать и создать"],
   "订阅链接": ["Subscription URLs", "Ссылки подписок"],
-  "每行一个 HTTPS 订阅链接": ["One HTTPS subscription URL per line", "Одна HTTPS-ссылка подписки на строку"],
+  "每行一个订阅链接": ["One subscription URL per line", "Одна ссылка подписки на строку"],
   "打开订阅": ["Open subscriptions", "Открыть подписки"],
   "MagicNet 开源支持说明": ["Supporting MagicNet open source", "Поддержка открытого проекта MagicNet"],
   "支持项目": ["Support the project", "Поддержать проект"],

@@ -141,7 +141,7 @@ export function buildSubscriptionSavePlan(text: string, limit = 5): Subscription
   const http = raw.filter((line) => /^http:\/\/\S+$/i.test(line)).length;
   if (invalid) {
     return {
-      ...plan("error", t("{value} 行不是 HTTPS 订阅 URL，或包含凭据；修正后才能保存。", { value: invalid }), lines, raw, limit),
+      ...plan("error", t("{value} 行不是 HTTP(S) 订阅 URL，或包含凭据；修正后才能保存。", { value: invalid }), lines, raw, limit),
       valid: validUrls.length,
       invalid,
       duplicate,
@@ -153,9 +153,10 @@ export function buildSubscriptionSavePlan(text: string, limit = 5): Subscription
   if (overLimit) {
     return { ...plan("error", t("最多支持 {value} 个订阅来源，请删减后保存；不会截断链接。", { value: limit }), lines, raw, limit), duplicate, overLimit, http };
   }
-  if (duplicate) {
+  if (duplicate || http) {
     const notes = [
       duplicate ? t("去重 {value} 个", { value: duplicate }) : "",
+      http ? t("HTTP 订阅需要设备侧可信来源授权；保存时会校验。") : "",
     ].filter(Boolean).join("，");
     return { ...plan("warning", notes, lines, raw, limit), duplicate, overLimit, http };
   }
@@ -195,18 +196,17 @@ function previewSubscriptionLine(line: string, index: number, seen: Set<string>,
     const duplicate = seen.has(normalized);
     const uniqueCount = duplicate ? seen.size : seen.size + 1;
     seen.add(normalized);
-    const protocolOk = url.protocol === "https:";
     const notes = [
       url.search ? t("含参数，界面已隐藏") : t("无 query/hash"),
       hasFragment ? t("片段不参与订阅请求") : "",
       url.pathname.length > 1 ? t("含路径，界面已隐藏") : t("无路径"),
-      url.protocol === "http:" ? t("设备侧仅支持 HTTPS") : ""
+      url.protocol === "http:" ? t("HTTP 订阅需要设备侧可信来源授权；保存时会校验。") : ""
     ].filter(Boolean);
     return {
       key: `${index}-${url.hostname}`,
       index: index + 1,
-      label: protocolOk ? `${url.protocol}//${url.hostname}` : t("协议不支持"),
-      status: !protocolOk ? "invalid" : uniqueCount > limit ? "over-limit" : duplicate ? "duplicate" : "ok",
+      label: `${url.protocol}//${url.hostname}`,
+      status: uniqueCount > limit ? "over-limit" : duplicate ? "duplicate" : "ok",
       notes
     };
   } catch {
@@ -215,17 +215,17 @@ function previewSubscriptionLine(line: string, index: number, seen: Set<string>,
       index: index + 1,
       label: t("无法解析 URL"),
       status: "invalid",
-      notes: [t("必须是一行一个 HTTPS URL，且不能包含凭据")]
+      notes: [t("必须是一行一个 HTTP(S) URL，且不能包含凭据")]
     };
   }
 }
 
 function parseSubscriptionLine(line: string): ParsedSubscriptionLine | null {
   const requestUrl = line.split("#", 1)[0];
-  if (!isHttpsUrl(requestUrl)) return null;
+  if (!/^https?:\/\/\S+$/i.test(requestUrl)) return null;
   try {
     const url = new URL(requestUrl);
-    if (url.protocol !== "https:" || url.username || url.password) return null;
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
     const remainder = requestUrl.slice(requestUrl.indexOf("://") + 3);
     const authorityEnd = remainder.search(/[/?]/);
     const authority = authorityEnd < 0 ? remainder : remainder.slice(0, authorityEnd);
@@ -243,7 +243,10 @@ function parseSubscriptionLine(line: string): ParsedSubscriptionLine | null {
       rawPort = authority.slice(closing + 1);
     } else {
       const colon = authority.lastIndexOf(":");
-      canonicalHost = url.hostname.toLowerCase();
+      canonicalHost = (colon < 0 ? authority : authority.slice(0, colon)).toLowerCase();
+      // Reject browser-only hostname rewrites (numeric aliases and IDN) so the
+      // submitted authority has the same meaning as the device's strict parser.
+      if (canonicalHost !== url.hostname.toLowerCase()) return null;
       rawPort = colon < 0 ? "" : authority.slice(colon);
     }
     let port = "";
@@ -251,9 +254,9 @@ function parseSubscriptionLine(line: string): ParsedSubscriptionLine | null {
       if (!/^:[0-9]+$/.test(rawPort)) return null;
       const number = Number(rawPort.slice(1));
       if (!Number.isInteger(number) || number < 1 || number > 65535) return null;
-      if (number !== 443) port = `:${number}`;
+      if (number !== (url.protocol === "https:" ? 443 : 80)) port = `:${number}`;
     }
-    return { url, canonical: `https://${canonicalHost}${port}${pathQuery}` };
+    return { url, canonical: `${url.protocol}//${canonicalHost}${port}${pathQuery}` };
   } catch {
     return null;
   }
@@ -284,8 +287,4 @@ function plan(status: SubscriptionSavePlan["status"], message: string, lines: st
 
 function subscriptionLines(text: string): string[] {
   return text.split(/\r\n?|\n/).map((line) => line.trim()).filter(Boolean);
-}
-
-function isHttpsUrl(line: string): boolean {
-  return /^https:\/\/\S+$/i.test(line);
 }

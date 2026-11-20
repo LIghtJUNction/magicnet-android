@@ -31,5 +31,5 @@ install_locked_binary() {
 require_command curl "curl not found!"
 mkdir -p "$TARGET_DIR" "$STATE_DIR"
 
-install_locked_binary yq
-install_locked_binary jq
+install_locked_binary yq || exit 1
+install_locked_binary jq || exit 1

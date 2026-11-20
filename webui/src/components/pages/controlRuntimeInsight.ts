@@ -115,7 +115,7 @@ export function buildControlRuntimeInsight(
       status: "warning",
       title: t("透明代理状态不可用"),
       detail:
-        t("无法确认 configured/effective 模式；不会按 TUN 或 eBPF 猜测当前数据面。"),
+        t("暂时无法读取代理模式。请刷新状态，或打开诊断查看原因。"),
       actions: [t("刷新状态"), t("查看最近输出")],
     };
   }

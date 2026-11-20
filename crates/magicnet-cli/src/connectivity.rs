@@ -16,6 +16,10 @@ use serde_json::{json, Value};
 
 use crate::{run_bounded_command, App};
 
+#[path = "connectivity_requests.rs"]
+mod requests;
+#[path = "connectivity_selected.rs"]
+mod selected;
 #[path = "connectivity_tun.rs"]
 mod tun;
 
@@ -121,6 +125,23 @@ impl Observation {
             millis: None,
         }
     }
+
+    fn conclusive(&self) -> bool {
+        !matches!(
+            self.reason,
+            "probe_unavailable" | "probe_invalid" | "probe_unsupported" | "selection_changed"
+        )
+    }
+
+    fn status(&self) -> &'static str {
+        if self.ok {
+            "online"
+        } else if self.conclusive() {
+            "failed"
+        } else {
+            "unknown"
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +159,10 @@ struct State {
     millis: Option<u64>,
     secondary: &'static str,
     direct: &'static str,
+    mixed: &'static str,
+    mixed_reason: &'static str,
+    request_generation: u64,
+    manual_checked_uptime: u64,
     last_action: &'static str,
     action_status: &'static str,
     action_at: u64,
@@ -164,6 +189,10 @@ impl State {
             millis: None,
             secondary: "not_run",
             direct: "not_run",
+            mixed: "not_run",
+            mixed_reason: "not_checked",
+            request_generation: 0,
+            manual_checked_uptime: 0,
             last_action: "none",
             action_status: "none",
             action_at: 0,
@@ -221,7 +250,7 @@ impl State {
                 .find(|value| values.get(key) == Some(value))
                 .unwrap_or(default)
         };
-        Self {
+        let mut state = Self {
             boot: clock.boot.clone(),
             phase: token(
                 "phase",
@@ -245,6 +274,9 @@ impl State {
                     "http_error",
                     "probe_unavailable",
                     "probe_invalid",
+                    "probe_unsupported",
+                    "selection_changed",
+                    "mixed_path_failed",
                     "proxy_unavailable",
                     "endpoint_specific",
                     "upstream_unavailable",
@@ -264,6 +296,8 @@ impl State {
                     "http_error",
                     "probe_unavailable",
                     "probe_invalid",
+                    "probe_unsupported",
+                    "selection_changed",
                     "proxy_unavailable",
                     "transport_failure",
                 ],
@@ -282,16 +316,43 @@ impl State {
                 .get("latency_ms")
                 .and_then(|v| v.parse().ok())
                 .filter(|n| *n <= 9000),
-            secondary: token("secondary", &["online", "failed"], "not_run"),
-            direct: token("direct", &["online", "failed"], "not_run"),
+            secondary: token("secondary", &["online", "failed", "unknown"], "not_run"),
+            direct: token("direct", &["online", "failed", "unknown"], "not_run"),
+            mixed: token("mixed", &["online", "failed", "unknown"], "not_run"),
+            mixed_reason: token(
+                "mixed_reason",
+                &[
+                    "ok",
+                    "dns_failure",
+                    "proxy_refused",
+                    "timeout",
+                    "tls_failure",
+                    "http_error",
+                    "probe_unavailable",
+                    "probe_invalid",
+                    "proxy_unavailable",
+                    "transport_failure",
+                    "selection_changed",
+                ],
+                "not_checked",
+            ),
+            request_generation: num("request_generation"),
+            manual_checked_uptime: num("manual_checked_uptime"),
             last_action: token(
                 "last_action",
-                &["repair", "refresh", "restart", "deferred"],
+                &["repair", "refresh", "restart", "failover", "deferred"],
                 "none",
             ),
             action_status: token(
                 "action_status",
-                &["pending", "ok", "failed", "busy"],
+                &[
+                    "pending",
+                    "ok",
+                    "failed",
+                    "busy",
+                    "conflict",
+                    "rollback_failed",
+                ],
                 "none",
             ),
             action_at: num("action_at"),
@@ -300,7 +361,36 @@ impl State {
             refresh_uptime: num("refresh_uptime"),
             recovery_stage: num("recovery_stage").min(3) as u8,
             tun: tun::State::read(&values, clock),
+        };
+        // A previous release measured mixed routing. Its online cache carries
+        // no evidence for the explicitly selected proxy after an upgrade.
+        // Preserve every recovery budget while scheduling a fresh observation.
+        if values.get("probe_path") != Some(&"selected_proxy") {
+            state.phase = "unknown";
+            state.reason = "not_checked";
+            state.primary_reason = "not_checked";
+            state.checked_at = 0;
+            state.checked_uptime = 0;
+            state.next_uptime = 0;
+            state.http = None;
+            state.millis = None;
+            state.secondary = "not_run";
+            state.direct = "not_run";
+            state.mixed = "not_run";
+            state.mixed_reason = "not_checked";
+        } else if state.phase == "online"
+            && (state.http != Some(204)
+                || state.millis.is_none_or(|delay| delay > 4000)
+                || state.primary_reason != "ok"
+                || state.secondary != "online"
+                || state.mixed != "online"
+                || state.mixed_reason != "ok")
+        {
+            state.phase = "unknown";
+            state.reason = "probe_invalid";
+            state.next_uptime = 0;
         }
+        state
     }
 
     fn due(&self, clock: &Clock) -> bool {
@@ -309,13 +399,17 @@ impl State {
 
     fn publish(&self, app: &App) -> Result<(), String> {
         let mut text = format!(
-            "schema=1\ndomain=connectivity\nboot={}\nphase={}\nreason={}\nprimary_reason={}\nchecked_at={}\nchecked_uptime={}\nnext_uptime={}\nfailures={}\nprobes={}\nhttp_code={}\nlatency_ms={}\nsecondary={}\ndirect={}\nlast_action={}\naction_status={}\naction_at={}\naction_uptime={}\nrefresh_at={}\nrefresh_uptime={}\nrecovery_stage={}\n",
+            "schema=1\ndomain=connectivity\nprobe_path=selected_proxy\nboot={}\nphase={}\nreason={}\nprimary_reason={}\nchecked_at={}\nchecked_uptime={}\nnext_uptime={}\nfailures={}\nprobes={}\nhttp_code={}\nlatency_ms={}\nsecondary={}\ndirect={}\nlast_action={}\naction_status={}\naction_at={}\naction_uptime={}\nrefresh_at={}\nrefresh_uptime={}\nrecovery_stage={}\n",
             self.boot, self.phase, self.reason, self.primary_reason, self.checked_at, self.checked_uptime, self.next_uptime,
             self.failures, self.probes, self.http.map_or_else(|| "unknown".into(), |n| n.to_string()),
             self.millis.map_or_else(|| "unknown".into(), |n| n.to_string()), self.secondary, self.direct,
             self.last_action, self.action_status, self.action_at, self.action_uptime, self.refresh_at,
             self.refresh_uptime, self.recovery_stage,
         );
+        text.push_str(&format!(
+            "mixed={}\nmixed_reason={}\nrequest_generation={}\nmanual_checked_uptime={}\n",
+            self.mixed, self.mixed_reason, self.request_generation, self.manual_checked_uptime
+        ));
         text.push_str(&self.tun.encode());
         crate::write_text_file(app, Path::new(STATE), &text)
     }
@@ -334,16 +428,24 @@ impl State {
         self.millis = primary.millis;
         self.reason = primary.reason;
         self.primary_reason = primary.reason;
-        self.secondary = secondary.map_or("not_run", |p| if p.ok { "online" } else { "failed" });
-        self.direct = direct.map_or("not_run", |p| if p.ok { "online" } else { "failed" });
-        if primary.ok {
+        self.secondary = secondary.map_or("not_run", Observation::status);
+        self.direct = direct.map_or("not_run", Observation::status);
+        if !primary.conclusive() || secondary.is_some_and(|probe| !probe.conclusive()) {
+            self.phase = "unknown";
+            self.reason = if !primary.conclusive() {
+                primary.reason
+            } else {
+                secondary.expect("inconclusive secondary").reason
+            };
+            self.next_uptime = clock.uptime.saturating_add(INTERVAL);
+        } else if primary.ok && secondary.is_none_or(|probe| probe.ok) {
             self.phase = "online";
             self.failures = 0;
             self.recovery_stage = 0;
             self.next_uptime = clock.uptime.saturating_add(INTERVAL);
         } else {
             self.failures = self.failures.saturating_add(1).min(1000);
-            self.phase = if self.secondary == "online" {
+            self.phase = if primary.ok || self.secondary == "online" {
                 "degraded"
             } else {
                 "offline"
@@ -351,12 +453,10 @@ impl State {
             // A missing or malformed local executor is not evidence that an
             // endpoint or the uplink failed. Keep that actionable cause even
             // when the same executor also fails the direct control.
-            if !matches!(primary.reason, "probe_unavailable" | "probe_invalid") {
-                if self.secondary == "online" {
+            if primary.conclusive() {
+                if primary.ok || self.secondary == "online" {
                     self.reason = "endpoint_specific";
-                } else if direct.is_some_and(|probe| {
-                    !probe.ok && !matches!(probe.reason, "probe_unavailable" | "probe_invalid")
-                }) {
+                } else if direct.is_some_and(|probe| !probe.ok && probe.conclusive()) {
                     self.reason = "upstream_unavailable";
                 }
             }
@@ -370,7 +470,10 @@ impl State {
             || self.secondary != "failed"
             || self.direct != "online"
             || self.reason == "no_default_route"
-            || matches!(self.primary_reason, "probe_unavailable" | "probe_invalid")
+            || matches!(
+                self.primary_reason,
+                "probe_unavailable" | "probe_invalid" | "probe_unsupported" | "selection_changed"
+            )
             || !cooldown_elapsed(clock, self.action_uptime.max(self.tun.action_uptime))
         {
             return None;
@@ -387,6 +490,21 @@ impl State {
         })
     }
 
+    fn record_mixed(&mut self, mixed: Option<&Observation>) {
+        self.mixed = mixed.map_or("not_run", Observation::status);
+        self.mixed_reason = mixed.map_or("not_checked", |probe| probe.reason);
+        // Directed success proves the selected outbound, but applications
+        // still need a working ingress and routing path through the core.
+        if self.phase == "online" && !mixed.is_some_and(|probe| probe.ok) {
+            self.phase = if mixed.is_some_and(Observation::conclusive) {
+                "degraded"
+            } else {
+                "unknown"
+            };
+            self.reason = "mixed_path_failed";
+        }
+    }
+
     fn reserve_action(&mut self, clock: &Clock, action: &'static str) {
         self.last_action = action;
         self.action_status = "pending";
@@ -397,7 +515,7 @@ impl State {
             self.refresh_uptime = clock.uptime;
         }
         self.recovery_stage = match action {
-            "repair" => 1,
+            "repair" | "failover" => 1,
             "refresh" => 2,
             _ => 3,
         };
@@ -443,12 +561,13 @@ pub(crate) fn status_with_core(app: &App, core: &str) -> Value {
 fn status_with_clock(app: &App, core: &str, clock: Result<Clock, String>) -> Value {
     let Ok(clock) = clock else {
         return json!({
-            "target":TARGET, "path":"mixed_proxy", "status":"unknown",
+            "target":TARGET, "path":"selected_proxy", "status":"unknown",
             "reason":"clock_unavailable", "primary_reason":"not_checked", "warning":true,
             "checked_at":null, "next_check_at":null, "retry_in_seconds":null,
             "consecutive_failures":0, "probe_count":0, "backoff_seconds":INTERVAL,
             "latency_ms":null, "http_status":null,
             "secondary_status":"not_run", "direct_status":"not_run",
+            "mixed_path":"mixed_proxy", "mixed_status":"not_run", "mixed_reason":"not_checked",
             "last_action":"none", "action_status":"none", "last_action_at":null,
             "last_refresh_at":null,
             "tun_auto_route":State::new(&Clock::default()).tun.json(None, core, disabled(app)),
@@ -457,6 +576,9 @@ fn status_with_clock(app: &App, core: &str, clock: Result<Clock, String>) -> Val
     let state = State::read(app, &clock);
     let mut phase = state.phase;
     let mut reason = state.reason;
+    let requested = requests::generation(app, &clock)
+        .ok()
+        .is_some_and(|generation| requests::pending(&state, generation));
     if disabled(app) || core == "stopped" {
         phase = "paused";
         reason = if disabled(app) {
@@ -470,21 +592,37 @@ fn status_with_clock(app: &App, core: &str, clock: Result<Clock, String>) -> Val
     {
         phase = "unknown";
         reason = "core_unknown";
-    } else if state.checked_at > 0 && clock.uptime > state.next_uptime.saturating_add(120) {
+    } else if requested {
+        phase = "pending";
+        reason = "selection_changed";
+    } else if state.phase != "unknown"
+        && state.checked_at > 0
+        && clock.uptime > state.next_uptime.saturating_add(120)
+    {
         phase = "stale";
         reason = "monitor_overdue";
     }
-    let waiting = phase != "paused" && state.next_uptime > 0;
-    let retry = waiting.then(|| state.next_uptime.saturating_sub(clock.uptime));
+    let waiting = phase != "paused" && (state.next_uptime > 0 || requested);
+    let retry = waiting.then(|| {
+        if requested {
+            state
+                .manual_checked_uptime
+                .saturating_add(requests::MIN_INTERVAL)
+                .saturating_sub(clock.uptime)
+        } else {
+            state.next_uptime.saturating_sub(clock.uptime)
+        }
+    });
     json!({
-        "target":TARGET, "path":"mixed_proxy", "status":phase, "reason":reason, "primary_reason":state.primary_reason,
-        "warning":matches!(phase, "offline" | "degraded" | "stale") || (phase == "pending" && state.failures > 0),
+        "target":TARGET, "path":"selected_proxy", "status":phase, "reason":reason, "primary_reason":state.primary_reason,
+        "warning":matches!(phase, "offline" | "degraded" | "stale" | "unknown") || (phase == "pending" && (state.failures > 0 || requested)),
         "checked_at":(state.checked_at > 0).then_some(state.checked_at),
         "next_check_at":retry.map(|n| clock.epoch.saturating_add(n)),
         "retry_in_seconds":retry, "consecutive_failures":state.failures, "probe_count":state.probes,
         "backoff_seconds":if state.failures > 0 { backoff(state.failures) } else { INTERVAL },
         "latency_ms":state.millis, "http_status":state.http,
         "secondary_status":state.secondary, "direct_status":state.direct,
+        "mixed_path":"mixed_proxy", "mixed_status":state.mixed, "mixed_reason":state.mixed_reason,
         "last_action":state.last_action, "action_status":state.action_status,
         "last_action_at":(state.action_at > 0).then_some(state.action_at),
         "last_refresh_at":(state.refresh_at > 0).then_some(state.refresh_at),
@@ -511,8 +649,25 @@ pub(crate) fn command(app: &App, args: &[String]) -> Result<(), String> {
             let _signals = CancellationGuard::install()?;
             tick(app)
         }
-        _ => Err("Usage: cli connectivity {status|tick}".into()),
+        ["check"] => {
+            let _signals = CancellationGuard::install()?;
+            check(app)?;
+            println!("{}", status(app));
+            Ok(())
+        }
+        _ => Err("Usage: cli connectivity {status|tick|check}".into()),
     }
+}
+
+/// The selector transaction has released its lifecycle lock before calling.
+/// Requests coalesce and never clear automatic recovery or TUN retry budgets.
+pub(crate) fn request_check(app: &App) -> Result<(), String> {
+    requests::enqueue(app)
+}
+
+fn check(app: &App) -> Result<(), String> {
+    request_check(app)?;
+    tick_mode(app, true)
 }
 
 fn lock(app: &App) -> Result<Option<File>, String> {
@@ -545,15 +700,30 @@ fn lock(app: &App) -> Result<Option<File>, String> {
 }
 
 pub(crate) fn tick(app: &App) -> Result<(), String> {
+    tick_mode(app, false)
+}
+
+fn tick_mode(app: &App, manual: bool) -> Result<(), String> {
     let Some(_guard) = lock(app)? else {
-        return Ok(());
+        return if manual {
+            Err("connectivity.check_queued".into())
+        } else {
+            Ok(())
+        };
     };
     let clock = Clock::now()?;
     let mut state = State::read(app, &clock);
+    let request_generation = requests::generation(app, &clock)?;
+    let pending_request = requests::pending(&state, request_generation);
+    let requested = pending_request && requests::available(&state, &clock);
+    if manual && !requests::available(&state, &clock) {
+        return Err("connectivity.check_throttled".into());
+    }
+    let observation_only = manual || pending_request;
     if cancelled() {
         return pause_cancelled(app, &mut state);
     }
-    let probe_due = state.due(&clock);
+    let probe_due = (state.due(&clock) && !pending_request) || manual || requested;
     let tun_due = state.tun.due(&clock);
     if !probe_due && !tun_due {
         return Ok(());
@@ -568,19 +738,22 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
         }
     };
     if let Some(reason) = reason {
-        if state.phase != "paused" || state.reason != reason {
-            state.phase = "paused";
-            state.reason = reason;
-            state.next_uptime = clock.uptime.saturating_add(INTERVAL);
-            state.tun.record(
-                &clock,
-                if reason == "core_unknown" {
-                    "unknown"
-                } else {
-                    "paused"
-                },
-            );
-            state.publish(app)?;
+        state.phase = "paused";
+        state.reason = reason;
+        state.next_uptime = clock.uptime.saturating_add(INTERVAL);
+        state.tun.record(
+            &clock,
+            if reason == "core_unknown" {
+                "unknown"
+            } else {
+                "paused"
+            },
+        );
+        state.publish(app)?;
+        // A queued observation cannot veto background crash cleanup.
+        // Only the manual command itself must remain free of cleanup actions.
+        if reason == "core_stopped" && !manual {
+            cleanup_stopped_network(app)?;
         }
         return Ok(());
     }
@@ -593,7 +766,10 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
         }
         state.tun.record_observation(&Clock::now()?, &observed);
         state.publish(app)?;
-        if state.tun.recovery_due(&clock, state.action_uptime) {
+        if !observation_only
+            && state.tun.recovery_due(&clock, state.action_uptime)
+            && selected::automatic_mode(app)
+        {
             let attempts = state.tun.attempts;
             tun::recover(app, &mut state, &clock, &observed)?;
             if state.tun.attempts > attempts {
@@ -604,56 +780,111 @@ pub(crate) fn tick(app: &App) -> Result<(), String> {
     if !probe_due {
         return Ok(());
     }
-    let was_warning = matches!(state.phase, "offline" | "degraded");
-    // Reserve the retry window before I/O: killing a curl or restarting the
-    // monitor cannot turn the next invocation into an unthrottled retry.
+    let was_warning =
+        state.checked_at > 0 && matches!(state.phase, "offline" | "degraded" | "unknown");
+    // Reserve before I/O. An explicit request shortens only the observation
+    // schedule: action, subscription and TUN budgets remain untouched.
     state.phase = "pending";
     state.reason = "probing";
     state.next_uptime = clock
         .uptime
         .saturating_add(backoff(state.failures.saturating_add(1)));
+    if observation_only {
+        state.manual_checked_uptime = clock.uptime;
+    }
     state.publish(app)?;
-    let proxy = mixed_proxy(app);
-    let (primary, secondary, direct) = if default_route() == Some(false) {
-        (Observation::failed("no_default_route"), None, None)
-    } else if let Some(proxy) = proxy.as_deref() {
-        let primary = probe(app, TARGET, Some(proxy), true);
+    let identity = selected::identity(app);
+    let (primary, secondary, direct, mixed) = if default_route() == Some(false) {
+        (Observation::failed("no_default_route"), None, None, None)
+    } else if identity.is_none() {
+        (Observation::failed("probe_unavailable"), None, None, None)
+    } else {
+        let primary = selected::strict_probe(app, "proxy", TARGET);
         if cancelled() {
             return pause_cancelled(app, &mut state);
         }
-        if primary.ok {
-            (primary, None, None)
-        } else {
-            let secondary = probe(app, SECONDARY_TARGET, Some(proxy), true);
-            if cancelled() {
-                return pause_cancelled(app, &mut state);
-            }
-            let direct = (!secondary.ok).then(|| probe(app, DIRECT_TARGET, None, false));
-            (primary, Some(secondary), direct)
+        let secondary = selected::strict_probe(app, "proxy", SECONDARY_TARGET);
+        if cancelled() {
+            return pause_cancelled(app, &mut state);
         }
-    } else {
-        (Observation::failed("proxy_unavailable"), None, None)
+        let direct =
+            (!primary.ok && !secondary.ok && primary.conclusive() && secondary.conclusive())
+                .then(|| probe(app, DIRECT_TARGET, None, false));
+        if cancelled() {
+            return pause_cancelled(app, &mut state);
+        }
+        let mixed = Some(mixed_proxy(app).map_or_else(
+            || Observation::failed("proxy_unavailable"),
+            |proxy| probe(app, TARGET, Some(&proxy), true),
+        ));
+        (primary, Some(secondary), direct, mixed)
     };
     if cancelled() {
         return pause_cancelled(app, &mut state);
     }
     let clock = Clock::now()?;
+    // A UI request or an independently changed proxy chain invalidates results
+    // gathered before that change. Keep the new request pending for the next
+    // real check; never publish an old node's success for a new selection.
+    if requests::generation(app, &clock)? != request_generation
+        || identity
+            .as_ref()
+            .is_some_and(|before| selected::identity(app).as_ref() != Some(before))
+    {
+        state.phase = "pending";
+        state.reason = "selection_changed";
+        state.next_uptime = clock.uptime.saturating_add(requests::MIN_INTERVAL);
+        return state.publish(app);
+    }
     state.record(&clock, &primary, secondary.as_ref(), direct.as_ref());
+    state.request_generation = request_generation;
+    state.record_mixed(mixed.as_ref());
     state.publish(app)?;
     log_event(app, &state);
-    let warning = state.phase != "online";
-    if warning != was_warning {
-        notify(app, warning);
+    if (state.phase != "online") != was_warning {
+        notify(app, state.phase != "online");
+    }
+    if observation_only {
+        return Ok(());
     }
     let has_remote = crate::subscriptions::observe_source_configuration(app)
         .is_ok_and(|source| source.mode() == "remote_url" && !source.urls.is_empty());
     if let Some(action) = state
         .action(&clock, has_remote)
         .filter(|_| matches!(state.tun.status, "present" | "not_required"))
+        .filter(|_| selected::automatic_mode(app))
     {
-        recover(app, &mut state, &clock, action)?;
+        if matches!(state.recovery_stage, 0 | 3)
+            && selected::attempt(app, &mut state, &clock, identity.as_ref())?
+        {
+            return Ok(());
+        }
+        recover(app, &mut state, &clock, action, identity.as_ref())?;
     }
     Ok(())
+}
+
+fn cleanup_stopped_network(app: &App) -> Result<(), String> {
+    // A crashed core cannot remove the DNS redirect/route policy that outlives
+    // its listener. Retire those owned resources without starting a new core.
+    // The ordinary lifecycle helper is idempotent and preserves foreign rules.
+    let Some(_guard) = crate::service::try_config_apply_lock(app)? else {
+        return Ok(());
+    };
+    if cancelled() || disabled(app) || live(app) != Ok(false) {
+        return Ok(());
+    }
+    let result = crate::process::run_magicnet_function_quiet(
+        app,
+        // Boot and shell launchers use the config lock while creating the new
+        // listener. Hold it too; after_stop rechecks identity inside that lock.
+        "MAGICNET_SUB_CONFIG_LOCK_TIMEOUT=2 magicnet_with_sub_config_lock magicnet_lifecycle_after_stop",
+        Duration::from_secs(45),
+    );
+    let _ = crate::state::reconcile(app);
+    // Failed cleanup retains the lifecycle helper's recovery evidence and is
+    // retried on the next local watchdog check, independently of HTTPS backoff.
+    result.map_err(|_| "connectivity.cleanup_failed".into())
 }
 
 fn pause_cancelled(app: &App, state: &mut State) -> Result<(), String> {
@@ -704,7 +935,8 @@ fn probe_command(app: &App, url: &str, proxy: Option<&str>) -> Command {
     command.args([
         "-q",
         "--silent",
-        "--head",
+        "--max-filesize",
+        "1048576",
         "--output",
         "/dev/null",
         "--write-out",
@@ -825,6 +1057,7 @@ fn recover(
     state: &mut State,
     clock: &Clock,
     action: &'static str,
+    expected_identity: Option<&Value>,
 ) -> Result<(), String> {
     if cancelled() {
         return pause_cancelled(app, state);
@@ -836,16 +1069,36 @@ fn recover(
     };
     // A stop/restart may have won the lifecycle lock while the probes ran.
     // Never turn an absent or unobservable process into permission to start.
-    if cancelled() || live(app) != Ok(true) {
+    if cancelled()
+        || live(app) != Ok(true)
+        || !selected::automatic_mode(app)
+        || !selected::same_request(app, state, clock)
+    {
         return Ok(());
+    }
+    if !selected::same_identity(app, expected_identity) {
+        state.phase = "pending";
+        state.reason = "selection_changed";
+        state.next_uptime = clock.uptime.saturating_add(requests::MIN_INTERVAL);
+        return state.publish(app);
     }
     let routes = tun::observe(app, clock);
     if !matches!(routes.status, "present" | "not_required") {
         state.tun.record_observation(clock, &routes);
         return state.publish(app);
     }
-    if cancelled() || live(app) != Ok(true) {
+    if cancelled()
+        || live(app) != Ok(true)
+        || !selected::automatic_mode(app)
+        || !selected::same_request(app, state, clock)
+    {
         return Ok(());
+    }
+    if !selected::same_identity(app, expected_identity) {
+        state.phase = "pending";
+        state.reason = "selection_changed";
+        state.next_uptime = clock.uptime.saturating_add(requests::MIN_INTERVAL);
+        return state.publish(app);
     }
     state.reserve_action(clock, action);
     state.publish(app)?;

@@ -344,11 +344,11 @@ class DNSOutputOrder(unittest.TestCase):
                 self.assertEqual(state, initial())
 
     def test_insertion_or_redirect_failure_cleans_up(self):
-        for shell, family in itertools.product(SHELLS, ("iptables", "ip6tables")):
+        for shell, family, stale in itertools.product(SHELLS, ("iptables", "ip6tables"), (False, True)):
             for args in (["-I", "OUTPUT", "-j", CHAIN],
                          ["-A", CHAIN, "-p", "tcp", "--dport", "53", "-j", "REDIRECT", "--to-ports", "1053"]):
                 fail = shlex.join([family, "-t", "nat"] + args)
-                result, state = self.run_installer(initial(), shell, FAIL=fail)
+                result, state = self.run_installer(initial(stale), shell, FAIL=fail)
                 self.assertNotEqual(result.returncode, 0, (fail, result.stdout))
                 for cleanup_family in ("iptables", "ip6tables"):
                     self.assertFalse(any(CHAIN in r for r in state[cleanup_family]["OUTPUT"]))
@@ -361,10 +361,14 @@ class DNSOutputOrder(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("DNS capture redirected", result.stdout)
             self.assertLess(len(state["calls"]), 100)
+            self.assertEqual(state["iptables"][CHAIN], initial()["iptables"][CHAIN])
+            for call in state["calls"]:
+                if call[0] == "iptables":
+                    self.assertNotIn(call[3], ("-A", "-F", "-I"), call)
 
     def test_capture_jump_is_attached_only_after_both_redirects(self):
-        for shell in SHELLS:
-            result, state = self.run_installer(initial(False), shell)
+        for shell, stale in itertools.product(SHELLS, (False, True)):
+            result, state = self.run_installer(initial(stale), shell)
             self.assertEqual(result.returncode, 0, result.stderr)
             for family in ("iptables", "ip6tables"):
                 calls = state["calls"]
@@ -373,6 +377,15 @@ class DNSOutputOrder(unittest.TestCase):
                     redirect = calls.index([family, "-t", "nat", "-A", CHAIN, "-p", proto,
                                             "--dport", "53", "-j", "REDIRECT", "--to-ports", "1053"])
                     self.assertLess(redirect, attach)
+                # A rebuild detaches once before populating the private chain.
+                # Keep the kernel-call budget independent of UID-list length.
+                first_append = next(i for i, call in enumerate(calls)
+                                    if call[:5] == [family, "-t", "nat", "-A", CHAIN])
+                self.assertFalse(any(call[0] == family and call[3] in ("-C", "-D")
+                                     for call in calls[first_append:attach]), calls)
+                flushes = calls.count([family, "-t", "nat", "-F", CHAIN])
+                self.assertEqual(flushes, int(stale))
+            self.assert_captured(state)
 
 
 if __name__ == "__main__":

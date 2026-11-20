@@ -101,6 +101,7 @@ async function mountPolicy(page, component, options = {}) {
     const { default: Component } = await import(`/src/components/pages/${component}.vue`);
     createApp(Component).mount("#policy-fixture");
   }, { component, options });
+  if (component === "ControlPage") await page.locator(".mn-section-disclosure > summary").filter({ hasText: "网络设置" }).click();
 }
 
 test("hotspot launch shows pending state and leaves status refresh available", async ({ page }, info) => {

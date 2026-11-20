@@ -1404,6 +1404,23 @@ pub(crate) fn replace_module_text_files_transactionally(
     )
 }
 
+/// The same transaction for validated configuration bytes and their backups.
+/// All targets must still belong to the directory used for validation. Backups
+/// retain the original bytes even if an older file is not valid UTF-8.
+pub(crate) fn replace_module_files_transactionally(
+    app: &App,
+    replacements: &[(&Path, &[u8])],
+    validated_directory: &File,
+) -> Result<(), String> {
+    replace_module_files_transactionally_with_operations(
+        app,
+        replacements,
+        write_and_sync_module_transaction_stage,
+        rename_module_transaction_entry,
+        Some(validated_directory),
+    )
+}
+
 struct ModuleRelativeFile {
     directory: PathBuf,
     name: OsString,
@@ -1482,8 +1499,32 @@ where
 fn replace_module_text_files_transactionally_with_operations<W, F>(
     app: &App,
     replacements: &[(&Path, &str)],
+    stage_writer: W,
+    rename: F,
+) -> Result<(), String>
+where
+    W: FnMut(&mut File, &[u8]) -> Result<(), String>,
+    F: FnMut(ModuleTransactionRename, &File, &OsStr, &File, &OsStr) -> Result<(), String>,
+{
+    let replacements = replacements
+        .iter()
+        .map(|(path, text)| (*path, text.as_bytes()))
+        .collect::<Vec<_>>();
+    replace_module_files_transactionally_with_operations(
+        app,
+        &replacements,
+        stage_writer,
+        rename,
+        None,
+    )
+}
+
+fn replace_module_files_transactionally_with_operations<W, F>(
+    app: &App,
+    replacements: &[(&Path, &[u8])],
     mut stage_writer: W,
     mut rename: F,
+    validated_directory: Option<&File>,
 ) -> Result<(), String>
 where
     W: FnMut(&mut File, &[u8]) -> Result<(), String>,
@@ -1515,13 +1556,26 @@ where
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(validated_directory) = validated_directory {
+        let expected = validated_directory
+            .metadata()
+            .map_err(|err| format!("inspect validated config directory: {err}"))?;
+        for directory in &directories {
+            let actual = directory
+                .metadata()
+                .map_err(|err| format!("inspect transaction target directory: {err}"))?;
+            if (actual.dev(), actual.ino()) != (expected.dev(), expected.ino()) {
+                return Err("config directory changed during validation".to_string());
+            }
+        }
+    }
     let names = targets
         .into_iter()
         .map(|target| target.name)
         .collect::<Vec<_>>();
     let contents = replacements
         .iter()
-        .map(|(_, text)| text.as_bytes())
+        .map(|(_, bytes)| *bytes)
         .collect::<Vec<_>>();
     let snapshots = names
         .iter()

@@ -423,11 +423,16 @@ magicnet_dns_capture_install_family() (
     # nft xtables returns rc=2 for -C/-D referencing an absent target chain.
     # Create the unhooked empty chain first on fresh installs; existing chains
     # remain untouched until their jumps have been successfully detached.
-    if ! "$_install_cmd" -t nat -N magicnet-dns-output >/dev/null 2>&1; then
+    _install_created=0
+    if "$_install_cmd" -t nat -N magicnet-dns-output >/dev/null 2>&1; then
+        _install_created=1
+    else
         magicnet_xtables_require "$_install_cmd" -t nat -L magicnet-dns-output -n || return 1
     fi
     magicnet_dns_capture_remove_output_jumps "$_install_cmd" || return 1
-    magicnet_xtables_require "$_install_cmd" -t nat -F magicnet-dns-output || return 1
+    if [ "$_install_created" -eq 0 ]; then
+        magicnet_xtables_require "$_install_cmd" -t nat -F magicnet-dns-output || return 1
+    fi
     _install_recipe="$(magicnet_dns_capture_expected_rules)" || return 1
     while IFS= read -r _install_rule; do
         # Every token is generated above from validated numeric configuration.
@@ -438,7 +443,9 @@ magicnet_dns_capture_install_family() (
     done <<EOF
 $_install_recipe
 EOF
-    magicnet_dns_capture_prepend_jump "$_install_cmd"
+    # This config transaction already detached every owned jump before the
+    # build. Attach once after all rules succeed; do not scan those jumps again.
+    magicnet_xtables_require "$_install_cmd" -t nat -I OUTPUT -j magicnet-dns-output
 )
 
 magicnet_enable_dns_capture() {

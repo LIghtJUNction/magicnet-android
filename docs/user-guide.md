@@ -52,6 +52,8 @@ su -c /data/adb/modules/MagicNet/cli sub status
 
 保存过程会下载到候选区，解析节点，生成候选 sing-box 配置，执行校验并原子替换运行配置。任一步失败都会保留上一次有效来源和配置。
 
+公网来源默认要求 HTTPS。自己的 NAS、局域网、Tailnet 或 loopback 来源须先通过设备 CLI 配置准确的 scheme、主机、端口与 CIDR；WebUI 的 HTTP 输入不会自动取得授权。设置和撤销步骤见 [受信任的 NAS 与本地订阅源](trusted-subscriptions.md)。
+
 ### 本地文件来源
 
 WebUI 的“导入本地文件”支持完整 sing-box JSON、Clash YAML、base64 订阅、常见分享链接和转换器可识别的文本。文件内容在设备本地进入同一套候选校验流程，不需要先上传到公共 URL。
@@ -79,6 +81,10 @@ su -c /data/adb/modules/MagicNet/cli node current
 ```
 
 WebUI 可查看延迟、手动选择节点或切回自动组。选择结果会持久化；订阅更新后不存在的节点会被安全重建为有效候选。
+
+订阅排除词会移除名称中包含任一关键词的节点。例如原有 HK、JP、US 三个节点，排除 HK 后应保留 JP 和 US；保存排除词后，须完成一次成功的订阅更新，生效节点才会改变。更新校验失败时继续保留此前的有效配置。
+
+`node list` 从当前 `.config/sing-box/config.json` 读取真实代理节点，遵守 `proxy` 选择器成员并去重；选择器存在但成员为空时保持空列表。节点名称中的“选择”“策略”“fallback”等文字不影响真实节点识别，`[HK]` 等地区前缀也会保留；内部保留标签与 `magicnet-chain-` 生成节点继续排除。当前配置和缓存回退使用一致的标签规则；旧 `subscription-work/tags.txt` 和暂存候选不能占用列表名额。默认最多列出 48 个节点，`MAGICNET_NODE_LIST_LIMIT` 可调整上限，最大为 500。有效配置没有节点（包括省略 `outbounds` 或设为 `null`）时返回空列表并清除旧节点缓存；配置缺失、无法解析或结构不符时保留既有缓存回退，设置 `MAGICNET_NODE_CACHE=0` 可关闭该回退。
 
 ## 应用策略
 

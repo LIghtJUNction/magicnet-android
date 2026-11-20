@@ -215,7 +215,16 @@ magicnet_singbox_apply_app_policy() (
           | unique;
         def without($values):
           map(. as $value | select(($values | index($value)) == null));
-        (packages($proxy)) as $proxy_packages
+        # Non-final metadata actions must run before managed terminal routes.
+        def protected_rule($tailnets):
+          has("clash_mode") or has("preferred_by")
+          or .ip_is_private == true or .outbound == "lan"
+          or (.outbound as $tag | $tailnets | index($tag) != null)
+          or .action == "sniff" or .action == "hijack-dns" or .action == "reject"
+          or .action == "resolve" or .action == "route-options"
+          or (.outbound == "block" and (.protocol == "icmp" or has("ip_cidr")));
+        [.endpoints[]? | select(.type == "tailscale") | .tag] as $tailnets
+        | (packages($proxy)) as $proxy_packages
         | (packages($direct)) as $direct_packages
         | (packages($bypass)) as $bypass_packages
         | (uids($include_uids)) as $include_uid_values
@@ -260,11 +269,11 @@ magicnet_singbox_apply_app_policy() (
             | if (($proxy_packages | length) == 0 and ($direct_packages | length) == 0) then
                 $rules
               else
-                ($rules
-                  | map(select(has("action") or has("clash_mode") or ((.outbound // "") == "lan") or (((.protocol // "") == "icmp") and ((.outbound // "") == "block")) or (((.outbound // "") == "block") and has("ip_cidr"))))) as $protocol_guards
-                | ($rules
-                  | map(select((has("action") or has("clash_mode") or ((.outbound // "") == "lan") or (((.protocol // "") == "icmp") and ((.outbound // "") == "block")) or (((.outbound // "") == "block") and has("ip_cidr"))) | not))) as $business_rules
-                | $protocol_guards
+                # Splice after the last protection without reordering existing
+                # rules. An explicit route action is still a business rule.
+                ((([$rules | to_entries[] | select(.value | protected_rule($tailnets)) | .key]
+                  | last) // -1) + 1) as $at
+                | $rules[:$at]
                   + (if ($direct_packages | length) == 0 then [] else [{
                       "package_name": (["__magicnet_app_direct__"] + $direct_packages),
                       "outbound": "direct"
@@ -273,7 +282,7 @@ magicnet_singbox_apply_app_policy() (
                       "package_name": (["__magicnet_app_proxy__"] + $proxy_packages),
                       "outbound": "proxy"
                     }] end)
-                  + $business_rules
+                  + $rules[$at:]
               end
           )
         | .dns = (

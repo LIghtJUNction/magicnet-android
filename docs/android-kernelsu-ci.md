@@ -36,6 +36,22 @@ route configurations.
 
 ## Required route-loss recovery
 
+The whole route proof uses a single virtual cellular uplink so Android cannot
+switch between competing Wi-Fi and cellular defaults during the offline test.
+On this pinned Google API 35 image, `eth0` is the emulator radio data interface,
+not an Android Ethernet service interface. A dedicated
+[device diagnostic](https://github.com/LIghtJUNction/magicnet-android/actions/runs/43404505529)
+observed its CELLULAR/WWAN ownership and its complete mobile-data off/on cycle.
+Before changing Wi-Fi, the harness requires the explicit disposable-AVD opt-in,
+an emulator serial, `ro.kernel.qemu=1`, `x86_64`, and an observed ADB control path
+that does not use Wi-Fi. It records the enabled state from the pinned Android
+[Wi-Fi status command](https://android.googlesource.com/platform/packages/modules/Wifi/+/refs/tags/android-15.0.0_r23/service/java/com/android/server/wifi/WifiShellCommand.java),
+temporarily disables Wi-Fi, then requires two identical network/rule observations
+five seconds apart within a bounded deadline. Both must show exactly one physical
+network on `eth0`, no `wlan0` network, complete netd-bound selectors and `eth0`
+egress. The `network_fixture` evidence retains both observations and the original
+Wi-Fi boolean, without retaining SSIDs.
+
 The `tun-route-recovery` phase keeps the application-UID TCP controls and uses
 a non-DNS UDP marker for RPDB loss: the fixed Android TCP REDIRECT path can still
 work without these rules. A temporary receiver lives inside the test app; the
@@ -46,29 +62,136 @@ The harness deletes only live IPv4
 the core generation, `magicnet0` and TUN forwarding table. The test requires
 readiness to become false and a new application connection to fail, then waits
 for the normal `connectivity tick` recovery path to restore both rules and flow.
-It also exercises a controlled virtual uplink down/up transition, requiring a
+It also exercises a controlled mobile-data off/on transition on `eth0`, requiring a
 fresh TCP positive control before interruption and retaining the final route,
 readiness and app observation if recovery times out. Production
 grace, confirmation and cooldown periods remain active; the fixture does not
 fabricate canonical state or require Google or a subscription provider.
+
+The interruption uses Android's
+[`cmd phone data disable` / `enable`](https://android.googlesource.com/platform/packages/services/Telephony/+/refs/tags/android-15.0.0_r23/src/com/android/phone/TelephonyShellCommand.java).
+Before changing data state, the report binds the unique default phone and data
+subscription to the current registry observation, one CONNECTED/WWAN/eth0
+connection, and the same netId in netd. User and effective data must both be
+enabled. The phone and registry parsers read explicitly bounded current sections;
+historical log entries cannot supply current state. Only normalized identifiers,
+booleans and connection metadata enter the report, not APNs or raw dumps.
+
+The disable command and shutdown observations share a 15-second deadline. An
+acknowledged shutdown requires user and effective data disabled, disconnected
+data state, no current precise data connections, an actual DOWN interface and
+destruction of the old eth0 network in netd. Android transfers the old network's
+exact per-app UID metadata to UNREACHABLE while the default network is absent;
+only that derived transfer is accepted. Other netd records must remain unchanged,
+and a baseline with pre-existing UNREACHABLE per-app metadata is unsupported.
+The `cellular_lifecycle` evidence retains before/down/after observations. After
+enable, the same phone and subscription must have one connected WWAN/eth0 network;
+the original netd metadata must return, with only its netId allowed to change.
+The independent validator checks this evidence again.
+
+This control follows the actual
+[emulator radio lifecycle](https://android.googlesource.com/device/google/cuttlefish/+/refs/tags/android-15.0.0_r23/guest/hals/ril/reference-ril/reference-ril.c)
+and [Telephony data network teardown](https://android.googlesource.com/platform/frameworks/opt/telephony/+/refs/tags/android-15.0.0_r23/src/java/com/android/internal/telephony/data/DataNetwork.java).
+An interface UP flag alone cannot request a fresh radio data call. Every failure
+still executes mobile-data restoration. An independent 30-second enable guard
+survives a host interruption; cleanup observes its completion with a 35-second
+polling deadline and a 10-second limit on each device read. The subsequent
+600-second route/readiness/app recovery budget is unchanged. The harness never
+recreates Android's routes itself. Missing, malformed or timed-out observations
+remain failures, including a nonexistent service returning empty stdout with rc0.
+
 The first fixture activation observes the normal stop/start boundary to prove
 ownership of the core's random redirect table. Recovery may replace that proven
 helper; its complete rule/FIB evidence and every other unowned rule are checked.
 Across recovery, an `eth0` network-ID change requires complete [netd observations](https://android.googlesource.com/platform/system/netd/+/refs/tags/android-15.0.0_r23/server/NetworkController.cpp)
-binding both IDs to the same interface, permissions and FIB. Only the two exact
-corresponding Android selectors may change; all other rules remain identical.
-The two-selector model requires permission `NONE`; canonical UID restrictions are
-allowed only when unchanged. Rejected parsed network observations are retained
-with their failure stage for diagnosis.
+binding both IDs to the same interface, permissions and FIB. Only the exact
+global selectors and the per-app selectors declared by unchanged UID metadata may
+change their network ID. The latter use priorities `15000 + preference` and
+`22000 + preference`, the observed UID interval, `iif lo`, table `eth0` and mark
+mask `0x1ffff`, as defined by the pinned [Android 15 RouteController](https://android.googlesource.com/platform/system/netd/+/refs/tags/android-15.0.0_r23/server/RouteController.cpp).
+Every derived selector must have its exact expected multiplicity in both snapshots.
+The permission must remain one of `NONE`, `NETWORK` or `SYSTEM`; the global
+explicit rule includes the matching permission bits in its mark and mask.
+Only `NONE` has a global implicit rule. Per-app selectors remain permission
+independent. Default/local UID rules and all other unowned rules remain identical.
+The producer and independent release validator each enforce these constraints.
+Rejected network observations retain their failure stage.
 
 The report retains the fault observations, recovery action, app controls and
-configuration/resource restoration. A separate bounded JSON validator requires
+configuration/resource restoration. The enclosing fixture restores and reads back
+the original Wi-Fi enabled state in `finally`, including after a failed proof;
+failed restoration prevents a verified result. This checks the enabled state,
+not Wi-Fi association or Wi-Fi handover. If an RPDB or uplink control fails, the
+simulation requests a bounded, redacted support export before restoring the TUN
+configuration. Capture failure preserves the original test failure. An unexplained
+UDP timeout remains a failure; diagnostics do not replace a fresh app control.
+A separate bounded JSON validator requires
 the exact source SHA and every mandatory lifecycle phase, rejects malformed,
 missing, skipped or inconsistent evidence, and runs even after lifecycle failure.
 Host parser tests validate this gate; the actual emulator run establishes the
 kernel and application evidence. This reproduces the recoverable missing-rule
 condition from #436; it does not identify which OEM component originally removed
 the rules or establish physical ARM64 modem behavior.
+
+## Host evidence when the emulator disappears
+
+[Source run 43407220745](https://github.com/LIghtJUNction/magicnet-android/actions/runs/43407220745)
+completed route recovery, then failed to observe a completed new Android boot
+during upgrade preservation. The guest serial log showed that init received the
+reboot request, but the original artifacts did not retain the host emulator's
+exit status. The additional host observations address that evidence gap. They do
+not establish or repair the cause of that reboot failure.
+
+A passive Python parent launches the existing emulator argument list once and
+waits for that child. Emulator output still goes directly to `emulator.log`;
+there is no pipe between the emulator and its log, no new session, signal
+forwarding, retry or restart. `emulator-host-launch.json` records separate child
+and observer PID/starttime identities, an argument digest and the child's
+cgroup memory baseline. `emulator.pid` contains the actual child PID.
+`emulator-host-exit.json` retains the real
+[Python wait result](https://docs.python.org/3.12/library/subprocess.html#subprocess.Popen.returncode):
+a negative value represents a signal, while a normal exit code such as 137 stays
+a normal exit code. Missing process identity or a lost observer leaves the
+corresponding observation unknown.
+
+An always-running step writes `emulator-host-before-stop.json` before explicit
+cleanup. It reads only the recorded processes, the original cgroup and a bounded
+kernel-log stream, and queries the existing localhost ADB server with
+`host:devices`. That query cannot start an ADB server, reconnect a transport or
+send a guest command. Only the target emulator's normalized state and the device
+count are retained. The snapshot has a 12-second internal deadline and a
+15-second external timeout, with one further second allowed for termination.
+Each ADB or kernel reader receives at most three seconds. JSON records are
+limited to 32 KiB, individual proc/cgroup reads to 16 KiB, ADB payloads to 8 KiB
+and 64 device rows, and kernel input to 512 KiB. Only 16 matching PID OOM records
+can be retained; truncation, denied access and absent counters remain explicit.
+
+The uploaded host records contain numeric process observations, fixed status
+tokens, content digests and whitelisted memory/OOM fields. They contain no full
+environment, command line, cgroup path or host-log body. The cgroup lookup path
+stays in private runner temporary state outside the uploaded artifact directory.
+Both [hierarchical and local memory events](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files)
+are sampled when available. An increased OOM counter describes that cgroup's
+scope; a SIGKILL or a matching PID in a kernel message alone does not establish
+that the emulator was killed by OOM.
+
+Explicit Stop records its request time separately, keeps the existing bounded
+ADB shutdown, and uses a pidfd plus matching starttime for the existing SIGTERM.
+SIGTERM also requires a complete spawned receipt, the original observer still
+alive with the same starttime, and matching recorded and current parentage.
+A missing observer, an orphan, a parent mismatch or malformed ownership evidence
+leaves cleanup unknown and sends no SIGTERM. Missing pidfd support or a reused
+PID never falls back to an unverified `kill(pid)`. The two cleanup helpers each
+have a three-second timeout plus one second for termination. Cleanup observations do not overwrite the snapshot.
+An exit observed after the cleanup request is not automatically attributed to
+cleanup; the files retain timestamps so the sequence can be assessed.
+
+Host collection failures do not replace the lifecycle failure or make it pass.
+The single reboot request, 300-second new-boot observation, route recovery
+budgets and independent Android acceptance gate remain unchanged. Host tests
+exercise actual child exits and signals, identity loss, PID reuse, bounded
+inputs and cleanup ordering. A later successful run would provide additional
+acceptance evidence, not prove the cause of the earlier host/guest loss.
 
 ## Sustained device observations
 

@@ -42,7 +42,7 @@ magicnet_hotspot_tun_route_table_ready() (
 
     magicnet_iface_exists magicnet0 || return 1
     _route_table="$(magicnet_kernel_route_table)"
-    _route_output="$(ip route show table "$_route_table" 2>/dev/null)" || return 2
+    _route_output="$(ip route show table " $_route_table" 2>/dev/null)" || return 2
     printf '%s\n' "$_route_output" | awk '
         { for (i = 1; i < NF; i++) if ($i == "dev" && $(i + 1) == "magicnet0") found = 1 }
         END { exit !found }
@@ -98,6 +98,11 @@ magicnet_kernel_route_state_write() (
     if ! {
         printf 'schema=2\nphase=%s\nboot=%s\n' "$1" "$_boot"
         printf 'table=2022\ninterface=magicnet0\n'
+        # Only prepared ledgers carry this migration marker; the active
+        # schema-2 ownership contract remains unchanged for its consumers.
+        if [ "$1" = prepared ]; then
+            printf 'rule_table_format=verified-2022\n'
+        fi
         printf '%s\n' "$2" | sed '/^$/d; s/^/rule4=/'
         printf '%s\n' "$3" | sed '/^$/d; s/^/rule6=/'
     } >"$_tmp" || ! mv -f "$_tmp" "$_state"; then
@@ -109,6 +114,10 @@ magicnet_kernel_route_state_write() (
 magicnet_kernel_route_new_rules() (
     _family="$1"
     _state="$(magicnet_kernel_route_state_file)"
+    # Legacy prepared baselines contain rendered names. Comparing them with
+    # normalized numbers could turn an existing foreign rule into a new one.
+    # Rebase only through state_begin after the old TUN routes are absent.
+    grep -Fqx 'rule_table_format=verified-2022' "$_state" || return 2
     _before="$(sed -n "s/^rule${_family}=//p" "$_state")" || return 2
     _after="$(magicnet_kernel_route_rules "$_family")" || return 2
     while IFS= read -r _rule; do
@@ -152,15 +161,53 @@ magicnet_kernel_route_rules() (
     *) return 2 ;;
     esac
     [ "${#_rules}" -le 65536 ] || return 2
-    printf '%s\n' "$_rules" | awk '
-        $1 ~ /^[0-9]+:$/ {
+    # Android ip renders table names but cannot request numeric-only output.
+    # Resolve ownership using the kernel's numeric table filter, not a name
+    # guessed from rt_tables. A leading space bypasses numeric-looking aliases
+    # while remaining one argv value accepted by ip's numeric parser.
+    case "$1" in
+    4) _table_rules="$(ip rule show table ' 2022' 2>/dev/null)" || return 2 ;;
+    6) _table_rules="$(ip -6 rule show table ' 2022' 2>/dev/null)" || return 2 ;;
+    esac
+    [ "${#_table_rules}" -le 65536 ] || return 2
+    printf '%s\n%s\n%s\n' "$_table_rules" MAGICNET_TABLE_RULES_END "$_rules" | awk '
+        BEGIN { filtered = 1 }
+        $0 == "MAGICNET_TABLE_RULES_END" { filtered = 0; next }
+        NF == 0 { next }
+        $1 !~ /^[0-9]+:$/ { invalid = 1; next }
+        {
             priority = $1; sub(/:$/, "", priority)
-            # Observe every occupant, including foreign tables at the same
-            # priority. A filtered view cannot safely detect delete ambiguity.
-            if ((priority >= 9000 && priority <= 9099) || priority == 32768) {
-                gsub(/ \[detached\]/, "")
-                $1 = $1; print
+            if (!((priority >= 9000 && priority <= 9099) || priority == 32768)) next
+            gsub(/ \[detached\]/, "")
+            $1 = $1
+            if (filtered) {
+                lookup = 0
+                for (i = 2; i < NF; i++) if ($i == "lookup") lookup++
+                if (lookup != 1) invalid = 1
+                matched[$0]++
+            } else {
+                rows[++count] = $0
+                observed[$0]++
             }
+        }
+        END {
+            # A raced snapshot or two different tables with the same printed
+            # name/selectors cannot establish ownership. Preserve the ledger.
+            for (row in matched) if (matched[row] != observed[row]) invalid = 1
+            for (n = 1; n <= count; n++) {
+                fields = split(rows[n], words, " ")
+                for (i = 2; i < fields; i++) {
+                    if (words[i] != "lookup") continue
+                    if (rows[n] in matched) words[i + 1] = "2022"
+                    else if (words[i + 1] == "2022") invalid = 1
+                }
+                line = words[1]
+                for (i = 2; i <= fields; i++) line = line " " words[i]
+                normalized[n] = line
+            }
+            if (invalid) exit 2
+            # Retain every foreign occupant for the shared-priority check.
+            for (n = 1; n <= count; n++) print normalized[n]
         }
     '
 )
@@ -214,9 +261,22 @@ EOF
         [ "$_attempt" -le 128 ] || return 2
         set -f
         # No eval: only normalized, bounded ip-rule tokens from our ledger.
+        # Force the verified table number as one argv value even if rt_tables
+        # has a different table whose name is literally "2022".
+        set --
+        _lookup=0
         # shellcheck disable=SC2086
-        set -- $_record
-        shift
+        for _token in ${_record#*:}; do
+            if [ "$_lookup" -eq 1 ]; then
+                [ "$_token" = 2022 ] || return 2
+                set -- "$@" ' 2022'
+                _lookup=0
+            else
+                set -- "$@" "$_token"
+                [ "$_token" != lookup ] || _lookup=1
+            fi
+        done
+        [ "$_lookup" -eq 0 ] || return 2
         case "$_family" in
         4) ip rule del priority "$_priority" "$@" >/dev/null 2>&1 || return 1 ;;
         6) ip -6 rule del priority "$_priority" "$@" >/dev/null 2>&1 || return 1 ;;
@@ -275,10 +335,10 @@ EOF
 magicnet_kernel_route_table_snapshot() (
     _family="$1"
     case "$_family" in
-    4) set -- route show table 2022 ;;
+    4) set -- route show table ' 2022' ;;
     6)
         [ -e /proc/net/if_inet6 ] || return 0
-        set -- -6 route show table 2022
+        set -- -6 route show table ' 2022'
         ;;
     *) return 2 ;;
     esac
@@ -303,8 +363,8 @@ magicnet_kernel_route_flush_family() (
     [ "$_kernel_rc" -eq 1 ] || return 2
     # Never flush a whole table: 2022 can contain another owner's routes.
     case "$_family" in
-    4) ip route flush table 2022 dev magicnet0 >/dev/null 2>&1 || return 1 ;;
-    6) ip -6 route flush table 2022 dev magicnet0 >/dev/null 2>&1 || return 1 ;;
+    4) ip route flush table ' 2022' dev magicnet0 >/dev/null 2>&1 || return 1 ;;
+    6) ip -6 route flush table ' 2022' dev magicnet0 >/dev/null 2>&1 || return 1 ;;
     esac
     _routes="$(magicnet_kernel_route_table_snapshot "$_family")" || return 2
     printf '%s\n' "$_routes" | awk '

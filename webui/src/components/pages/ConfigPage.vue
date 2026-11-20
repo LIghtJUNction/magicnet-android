@@ -19,8 +19,8 @@ import { MAX_LOCAL_CONFIG_BYTES, parseLocalConfigFile } from "./configFileImport
 const { state, loadConfig, saveConfig, syncConfigTemplate, loadConfigRepository, saveConfigRepository, openExternal, REPO } = useMagicNet();
 const { isRunning, withAction } = useActionLock();
 const DEFAULT_CONFIG_REPO_URL = "https://github.com/LIghtJUNction/MagicSingBox.git";
-const DEFAULT_CONFIG_REPO_REF = "ba5793b41fd06704102116fe2536eef5988f2905";
-const DEFAULT_CONFIG_REPO_SHA256 = "e269e2303cf1e23d3b4ce69dcb7cca39f0f53dc647c5d03aace4c4bd7f986be0";
+const DEFAULT_CONFIG_REPO_REF = "da3d375d024e0982265bc67c48a87de7bb4f9424";
+const DEFAULT_CONFIG_REPO_SHA256 = "fe741b83040191dfeca2543c6bd630d92b06a3e6e373506a2ee32cc87fc8c9b8";
 const configView = ref<"full" | "overrides">("full");
 const pendingConfigAction = ref<PendingToolAction | null>(null);
 const configFileInput = ref<HTMLInputElement | null>(null);
@@ -283,9 +283,32 @@ async function openConfigIssue(): Promise<void> {
 </script>
 
 <template>
-  <div class="config-page grid gap-4">
-    <PageHeader :overline="t('编辑器')" :title="t('配置文件')">
-      <div v-show="configView === 'full'" class="flex flex-wrap items-center gap-2">
+  <div class="config-page">
+    <PageHeader :overline="t('编辑器')" :title="t('配置文件')" />
+
+    <div class="config-view-switch" :aria-label="t('配置编辑方式')">
+      <Button :variant="configView === 'full' ? 'secondary' : 'ghost'" :aria-pressed="configView === 'full'" @click="configView = 'full'">{{ t("完整配置") }}</Button>
+      <Button :variant="configView === 'overrides' ? 'secondary' : 'ghost'" :aria-pressed="configView === 'overrides'" @click="configView = 'overrides'">{{ t("配置覆写") }}</Button>
+    </div>
+
+    <ToolActionConfirmCard
+      v-if="pendingConfigAction"
+      :action="pendingConfigAction"
+      :loading="isRunning(pendingConfigAction.key)"
+      @cancel="cancelConfigAction"
+      @confirm="confirmConfigAction"
+    />
+
+    <KeepAlive><ConfigOverridesCard v-if="configView === 'overrides'" /></KeepAlive>
+
+    <div v-show="configView === 'full'" class="config-full-view">
+    <Card class="config-editor-workspace grid gap-3">
+      <div class="config-file-bar flex min-w-0 flex-wrap items-center gap-2 text-sm text-[var(--mn-ink-muted)]">
+        <span class="mr-auto font-medium text-[var(--mn-ink)]" :title="state.config.path">sing-box</span>
+        <span class="shrink-0">{{ t(state.config.status) }}</span>
+        <span v-if="state.config.dirty" class="config-dirty">{{ t("未保存") }}</span>
+      </div>
+      <div class="config-primary-actions">
         <input ref="configFileInput" class="hidden" type="file" accept=".json,application/json" @change="importLocalConfig">
         <Button variant="outline" :loading="isRunning('load-config')" @click="requestLoadConfig"><RefreshCw :size="17" />{{ isRunning('load-config') ? t("加载中") : t("加载配置") }}</Button>
         <Button :disabled="!state.hasKsu || !state.config.text.trim() || !configSyntaxValid" :loading="isRunning('save-config')" :aria-label="t('校验并保存配置')" @click="requestSaveConfig"><Save :size="17" />{{ isRunning('save-config') ? t("校验中") : t("保存") }}</Button>
@@ -300,33 +323,15 @@ async function openConfigIssue(): Promise<void> {
           </div>
         </details>
       </div>
-    </PageHeader>
-
-    <ToolActionConfirmCard
-      v-if="pendingConfigAction"
-      :action="pendingConfigAction"
-      :loading="isRunning(pendingConfigAction.key)"
-      @cancel="cancelConfigAction"
-      @confirm="confirmConfigAction"
-    />
-
-    <div class="config-view-switch" :aria-label="t('配置编辑方式')">
-      <Button :variant="configView === 'full' ? 'secondary' : 'ghost'" :aria-pressed="configView === 'full'" @click="configView = 'full'">{{ t("完整配置") }}</Button>
-      <Button :variant="configView === 'overrides' ? 'secondary' : 'ghost'" :aria-pressed="configView === 'overrides'" @click="configView = 'overrides'">{{ t("配置覆写") }}</Button>
-    </div>
-    <KeepAlive><ConfigOverridesCard v-if="configView === 'overrides'" /></KeepAlive>
-
-    <div v-show="configView === 'full'" class="grid gap-4">
-    <Card class="config-editor-workspace grid gap-3">
-      <div class="config-file-bar flex min-w-0 flex-wrap items-center gap-2 text-sm text-[var(--mn-ink-muted)]">
-        <span class="mr-auto font-medium text-[var(--mn-ink)]" :title="state.config.path">sing-box</span>
-        <span class="shrink-0">{{ t(state.config.status) }}</span>
-        <span v-if="state.config.dirty" class="shrink-0 rounded bg-[color-mix(in_srgb,var(--mn-oat)_55%,var(--mn-carrier))] px-2 py-1 text-xs text-[var(--mn-warning)]">{{ t("未保存") }}</span>
-      </div>
-      <details class="mn-disclosure" :open="state.config.validation.status === 'error' || configOutline.status === 'error'">
+      <ConfigCodeEditor
+        v-model="state.config.text"
+        @syntax-state="updateConfigSyntaxState"
+        @update:model-value="markConfigEdited"
+      />
+      <details class="config-validation mn-disclosure" :open="state.config.validation.status === 'error' || configOutline.status === 'error'">
         <summary>{{ t("校验与结构") }}<span>{{ configAnalysisPending ? t("分析中") : state.config.validation.status === 'error' ? t("检查失败") : state.config.validation.status === 'ok' ? t("通过") : t("未校验") }}</span></summary>
         <input class="mn-field mb-3 w-full px-3" readonly :value="state.config.path" :aria-label="t('当前配置路径')">
-      <div class="grid gap-2 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
+      <div class="config-detail-block grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
         <div>
           <p class="text-xs text-[var(--mn-ink-muted)]">{{ t("校验状态") }}</p>
           <p
@@ -345,7 +350,7 @@ async function openConfigIssue(): Promise<void> {
           <p class="mt-1 break-words text-sm text-[var(--mn-ink-soft)]">{{ t(state.config.validation.summary) }}</p>
         </div>
       </div>
-      <div class="grid gap-2 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3 text-xs text-[var(--mn-ink-muted)] sm:grid-cols-4">
+      <div class="config-detail-block config-statistics grid gap-2 text-xs text-[var(--mn-ink-muted)]">
         <span>{{ t("{value} 行", { value: configStats.lines }) }}</span>
         <span>{{ t("{value} 字符", { value: configStats.chars }) }}</span>
         <span>{{ configStats.sizeKiB }} KiB</span>
@@ -353,7 +358,7 @@ async function openConfigIssue(): Promise<void> {
           {{ configAnalysisPending ? t("正在分析") : localJsonStatus || t("等待编辑") }}
         </span>
       </div>
-      <div class="grid gap-3 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3 text-sm text-[var(--mn-ink-muted)]">
+      <div class="config-detail-block grid gap-3 text-sm text-[var(--mn-ink-muted)]">
         <div class="flex min-w-0 flex-wrap items-center gap-2">
           <ListTree :size="16" class="text-[var(--mn-ink-muted)]" />
           <span class="font-medium text-[var(--mn-ink-soft)]">{{ t("配置结构") }}</span>
@@ -370,14 +375,14 @@ async function openConfigIssue(): Promise<void> {
           <span class="min-w-0 break-words text-xs text-[var(--mn-ink-muted)]">{{ configOutline.summary }}</span>
         </div>
         <div class="grid gap-2 text-xs text-[var(--mn-ink-muted)] sm:grid-cols-4">
-          <span v-for="item in configOutline.counts" :key="item.label" class="rounded border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] px-2 py-1">
+          <span v-for="item in configOutline.counts" :key="item.label" class="config-outline-count">
             {{ item.label }}: <b class="font-medium text-[var(--mn-ink-soft)]">{{ item.value }}</b>
           </span>
         </div>
         <p class="break-words text-xs text-[var(--mn-ink-muted)]"> {{ t("顶层键：{value}", { value: configOutline.keys.length ? configOutline.keys.join(", ") : t("无") }) }}
         </p>
       </div>
-      <div class="grid gap-3 rounded-md border border-[color-mix(in_srgb,var(--mn-ink)_12%,transparent)] bg-[var(--mn-ivory)] p-3 text-sm text-[var(--mn-ink-muted)]">
+      <div class="config-detail-block grid gap-3 text-sm text-[var(--mn-ink-muted)]">
         <div class="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <div class="flex min-w-0 flex-wrap items-center gap-2">
             <span class="font-medium text-[var(--mn-ink-soft)]">{{ t("关键项") }}</span>
@@ -409,11 +414,6 @@ async function openConfigIssue(): Promise<void> {
         </p>
       </div>
       </details>
-      <ConfigCodeEditor
-        v-model="state.config.text"
-        @syntax-state="updateConfigSyntaxState"
-        @update:model-value="markConfigEdited"
-      />
     </Card>
 
     <details class="config-repo-panel mn-disclosure">
@@ -437,5 +437,22 @@ async function openConfigIssue(): Promise<void> {
 </template>
 
 <style scoped>
-.config-view-switch { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--mn-border); padding-bottom: 16px; }
+.config-page, .config-full-view { display: grid; min-width: 0; gap: var(--mn-section-gap); }
+.config-view-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: var(--mn-radius-lg); background: var(--mn-surface-sunken); }
+.config-view-switch > button { min-width: 0; border: 0; }
+.config-view-switch > button[aria-pressed="true"] { background: var(--mn-surface-raised); color: var(--mn-ink); }
+.config-editor-workspace { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.config-page .config-editor-workspace > * { order: initial; }
+.config-file-bar { gap: 8px 12px; min-height: 32px; }
+.config-dirty { flex: 0 0 auto; border-radius: var(--mn-radius-sm); padding: 4px 8px; background: var(--mn-surface-sunken); color: var(--mn-ink); font-size: 12px; font-weight: 550; }
+.config-primary-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: start; gap: 8px; min-width: 0; margin-bottom: 8px; }
+.config-primary-actions > button { min-width: 0; min-height: 48px; }
+.config-action-menu { position: relative; min-width: 0; }
+.config-action-menu > summary { border-color: transparent; background: var(--mn-surface-sunken); }
+.config-action-menu > div { right: 0; max-width: calc(100vw - 48px); }
+.config-validation { margin-top: 8px; }
+.config-detail-block { border: 0; padding: 16px 0; background: transparent; }
+.config-statistics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.config-outline-count { padding: 8px; border-radius: var(--mn-radius-md); background: var(--mn-surface-sunken); }
+.config-repo-panel > .magic-card { padding-inline: 0; background: transparent; }
 </style>

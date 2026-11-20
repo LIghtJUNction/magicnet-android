@@ -27,8 +27,8 @@ assert.match(
   "button targets must remain at least 48px tall",
 );
 assert.match(card, /magic-card/, "shared sections retain their semantic surface class");
-assert.match(styles, /\.magic-card\s*\{[^}]*border: 0;[^}]*border-radius: var\(--mn-radius-lg\);[^}]*background: var\(--mn-surface-raised\);/,
-  "top-level sections use quiet surfaces without enclosing borders");
+assert.match(styles, /\.magic-card\s*\{[^}]*border: 0;[^}]*background: transparent;/,
+  "ordinary sections use spacing without a separate card surface");
 assert.match(styles, /\.magic-card \.magic-card\s*\{[^}]*background: transparent;/,
   "nested sections use spacing instead of another card surface");
 
@@ -45,11 +45,11 @@ for (const label of ["运行", "路由", "配置", "诊断"]) {
 }
 assert.match(
   app,
-  /:aria-current="activeWorkspace\.key === workspace\.key \? 'page' : undefined"/,
+  /:aria-current="activeTab === item\.key \? 'page' : undefined"/,
 );
 assert.match(
   styles,
-  /\.mobile-nav\s*\{[\s\S]*grid-template-columns:\s*repeat\(4,/,
+  /\.mobile-nav\s*\{[\s\S]*grid-template-columns:\s*repeat\(5,/,
 );
 assert.match(styles, /\.mobile-nav button\s*\{[\s\S]*min-height:\s*56px/);
 assert.match(styles, /env\(safe-area-inset-bottom\)/);

@@ -89,6 +89,8 @@ if [[ ! -s "$BUILD_TAGS_FILE" ]] || [[ ! -s "$SHARED_LDFLAGS_FILE" ]] ||
 fi
 
 BUILD_TAGS="$(tr -d '\r\n' <"$BUILD_TAGS_FILE")"
+# MagicNet verifies the selected outbound with the optional strict HTTPS probe.
+BUILD_TAGS="$BUILD_TAGS,with_lx_probe"
 SHARED_LDFLAGS="$(tr '\r\n' '  ' <"$SHARED_LDFLAGS_FILE")"
 BASE_VERSION="$(tr -d '\r\n' <"$VERSION_FILE")"
 if [[ ! "$BUILD_TAGS" =~ ^[a-zA-Z0-9_,.-]+$ ]]; then

@@ -2,6 +2,8 @@
 # ABI-correct versions of the additional tools shipped by the production module.
 # Does not execute captures or start a proxy; these are installation payloads.
 set -euo pipefail
+# readelf output below is parsed, so keep its field names stable on every host.
+export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:?usage: prepare-android-fixture-tools.sh OUTPUT_DIRECTORY}"
 mkdir -p "$OUT"
@@ -14,15 +16,15 @@ trap 'rm -rf "$WORK"' EXIT
 # shellcheck source=hooks/lib/release_locks.sh
 . "$ROOT/hooks/lib/release_locks.sh"
 release_lock_lookup ecapture
-[[ "$RELEASE_LOCK_REPO" == gojue/ecapture && "$RELEASE_LOCK_TAG" == v2.5.2 &&
-   "$RELEASE_LOCK_ASSET" == ecapture-v2.5.2-android-arm64.tar.gz ]] || {
+[[ "$RELEASE_LOCK_REPO" == gojue/ecapture && "$RELEASE_LOCK_TAG" == v2.11.0 &&
+   "$RELEASE_LOCK_ASSET" == ecapture-v2.11.0-android-arm64.tar.gz ]] || {
     echo 'eCapture fixture pin must be reviewed alongside the production pin' >&2
     exit 1
 }
 curl --fail --location --retry 3 --max-time 180 \
-    "https://github.com/$RELEASE_LOCK_REPO/releases/download/$RELEASE_LOCK_TAG/ecapture-v2.5.2-android-amd64.tar.gz" \
+    "https://github.com/$RELEASE_LOCK_REPO/releases/download/$RELEASE_LOCK_TAG/ecapture-v2.11.0-android-amd64.tar.gz" \
     -o "$WORK/ecapture.tar.gz"
-printf '%s  %s\n' 904f8335b70ea42fe00070b1af107b8a6fadfcdc4697d990b64b4740922cde54 \
+printf '%s  %s\n' c98eed452d9b548dc5f6bac38fc28b733d691e73b21a3b0b5cd6b86a3a1a2033 \
     "$WORK/ecapture.tar.gz" | sha256sum --check --strict
 # Extract only one bounded regular file, without following archive paths/links.
 python3 - "$WORK" <<'PY'

@@ -1,3 +1,4 @@
+import { navigateToPage } from "./navigation.mjs";
 import { test, expect } from "@playwright/test";
 import { connectReadOnlyNativeFixture } from "./read-only-native-fixture.mjs";
 
@@ -61,8 +62,16 @@ for (const theme of ["light", "dark"]) {
       });
       state.subscriptionReadStatus = "ready";
     });
-    await expect(page.locator(".mn-control-memory")).toContainText("128.0");
-    await expect(page.locator(".mn-control-memory")).toContainText("MiB");
+    const rssMetric = page.locator(".mn-control-metrics > div").filter({ hasText: "内核内存（RSS）" });
+    await expect(page.locator(".mn-control-metrics")).toBeVisible();
+    await expect(rssMetric).toHaveCount(1);
+    await expect(rssMetric.locator("dd")).toHaveText(/^128\.0\s*MiB$/);
+    await expect(page.locator(".mn-service-facts")).toBeHidden();
+    await page.locator(".mn-section-disclosure > summary").filter({ hasText: "运行详情" }).click();
+    await expect(page.locator(".mn-service-facts")).toBeVisible();
+    await expect(page.locator(".mn-service-facts dt")).toHaveText(["sing-box", "服务检查", "实际模式"]);
+    await expect(page.locator(".mn-service-facts dd").first()).toHaveText("进程存在");
+    await expect(rssMetric.locator("dd")).toHaveText(/^128\.0\s*MiB$/);
     await fit(page);
     await page.screenshot({
       path: info.outputPath(`${theme}-runtime.png`),
@@ -79,17 +88,19 @@ for (const theme of ["light", "dark"]) {
       state.runtime.serviceReady = null;
       state.runtime.singBoxRssKib = null;
     });
-    await expect(page.locator(".mn-control-memory")).toContainText("暂不可用");
+    await expect(rssMetric.locator("dd")).toHaveText("暂不可用");
     await page.evaluate(async () => {
       const { state } = (
         await import("/src/composables/useMagicNet.ts")
       ).useMagicNet();
       state.runtime.singBoxState = "stopped";
+      // A stopped process must not expose an earlier valid RSS sample.
+      state.runtime.singBoxRssKib = 131072;
     });
-    await expect(page.locator(".mn-control-memory")).toHaveCount(0);
-    const desktop = page.locator('.desktop-rail [data-tab="subs"]');
-    if (await desktop.isVisible()) await desktop.click();
-    else await page.locator('[data-workspace="configure"]:visible').click();
+    await expect(rssMetric.locator("dd")).toHaveText("暂不可用");
+    await expect(rssMetric.locator("dd")).not.toContainText("128.0");
+    await expect(rssMetric.locator("dd")).not.toContainText("MiB");
+    await navigateToPage(page, "subs");
     await expect(page.locator(".subscriptions-page")).toBeVisible();
     // Navigation performs a fresh read. With an unavailable mock response the prior
     // success must be cleared, not silently retained by the display fixture.

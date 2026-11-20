@@ -4,6 +4,10 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use serde_json::Value;
+
+use crate::App;
+
 fn snapshot(program: &str, args: &[&str]) -> Result<String, &'static str> {
     let system = format!("/system/bin/{program}");
     let mut command = Command::new(if Path::new(&system).is_file() {
@@ -187,7 +191,7 @@ pub(crate) fn hotspot_ingress_rule_count(path: &Path) -> usize {
         .unwrap_or(0)
 }
 
-fn hotspot_matches(inventory: &str, rules: &str, routes: &str, forward: &str) -> bool {
+fn hotspot_matches(inventory: &str, rules: &str, forward: &str) -> bool {
     let Some((return_priority, peer)) = hotspot_return_rule(inventory) else {
         return false;
     };
@@ -203,24 +207,6 @@ fn hotspot_matches(inventory: &str, rules: &str, routes: &str, forward: &str) ->
             && words[5] == "lookup"
             && matches!(words[6], "main" | "254")
     }) {
-        return false;
-    }
-    let prefixes = routes
-        .lines()
-        .filter_map(|line| {
-            let words = line.split_whitespace().collect::<Vec<_>>();
-            if words.windows(2).any(|pair| pair == ["dev", "magicnet0"]) {
-                words.first().copied()
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    let ready = prefixes
-        .iter()
-        .any(|prefix| matches!(*prefix, "default" | "0.0.0.0/0"))
-        || (prefixes.contains(&"0.0.0.0/1") && prefixes.contains(&"128.0.0.0/1"));
-    if !ready {
         return false;
     }
     let rows = inventory
@@ -347,6 +333,7 @@ fn hotspot_return_selected(text: &str, path: &HotspotReturnPath) -> Result<bool,
 
 fn observe_hotspot(
     inventory: &str,
+    config: Option<&Value>,
     mut observe: impl FnMut(&str, &[&str]) -> Result<String, &'static str>,
 ) -> Result<bool, &'static str> {
     let Some((_, peer)) = hotspot_return_rule(inventory) else {
@@ -355,7 +342,12 @@ fn observe_hotspot(
     let rules = observe("ip", &["-4", "rule", "show"])?;
     let routes = observe("ip", &["-4", "route", "show", "table", "2022"])?;
     let forward = observe("iptables", &["-S", "FORWARD"])?;
-    if !hotspot_matches(inventory, &rules, &routes, &forward) {
+    if !hotspot_matches(inventory, &rules, &forward) {
+        return Ok(false);
+    }
+    let inbound =
+        crate::service::transparent_inbound(config).ok_or("hotspot-inbound-unobserved")?;
+    if !crate::diagnostics::tun::hotspot_routes_cover(inbound, &routes)? {
         return Ok(false);
     }
     let addresses = observe("ip", &["-4", "-o", "addr", "show", "dev", "magicnet0"])?;
@@ -388,12 +380,16 @@ fn observe_hotspot(
     hotspot_return_selected(&selected, &path)
 }
 
-pub(crate) fn hotspot_state(path: &Path) -> &'static str {
+pub(crate) fn hotspot_state(app: &App, path: &Path) -> &'static str {
     let inventory = match crate::read_proc_text_bounded(path, 8192) {
         Ok(text) => text,
         Err(_) => return "unknown",
     };
-    let observed = observe_hotspot(&inventory, snapshot);
+    let config = crate::utils::read_json_file_bounded(
+        &app.moddir.join(".config/sing-box/config.json"),
+        4 * 1024 * 1024,
+    );
+    let observed = observe_hotspot(&inventory, config.as_ref(), snapshot);
     match observed {
         Ok(true) => "active",
         Ok(false) => "pending",
@@ -478,18 +474,16 @@ mod tests {
         // Before #389, this ingress-only inventory was enough for `active`,
         // even when Android selected an upstream route for the internal peer.
         let rules = "8999: from all iif wlan1 lookup 2022\n";
-        let routes = "default dev magicnet0 scope link\n";
         let forward = "-A FORWARD -i wlan1 -o magicnet0 -m comment --comment magicnet-hotspot -j ACCEPT\n-A FORWARD -i magicnet0 -o wlan1 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment magicnet-hotspot -j ACCEPT\n";
-        assert!(!hotspot_matches("8999|wlan1\n", rules, routes, forward));
+        assert!(!hotspot_matches("8999|wlan1\n", rules, forward));
     }
 
     #[test]
     fn inventory_does_not_prove_hotspot_liveness() {
         let inventory = "8999|wlan1\nreturn4|8998|172.20.0.2/32\n";
         let ip = "8999: from all iif wlan1 lookup 2022\n8998: from all to 172.20.0.2 lookup main\n";
-        let route = "default dev magicnet0 scope link\n";
         let forward = "-A FORWARD -i wlan1 -o magicnet0 -m comment --comment magicnet-hotspot -j ACCEPT\n-A FORWARD -i magicnet0 -o wlan1 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment magicnet-hotspot -j ACCEPT\n";
-        assert!(hotspot_matches(inventory, ip, route, forward));
+        assert!(hotspot_matches(inventory, ip, forward));
         for duplicate in [
             "8999: from all iif wlan1 lookup 2022",
             "8997: from all iif wlan1 lookup 2022",
@@ -497,55 +491,31 @@ mod tests {
             assert!(!hotspot_matches(
                 inventory,
                 &format!("{ip}{duplicate}\n"),
-                route,
                 forward
             ));
         }
         assert!(hotspot_matches(
             inventory,
             &format!("{ip}8997: from all iif usb0 lookup 2022\n"),
-            route,
             forward
         ));
-        assert!(!hotspot_matches(
-            inventory,
-            ip,
-            "198.18.0.1 dev magicnet0\n",
-            forward
-        ));
-        assert!(!hotspot_matches(
-            inventory,
-            ip,
-            "0.0.0.0/1 dev magicnet0\n",
-            forward
-        ));
-        assert!(hotspot_matches(
-            inventory,
-            ip,
-            "0.0.0.0/1 dev magicnet0\n128.0.0.0/1 dev magicnet0\n",
-            forward
-        ));
-
-        for (rules, routes, fw) in [("", route, forward), (ip, "", forward), (ip, route, "")] {
-            assert!(!hotspot_matches(inventory, rules, routes, fw));
+        for (rules, fw) in [("", forward), (ip, "")] {
+            assert!(!hotspot_matches(inventory, rules, fw));
         }
         assert!(!hotspot_matches(
             inventory,
             &ip.replace("2022", "20220"),
-            route,
             forward
         ));
         assert!(!hotspot_matches(
             &format!("{inventory}9000|usb0\n"),
             ip,
-            route,
             forward
         ));
         for extra in ["from 192.0.2.0/24 iif", "from all not iif"] {
             assert!(!hotspot_matches(
                 inventory,
                 &ip.replace("from all iif", extra),
-                route,
                 forward
             ));
         }
@@ -557,14 +527,12 @@ mod tests {
             assert!(!hotspot_matches(
                 inventory,
                 &ip.replace("to 172.20.0.2", replacement),
-                route,
                 forward
             ));
         }
         assert!(hotspot_matches(
             inventory,
             &ip.replace("to 172.20.0.2 lookup main", "to 172.20.0.2/32 lookup 254"),
-            route,
             forward
         ));
     }
@@ -625,7 +593,13 @@ mod tests {
         inventory: &str,
         lookup: Result<&str, &'static str>,
     ) -> Result<bool, &'static str> {
-        observe_hotspot(inventory, |program, args| {
+        let config = serde_json::json!({
+            "inbounds": [{
+                "tag": "tun-in", "type": "tun", "interface_name": "magicnet0",
+                "auto_route": true, "address": ["172.20.0.1/30"]
+            }]
+        });
+        observe_hotspot(inventory, Some(&config), |program, args| {
             let text = match (program, args) {
                 ("ip", ["-4", "rule", "show"]) => "8999: from all iif wlan1 lookup 2022\n8998: from all to 172.20.0.2 lookup main\n",
                 ("ip", ["-4", "route", "show", "table", "2022"]) => "default dev magicnet0 scope link\n",
@@ -679,7 +653,7 @@ mod tests {
             "8999|wlan1\nreturn4|0|172.20.0.2/32\n",
         ] {
             assert_eq!(
-                observe_hotspot(invalid, |_, _| panic!(
+                observe_hotspot(invalid, None, |_, _| panic!(
                     "invalid inventory must not prove readiness"
                 )),
                 Ok(false)

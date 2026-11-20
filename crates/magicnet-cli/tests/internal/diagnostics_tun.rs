@@ -598,6 +598,190 @@ fn fib_evidence_requires_a_live_unicast_route_on_the_exact_tun_device() {
 }
 
 #[test]
+fn conditional_fib_routes_do_not_prove_unconditional_tun_coverage() {
+    let config = inbound();
+    let rules = normal_rules(2022, 9000, Family::V4);
+    for routes in [
+        "default tos 0x10 dev magicnet0 scope link\n",
+        "default dsfield 0x10 dev magicnet0 scope link\n",
+        "default tos lowdelay dev magicnet0 scope link\n",
+        "default tos invalid dev magicnet0 scope link\n",
+        "default dev magicnet0 tos\n",
+        "default dev magicnet0 dsfield\n",
+    ] {
+        let observed = super::auto_route_observation_with(&config, true, |args| {
+            Ok(if args.contains(&"rule") {
+                rule_snapshot(args, &rules)
+            } else {
+                routes.into()
+            })
+        });
+        assert_eq!(observed.ready, None, "accepted {routes}");
+        assert!(
+            !observed.fully_observed,
+            "a conditional route must not authorize recovery: {routes}"
+        );
+        assert!(
+            observed
+                .detail
+                .contains("ipv4_fib=unknown:route-selectors-unobserved"),
+            "{}",
+            observed.detail
+        );
+    }
+}
+
+#[test]
+fn conditional_fib_routes_only_affect_required_destinations() {
+    for (address, family, included, excluded, required, outside) in [
+        (
+            "172.19.0.1/30",
+            Family::V4,
+            "203.0.113.0/24",
+            "203.0.113.0/25",
+            "203.0.113.128/25",
+            "198.51.100.0/24",
+        ),
+        (
+            "fdfe:dcba:9876::1/126",
+            Family::V6,
+            "2001:db8::/32",
+            "2001:db8::/33",
+            "2001:db8:8000::/33",
+            "2001:db9::/32",
+        ),
+    ] {
+        let mut config = inbound();
+        config["address"] = json!([address]);
+        config["route_address"] = json!([included]);
+        config["route_exclude_address"] = json!([excluded]);
+        let rules = normal_rules(2022, 9000, family);
+        for selector in [
+            "tos 0x10 dev magicnet0",
+            "dsfield 0x10 dev magicnet0",
+            "from all dev magicnet0",
+            "nexthop dev magicnet0 weight 1",
+        ] {
+            for (destination, overlaps) in [(outside, false), (excluded, false), (included, true)] {
+                for covered in [true, false] {
+                    let base = if covered {
+                        format!("{required} dev magicnet0\n")
+                    } else {
+                        String::new()
+                    };
+                    let routes = format!("{base}{destination} {selector}\n");
+                    let observed = super::auto_route_observation_with(&config, true, |args| {
+                        Ok(if args.contains(&"rule") {
+                            rule_snapshot(args, &rules)
+                        } else {
+                            routes.clone()
+                        })
+                    });
+                    assert_eq!(
+                        observed.ready,
+                        (!overlaps).then_some(covered),
+                        "{routes}: {}",
+                        observed.detail
+                    );
+                    assert_eq!(observed.fully_observed, !overlaps, "{}", observed.detail);
+                    if overlaps {
+                        assert!(observed.detail.contains("route-selectors-unobserved"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_tos_and_dsfield_keep_unconditional_tun_coverage() {
+    let config = inbound();
+    let rules = normal_rules(2022, 9000, Family::V4);
+    for selector in ["tos 0", "tos 0x00", "dsfield 0", "dsfield 0X00"] {
+        let routes = format!("default {selector} dev magicnet0 scope link\n");
+        let observed = super::auto_route_observation_with(&config, true, |args| {
+            Ok(if args.contains(&"rule") {
+                rule_snapshot(args, &rules)
+            } else {
+                routes.clone()
+            })
+        });
+        assert_eq!(observed.ready, Some(true), "{}", observed.detail);
+        assert!(observed.fully_observed, "{}", observed.detail);
+        assert!(observed.detail.contains("ipv4_fib=present"));
+    }
+}
+
+#[test]
+fn fib_conflicting_routes_cannot_hide_behind_a_covering_tun_route() {
+    for (address, family, base, conflicting) in [
+        (
+            "172.19.0.1/30",
+            Family::V4,
+            ROUTES4,
+            "203.0.113.0/24 dev wlan0\n",
+        ),
+        (
+            "172.19.0.1/30",
+            Family::V4,
+            ROUTES4,
+            "blackhole 203.0.113.0/24\n",
+        ),
+        (
+            "fdfe:dcba:9876::1/126",
+            Family::V6,
+            ROUTES6,
+            "2001:db8::/32 dev wlan0\n",
+        ),
+        (
+            "fdfe:dcba:9876::1/126",
+            Family::V6,
+            ROUTES6,
+            "unreachable 2001:db8::/32\n",
+        ),
+    ] {
+        let mut config = inbound();
+        config["address"] = json!([address]);
+        let rules = normal_rules(2022, 9000, family);
+        let routes = format!("{base}{conflicting}");
+        let observed = super::auto_route_observation_with(&config, true, |args| {
+            Ok(if args.contains(&"rule") {
+                rule_snapshot(args, &rules)
+            } else {
+                routes.clone()
+            })
+        });
+        assert_eq!(observed.ready, None, "{}", observed.detail);
+        assert!(
+            !observed.fully_observed,
+            "a conflicting route must not authorize recovery"
+        );
+        assert!(observed
+            .detail
+            .contains("unknown:route-conflict-unobserved"));
+    }
+}
+
+#[test]
+fn fib_conflicts_outside_required_ranges_and_less_specific_fallbacks_are_ignored() {
+    let mut config = inbound();
+    config["route_address"] = json!(["203.0.113.0/24"]);
+    config["route_exclude_address"] = json!(["203.0.113.0/25"]);
+    let rules = normal_rules(2022, 9000, Family::V4);
+    let routes = "default dev wlan0\n203.0.113.128/25 dev magicnet0\nblackhole 203.0.113.0/25\n";
+    assert!(check(&config, true, &rules, routes).0);
+    assert!(
+        check(
+            &inbound(),
+            true,
+            &rules,
+            &format!("{ROUTES4}unreachable default\n")
+        )
+        .0
+    );
+}
+
+#[test]
 fn default_exclusions_accept_fragmented_fib_and_detect_missing_coverage() {
     // Independent oracle: these fixtures were generated with Python ipaddress
     // address_exclude from the pinned MagicSingBox template, not this parser.

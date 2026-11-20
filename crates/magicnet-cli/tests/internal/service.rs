@@ -237,11 +237,14 @@ fn start_fixture() -> crate::test_support::TempApp {
     fs::write(
         app.moddir.join("lib/magicnet.sh"),
         r#"
+magicnet_detach_pid_from_app_cgroup() { printf 'detach\n' >>"$MODDIR/calls"; [ ! -f "$MODDIR/detach-failed" ]; }
+magicnet_warn() { printf 'warn\n' >>"$MODDIR/calls"; }
 magicnet_start_kernel() {
     printf 'start\n' >>"$MODDIR/calls"
     [ ! -f "$MODDIR/start-refused" ]
 }
 magicnet_supervisors_start_detached() { printf 'supervisors\n' >>"$MODDIR/calls"; }
+magicnet_ensure_kernel() { printf 'ensure\n' >>"$MODDIR/calls"; }
 "#,
     )
     .expect("write lifecycle fixture");
@@ -634,12 +637,20 @@ impl Drop for OwnedSupervisorChild {
 }
 
 fn spawn_supervisor_fixture(app: &App, ignore_term: bool) -> (OwnedSupervisorChild, PathBuf) {
+    spawn_named_supervisor_fixture(app, ".state/fswatch/magicnet-config.pid", ignore_term)
+}
+
+fn spawn_named_supervisor_fixture(
+    app: &App,
+    relative_marker: &str,
+    ignore_term: bool,
+) -> (OwnedSupervisorChild, PathBuf) {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
-    let directory = app.moddir.join(".state/fswatch");
-    fs::create_dir_all(&directory).unwrap();
-    let script = directory.join("magicnet-config.loop.sh");
-    let ready = app.moddir.join("ready");
+    let marker = app.moddir.join(relative_marker);
+    fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    let script = marker.with_extension("loop.sh");
+    let ready = marker.with_extension("ready");
     fs::write(
         &script,
         format!(
@@ -670,7 +681,6 @@ fn spawn_supervisor_fixture(app: &App, ignore_term: bool) -> (OwnedSupervisorChi
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(ready.exists(), "fixture supervisor failed to start");
-    let marker = directory.join("magicnet-config.pid");
     fs::write(&marker, format!("{}\n", child.0.id())).unwrap();
     (child, marker)
 }
@@ -849,4 +859,470 @@ fn android_mksh_external_sleep_watcher_stops_before_the_sleep_finishes() {
     assert!(started.elapsed() < Duration::from_secs(3));
     assert!(!marker.exists());
     assert_eq!(child.0.wait().unwrap().signal(), Some(libc::SIGKILL));
+}
+
+fn quiesce_fixture() -> crate::test_support::TempApp {
+    let app = start_fixture();
+    fs::write(
+        app.moddir.join("lib/magicnet.sh"),
+        r#"
+magicnet_detach_pid_from_app_cgroup() { printf 'detach\n' >>"$MODDIR/calls"; [ ! -f "$MODDIR/detach-failed" ]; }
+magicnet_warn() { printf 'warn\n' >>"$MODDIR/calls"; }
+magicnet_restore_locked() {
+    flock -n "$MODDIR/.state/config-apply.lock" true
+    [ "$?" -eq 1 ]
+}
+magicnet_hotspot_watchdog_start() { magicnet_restore_locked || return 1; printf 'hotspot\n' >>"$MODDIR/calls"; }
+magicnet_connectivity_watchdog_start() { magicnet_restore_locked || return 1; printf 'watchdog\n' >>"$MODDIR/calls"; }
+magicnet_fswatch_start() { magicnet_restore_locked || return 1; printf 'fswatch\n' >>"$MODDIR/calls"; }
+"#,
+    )
+    .unwrap();
+    app
+}
+
+fn spawn_quiesce_process(mut command: std::process::Command) -> OwnedSupervisorChild {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+    OwnedSupervisorChild(command.spawn().unwrap())
+}
+
+fn spawn_quiesce_core(app: &App) -> OwnedSupervisorChild {
+    use std::os::unix::fs::PermissionsExt;
+    let binary = app.moddir.join("bin/sing-box");
+    let workdir = app.moddir.join(".config/sing-box");
+    fs::create_dir_all(binary.parent().unwrap()).unwrap();
+    fs::create_dir_all(&workdir).unwrap();
+    // Host pidof does not discover interpreted scripts without -x. Copy the
+    // shell so the fixture has an actual sing-box executable and exact argv.
+    fs::copy("/bin/sh", &binary).unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(workdir.join("run"), "while :; do /bin/sleep 15; done\n").unwrap();
+    let mut command = std::process::Command::new(&binary);
+    command
+        .current_dir(&workdir)
+        .arg("run")
+        .arg("-c")
+        .arg(workdir.join("config.json"))
+        .arg("-D")
+        .arg(&workdir);
+    let child = spawn_quiesce_process(command);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if crate::process::owned_singbox_pids(app)
+            .is_ok_and(|pids| pids.contains(&child.0.id().to_string()))
+        {
+            return child;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("fixture core identity was not observed");
+}
+
+// A TERM handler replaces its marker before exiting. This creates a real
+// quiesce failure after mutation without weakening generation verification.
+fn spawn_quiesce_faulting_hotspot(app: &App) -> OwnedSupervisorChild {
+    let marker = app
+        .moddir
+        .join(".state/watchdog/magicnet-hotspot-route.pid");
+    fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    let script = marker.with_extension("loop.sh");
+    fs::write(
+        &script,
+        r#"
+marker="$MODDIR/.state/watchdog/magicnet-hotspot-route.pid"
+trap 'printf "%s\n" "$$" >"$marker.replaced"; mv "$marker.replaced" "$marker"; exit 0' TERM
+printf ready >"$MODDIR/fault-ready"
+while :; do /bin/sleep 0.01; done
+"#,
+    )
+    .unwrap();
+    let mut command = std::process::Command::new("/bin/sh");
+    command.arg(script).env("MODDIR", &app.moddir);
+    let child = spawn_quiesce_process(command);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !app.moddir.join("fault-ready").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(app.moddir.join("fault-ready").exists());
+    fs::write(marker, child.0.id().to_string()).unwrap();
+    child
+}
+
+#[test]
+fn quiesce_stops_hotspot_loop_while_preserving_inflight_transaction() {
+    use std::os::unix::fs::PermissionsExt;
+    let app = quiesce_fixture();
+    let (mut hotspot, marker) =
+        spawn_named_supervisor_fixture(&app, ".state/watchdog/magicnet-hotspot-route.pid", false);
+    let script = app.moddir.join("cli");
+    fs::write(
+        &script,
+        "#!/bin/sh\nexec 9>\"$MODDIR/.state/config-apply.lock\"\nflock -x 9\nprintf ready >\"$MODDIR/transaction-ready\"\n/bin/sleep 15\n",
+    ).unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = std::process::Command::new(&script);
+    command
+        .args(["hotspot", "reconcile"])
+        .env("MODDIR", &app.moddir);
+    let mut transaction = spawn_quiesce_process(command);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !app.moddir.join("transaction-ready").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(app.moddir.join("transaction-ready").exists());
+    assert!(!super::quiesce_config_apply(&app).unwrap());
+    assert!(
+        !marker.exists(),
+        "the periodic hotspot producer must stop before the lock wait"
+    );
+    assert!(hotspot.0.try_wait().unwrap().is_some());
+    assert!(
+        transaction.0.try_wait().unwrap().is_none(),
+        "an in-flight hotspot transaction must survive"
+    );
+    assert!(
+        super::try_config_apply_lock(&app).unwrap().is_none(),
+        "the transaction must retain its lock"
+    );
+}
+
+#[test]
+fn quiesce_failure_restores_only_owned_running_supervisors_under_lifecycle_lock() {
+    let app = quiesce_fixture();
+    let mut core = spawn_quiesce_core(&app);
+    let _hotspot = spawn_quiesce_faulting_hotspot(&app);
+    let (_fswatch, _) = spawn_supervisor_fixture(&app, false);
+    let mut command = std::process::Command::new("/bin/sleep");
+    command.arg("15");
+    let mut foreign = spawn_quiesce_process(command);
+    fs::write(
+        app.moddir.join(".state/watchdog/magicnet-kernel.pid"),
+        format!("{}\n", foreign.0.id()),
+    )
+    .unwrap();
+    let error = super::quiesce_and_lock_config_apply(&app).err().unwrap();
+    assert!(error.starts_with("supervisor PID file changed"), "{error}");
+    assert!(!error.contains("restoration deferred"), "{error}");
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "detach\nhotspot\ndetach\nfswatch\n"
+    );
+    assert!(
+        foreign.0.try_wait().unwrap().is_none(),
+        "a foreign marker must not authorize a signal"
+    );
+    assert!(
+        core.0.try_wait().unwrap().is_none(),
+        "failed quiescence must preserve the serving core"
+    );
+    assert!(
+        super::try_config_apply_lock(&app).unwrap().is_some(),
+        "the restoration guard must release"
+    );
+}
+
+#[test]
+fn quiesce_failure_defers_restoration_while_lifecycle_lock_is_owned() {
+    let app = quiesce_fixture();
+    let mut core = spawn_quiesce_core(&app);
+    let _hotspot = spawn_quiesce_faulting_hotspot(&app);
+    let _guard = super::config_apply_lock(&app).unwrap();
+    let error = super::quiesce_and_lock_config_apply(&app).err().unwrap();
+    assert!(error.starts_with("supervisor PID file changed"), "{error}");
+    assert!(
+        error.ends_with("supervisor restoration deferred: config apply is busy"),
+        "{error}"
+    );
+    assert!(!app.moddir.join("calls").exists());
+    assert!(core.0.try_wait().unwrap().is_none());
+    assert!(
+        super::try_config_apply_lock(&app).unwrap().is_none(),
+        "never release or steal the other owner's lock"
+    );
+}
+
+#[test]
+fn quiesce_lock_io_failure_defers_restoration_and_retains_original_error() {
+    let app = quiesce_fixture();
+    let mut core = spawn_quiesce_core(&app);
+    let (_hotspot, _) =
+        spawn_named_supervisor_fixture(&app, ".state/watchdog/magicnet-hotspot-route.pid", false);
+    fs::create_dir(app.moddir.join(super::CONFIG_APPLY_LOCK)).unwrap();
+    let error = super::quiesce_and_lock_config_apply(&app).err().unwrap();
+    assert!(error.starts_with("open config apply lock:"), "{error}");
+    assert!(
+        error.ends_with("supervisor restoration deferred: config apply lock is unavailable"),
+        "{error}"
+    );
+    assert!(!app.moddir.join("calls").exists());
+    assert!(core.0.try_wait().unwrap().is_none());
+}
+
+#[test]
+fn quiesce_failure_does_not_restore_watchers_after_core_exit() {
+    let app = quiesce_fixture();
+    let core = spawn_quiesce_core(&app);
+    drop(core);
+    let _hotspot = spawn_quiesce_faulting_hotspot(&app);
+    let error = super::quiesce_and_lock_config_apply(&app).err().unwrap();
+    assert!(error.starts_with("supervisor PID file changed"), "{error}");
+    assert!(
+        !app.moddir.join("calls").exists(),
+        "an already stopped core must not be revived"
+    );
+}
+
+#[test]
+fn quiesce_failure_stops_restoration_if_core_exits_between_hooks() {
+    let app = quiesce_fixture();
+    let core = spawn_quiesce_core(&app);
+    let _hotspot = spawn_quiesce_faulting_hotspot(&app);
+    let (_fswatch, _) = spawn_supervisor_fixture(&app, false);
+    let library = app.moddir.join("lib/magicnet.sh");
+    let mut script = fs::read_to_string(&library).unwrap();
+    script.push_str(
+        r#"
+magicnet_hotspot_watchdog_start() {
+    magicnet_restore_locked || return 1
+    printf 'hotspot\n' >>"$MODDIR/calls"
+    attempt=0
+    while [ "$attempt" -lt 200 ]; do
+        [ ! -f "$MODDIR/core-exit-observed" ] || return 0
+        /bin/sleep 0.01
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+"#,
+    );
+    fs::write(library, script).unwrap();
+    let root = app.moddir.clone();
+    let exit_core = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let hook_started = || {
+            fs::read_to_string(root.join("calls")).is_ok_and(|calls| calls.contains("hotspot\n"))
+        };
+        while !hook_started() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(hook_started(), "restore hook did not start");
+        drop(core);
+        fs::write(root.join("core-exit-observed"), "exited\n").unwrap();
+    });
+    let result = super::quiesce_and_lock_config_apply(&app);
+    exit_core.join().unwrap();
+    let error = result.err().unwrap();
+    assert!(error.starts_with("supervisor PID file changed"), "{error}");
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "detach\nhotspot\n"
+    );
+}
+
+#[test]
+fn quiesce_failed_restore_preserves_original_error_and_attempts_remaining_watchers() {
+    let app = quiesce_fixture();
+    let _core = spawn_quiesce_core(&app);
+    let _hotspot = spawn_quiesce_faulting_hotspot(&app);
+    let (_fswatch, _) = spawn_supervisor_fixture(&app, false);
+    let library = app.moddir.join("lib/magicnet.sh");
+    let mut script = fs::read_to_string(&library).unwrap();
+    script.push_str(r#"
+magicnet_hotspot_watchdog_start() { magicnet_restore_locked || return 1; printf 'hotspot\n' >>"$MODDIR/calls"; return 1; }
+"#);
+    fs::write(library, script).unwrap();
+    let error = super::quiesce_and_lock_config_apply(&app).err().unwrap();
+    assert!(error.starts_with("supervisor PID file changed"), "{error}");
+    assert!(
+        error.ends_with("; restore lifecycle supervisors failed"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "detach\nhotspot\ndetach\nfswatch\n"
+    );
+}
+
+#[test]
+fn quiesce_unknown_supervisor_identity_preserves_existing_workers() {
+    let app = quiesce_fixture();
+    let (mut hotspot, marker) =
+        spawn_named_supervisor_fixture(&app, ".state/watchdog/magicnet-hotspot-route.pid", false);
+    fs::create_dir_all(app.moddir.join(".state/fswatch/magicnet-config.pid")).unwrap();
+    assert!(super::quiesce_and_lock_config_apply(&app).is_err());
+    assert!(marker.exists());
+    assert!(
+        hotspot.0.try_wait().unwrap().is_none(),
+        "all identities must be checked before mutation"
+    );
+    assert!(!app.moddir.join("calls").exists());
+}
+
+#[test]
+fn service_live_start_only_uses_existing_supervisor_entrypoint() {
+    let app = start_fixture();
+    let mut core = spawn_quiesce_core(&app);
+    for _ in 0..2 {
+        super::start_service(&app).unwrap();
+    }
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "detach\nsupervisors\ndetach\nsupervisors\n"
+    );
+    assert!(
+        core.0.try_wait().unwrap().is_none(),
+        "repeated start must preserve the serving core"
+    );
+}
+
+#[test]
+fn service_live_ensure_skips_preamble_without_starting_supervisors() {
+    let app = start_fixture();
+    let core = spawn_quiesce_core(&app);
+    super::ensure_service(&app).unwrap();
+    assert!(!app.moddir.join("calls").exists());
+    drop(core);
+    super::ensure_service(&app).unwrap();
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "ensure\n",
+        "a stopped core must keep the original startup path"
+    );
+}
+
+#[test]
+fn service_live_start_markers_keep_the_original_preamble() {
+    use std::os::unix::fs::symlink;
+    let app = start_fixture();
+    let _core = spawn_quiesce_core(&app);
+    for relative in [
+        "disable",
+        "remove",
+        super::TRANSPARENT_TRANSACTION,
+        ".state/sing-box/subscription-transaction",
+    ] {
+        let marker = app.moddir.join(relative);
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        fs::write(&marker, "pending\n").unwrap();
+        super::start_service(&app).unwrap();
+        assert_eq!(
+            fs::read_to_string(app.moddir.join("calls")).unwrap(),
+            "start\nsupervisors\n",
+            "{relative}"
+        );
+        fs::remove_file(app.moddir.join("calls")).unwrap();
+        fs::remove_file(&marker).unwrap();
+        symlink("missing-journal", &marker).unwrap();
+        super::start_service(&app).unwrap();
+        assert_eq!(
+            fs::read_to_string(app.moddir.join("calls")).unwrap(),
+            "start\nsupervisors\n",
+            "dangling {relative}"
+        );
+        fs::remove_file(app.moddir.join("calls")).unwrap();
+        fs::remove_file(marker).unwrap();
+    }
+}
+
+#[test]
+fn service_live_fast_path_rejects_disruptive_recovery_and_unknown_ownership() {
+    let app = start_fixture();
+    let _core = spawn_quiesce_core(&app);
+    assert!(super::live_service_fast_path(&app, false));
+    assert!(!super::live_service_fast_path(&app, true));
+    fs::remove_file(app.moddir.join("bin/sing-box")).unwrap();
+    assert!(crate::process::owned_singbox_pids(&app).is_err());
+    assert!(!super::live_service_fast_path(&app, false));
+    super::start_service(&app).unwrap();
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "start\nsupervisors\n"
+    );
+}
+
+#[test]
+fn service_live_fast_path_rejects_unknown_marker_metadata() {
+    use std::os::unix::fs::symlink;
+    let app = start_fixture();
+    let _core = spawn_quiesce_core(&app);
+    symlink(".state", app.moddir.join(".state")).unwrap();
+    assert!(!super::live_service_fast_path(&app, false));
+}
+
+#[test]
+fn service_live_ensure_keeps_original_shell_when_lifecycle_lock_is_unavailable() {
+    let app = start_fixture();
+    let _core = spawn_quiesce_core(&app);
+    let guard = super::config_apply_lock(&app).unwrap();
+    super::ensure_service(&app).unwrap();
+    assert!(super::try_config_apply_lock(&app).unwrap().is_none());
+    drop(guard);
+    fs::remove_file(app.moddir.join(super::CONFIG_APPLY_LOCK)).unwrap();
+    fs::create_dir(app.moddir.join(super::CONFIG_APPLY_LOCK)).unwrap();
+    super::ensure_service(&app).unwrap();
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "ensure\nensure\n"
+    );
+}
+
+#[test]
+fn service_live_fast_path_honors_shell_bootstrap_recovery_request() {
+    let app = start_fixture();
+    let _core = spawn_quiesce_core(&app);
+    fs::write(
+        app.moddir.join("lib/kamfw/.kamfwrc"),
+        "import() { :; }\nexport MAGICNET_ALLOW_DISRUPTIVE_RECOVERY=1\n",
+    )
+    .unwrap();
+    super::start_service(&app).unwrap();
+    super::ensure_service(&app).unwrap();
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "detach\nstart\nsupervisors\nensure\n"
+    );
+}
+
+#[test]
+fn service_live_start_detach_warning_does_not_skip_supervisors() {
+    let app = start_fixture();
+    let _core = spawn_quiesce_core(&app);
+    fs::write(app.moddir.join("detach-failed"), "").unwrap();
+    super::start_service(&app).unwrap();
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "detach\nwarn\nsupervisors\n"
+    );
+}
+
+#[test]
+fn quiesce_failure_detach_warning_does_not_skip_restoration() {
+    let app = quiesce_fixture();
+    let _core = spawn_quiesce_core(&app);
+    let _hotspot = spawn_quiesce_faulting_hotspot(&app);
+    fs::write(app.moddir.join("detach-failed"), "").unwrap();
+    let error = super::quiesce_and_lock_config_apply(&app).err().unwrap();
+    assert!(error.starts_with("supervisor PID file changed"), "{error}");
+    assert!(
+        !error.contains("restore lifecycle supervisors failed"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read_to_string(app.moddir.join("calls")).unwrap(),
+        "detach\nwarn\nhotspot\n"
+    );
 }

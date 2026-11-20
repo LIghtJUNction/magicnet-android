@@ -13,9 +13,9 @@ async function changeLanguage(page, language) {
   await expect(page.locator('html')).toHaveAttribute('lang', language);
 }
 
-for (const [browserLocale, language, overview] of [
-  ['en-US', 'en', 'Overview'],
-  ['ru-RU', 'ru', 'Обзор'],
+for (const [browserLocale, language, overview, overviewHint] of [
+  ['en-US', 'en', 'Overview', 'Service status, proxy mode and hotspot'],
+  ['ru-RU', 'ru', 'Обзор', 'Состояние службы, режим прокси и точка доступа'],
 ]) {
   test.describe(browserLocale, () => {
     test.use({ locale: browserLocale });
@@ -24,7 +24,11 @@ for (const [browserLocale, language, overview] of [
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto('/');
       await expect(page.locator('html')).toHaveAttribute('lang', language);
-      await expect(page.locator('.mn-section-tabs [data-tab="control"]')).toHaveText(overview);
+      const overviewButton = page.locator('[data-tab="control"]:visible');
+      await expect(overviewButton.getByText(overview, { exact: true })).toHaveText(overview);
+      if (await page.locator('.desktop-rail').isVisible()) {
+        await expect(overviewButton.locator('small')).toHaveText(overviewHint);
+      }
       for (const tab of tabs) {
         await page.evaluate((tab) => { window.location.hash = `/${tab}`; }, tab);
         await expect(page.locator('.page-surface')).toHaveAttribute('data-page', tab);
@@ -46,6 +50,7 @@ for (const [browserLocale, language, overview] of [
           return found;
         });
         expect(untranslated, `${language}: ${tab}`).toEqual([]);
+        if (tab === 'about') await expect(page.locator('.mn-path-flow')).toBeVisible();
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
         expect(overflow, `${language}: ${tab} horizontal overflow`).toBe(false);
       }
@@ -53,9 +58,9 @@ for (const [browserLocale, language, overview] of [
         const { useMagicNet } = await import('/src/composables/useMagicNet.ts');
         useMagicNet().state.output = '原始日志: server=Москва.example；用户自定义';
       });
-      await expect(page.locator('.page-surface pre').last()).toHaveText('原始日志: server=Москва.example；用户自定义');
+      await expect(page.locator('.page-surface[data-page="output"] .output-console')).toHaveText('原始日志: server=Москва.example；用户自定义');
       await changeLanguage(page, language === 'en' ? 'ru' : 'en');
-      await expect(page.locator('.page-surface pre').last()).toHaveText('原始日志: server=Москва.example；用户自定义');
+      await expect(page.locator('.page-surface[data-page="output"] .output-console')).toHaveText('原始日志: server=Москва.example；用户自定义');
       expect(errors).toEqual([]);
     });
   });

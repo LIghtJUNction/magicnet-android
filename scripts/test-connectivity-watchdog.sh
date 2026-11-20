@@ -27,12 +27,26 @@ import() {
     if [ "$1" = watchdog ]; then
         # shellcheck disable=SC1091
         . "$ROOT/src/MagicNet/lib/kamfw/watchdog.sh"
+        if [ "${pause_launch:-0}" = 1 ]; then
+            watchdog() {
+                case "$1" in
+                status) shift; watchdog_status "$@" ;;
+                start)
+                    shift
+                    : >"$fixture/launch-entered"
+                    while [ ! -f "$fixture/launch-release" ]; do sleep 0.01; done
+                    watchdog_start "$@"
+                    ;;
+                *) return 2 ;;
+                esac
+            }
+        fi
     fi
 }
 # shellcheck disable=SC1091
 . "$ROOT/src/MagicNet/lib/magicnet/common.sh"
-# shellcheck disable=SC1091
-. "$ROOT/src/MagicNet/lib/magicnet/supervisors.sh"
+# shellcheck disable=SC1090
+. "${1:-$ROOT/src/MagicNet/lib/magicnet/supervisors.sh}"
 # shellcheck disable=SC1091
 . "$ROOT/scripts/test-lib/proc-reader-hook.sh"
 magicnet_module_disabled() { [ -f "$MODDIR/disable" ]; }
@@ -94,4 +108,36 @@ test "$(cat "$pid_file")" = "$tracked"
 magicnet_watchdog_stop
 test ! -f "$pid_file"
 if magicnet_supervisor_orphan_pids watchdog >/dev/null; then exit 1; else test "$?" -eq 1; fi
+
+# Stop must join a startup that has already acquired the lifecycle guard but
+# has not published its PID. Otherwise it can report success before a new
+# maintenance loop appears behind the stopped service.
+pause_launch=1
+magicnet_connectivity_watchdog_start &
+starting_pid=$!
+for ((attempt = 0; attempt < 100; attempt++)); do
+    test ! -f "$fixture/launch-entered" || break
+    sleep 0.01
+done
+test -f "$fixture/launch-entered"
+(
+    magicnet_watchdog_stop
+    : >"$fixture/stop-returned"
+) &
+stopping_pid=$!
+sleep 0.3
+premature_stop=0
+test ! -f "$fixture/stop-returned" || premature_stop=1
+: >"$fixture/launch-release"
+wait "$starting_pid"
+wait "$stopping_pid"
+test "$premature_stop" -eq 0 || {
+    printf '%s\n' 'connectivity stop returned before startup published its PID' >&2
+    exit 1
+}
+test ! -e "$pid_file"
+if magicnet_supervisor_orphan_pids watchdog >/dev/null; then
+    printf '%s\n' 'connectivity start/stop race left an exact loop' >&2
+    exit 1
+fi
 printf '%s\n' 'connectivity watchdog lifecycle test passed'

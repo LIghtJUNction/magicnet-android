@@ -164,22 +164,22 @@ onUnmounted(stopTimer);
     </div>
 
     <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
-      <select v-model="target" class="mn-field min-h-12 min-w-0 px-3">
+      <select v-model="target" :aria-label="t('日志来源')" class="mn-field min-h-12 min-w-0 px-3">
         <option value="webui">{{ t("WebUI 后台任务") }}</option>
         <option value="sing-box">sing-box</option>
         <option value="fswatch">fswatch</option>
         <option value="supervisors">{{ t("监督器") }}</option>
         <option value="mcp">MCP</option>
       </select>
-      <Input v-model="lines" inputmode="numeric" placeholder="120" />
+      <Input v-model="lines" :aria-label="t('日志行数')" inputmode="numeric" placeholder="120" />
       <Button variant="secondary" :disabled="!output" @click="copyLogs">
         <Copy :size="15" />{{ copied ? t("已复制") : t("复制") }}
       </Button>
     </div>
 
     <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem]">
-      <Input v-model="query" :placeholder="t('过滤关键字，例如 error / dns / selector')" spellcheck="false" />
-      <select v-model="level" class="mn-field min-h-12 min-w-0 px-3">
+      <Input v-model="query" :aria-label="t('过滤日志')" :placeholder="t('过滤关键字，例如 error / dns / selector')" spellcheck="false" />
+      <select v-model="level" :aria-label="t('日志级别')" class="mn-field min-h-12 min-w-0 px-3">
         <option value="all">{{ t("全部") }}</option>
         <option value="warn">{{ t("警告") }}</option>
         <option value="error">{{ t("错误") }}</option>

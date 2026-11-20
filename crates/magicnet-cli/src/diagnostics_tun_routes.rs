@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use serde_json::Value;
 
-use super::{config_bool, prefix, Family};
+use super::{config_bool, number, prefix, Family};
 
 const MAX_CONFIG_PREFIXES: usize = 1024;
 
@@ -144,6 +144,7 @@ pub(super) fn routes_cover(
     required: &[AddressRange],
 ) -> Result<bool, &'static str> {
     let mut observed = Vec::new();
+    let mut conflicting = Vec::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let fields: Vec<_> = line.split_whitespace().collect();
         let (destination, unicast) = match fields[0] {
@@ -158,17 +159,76 @@ pub(super) fn routes_cover(
         } else {
             AddressRange::parse(address, family).ok_or("route-output-invalid")?
         };
+        // Selectors outside the configured destination policy cannot affect
+        // its coverage or hide a missing route within that policy.
+        if !required
+            .iter()
+            .any(|needed| range.first <= needed.last && needed.first <= range.last)
+        {
+            continue;
+        }
         if unicast
             && !fields.contains(&"linkdown")
             && fields.windows(2).any(|pair| pair == ["dev", "magicnet0"])
         {
-            if fields.contains(&"from") || fields.contains(&"nexthop") {
+            if fields
+                .iter()
+                .enumerate()
+                .any(|(index, field)| match *field {
+                    "from" | "nexthop" => true,
+                    // A zero DS field is a fallback; other values restrict which
+                    // packets match and cannot prove unconditional TUN coverage.
+                    "tos" | "dsfield" => {
+                        fields.get(index + 1).and_then(|value| number(value)) != Some(0)
+                    }
+                    _ => false,
+                })
+            {
                 return Err("route-selectors-unobserved");
             }
             observed.push(range);
+        } else {
+            conflicting.push(range);
         }
     }
-    let observed = merge_ranges(observed);
+    if !ranges_cover(&merge_ranges(observed.clone()), required) {
+        return Ok(false);
+    }
+    for conflict in conflicting {
+        let affected: Vec<_> = required
+            .iter()
+            .filter_map(|range| {
+                let first = range.first.max(conflict.first);
+                let last = range.last.min(conflict.last);
+                (first <= last).then_some(AddressRange { first, last })
+            })
+            .collect();
+        if affected.is_empty() {
+            continue;
+        }
+        // A broader fallback cannot shadow a more specific TUN route. For
+        // equal or more-specific competing routes, metrics, source selectors
+        // and multipath selection need evidence this observer does not have.
+        // Never turn the union of TUN prefixes into a green FIB result then.
+        let preferred = merge_ranges(
+            observed
+                .iter()
+                .copied()
+                .filter(|route| {
+                    route.first >= conflict.first
+                        && route.last <= conflict.last
+                        && (route.first != conflict.first || route.last != conflict.last)
+                })
+                .collect(),
+        );
+        if !ranges_cover(&preferred, &affected) {
+            return Err("route-conflict-unobserved");
+        }
+    }
+    Ok(true)
+}
+
+fn ranges_cover(observed: &[AddressRange], required: &[AddressRange]) -> bool {
     let mut index = 0;
     for required in required {
         while index < observed.len() && observed[index].last < required.first {
@@ -178,8 +238,8 @@ pub(super) fn routes_cover(
             .get(index)
             .is_some_and(|route| route.first <= required.first && route.last >= required.last)
         {
-            return Ok(false);
+            return false;
         }
     }
-    Ok(true)
+    true
 }

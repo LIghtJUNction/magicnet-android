@@ -69,7 +69,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.source_sha && 'LIghtJUNction/magicnet-android' || github.repository }}
           ref: ${{ inputs.source_sha || github.sha }}
@@ -133,7 +133,7 @@ jobs:
 
       - name: Setup Go for forked sing-box
         id: go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.7"
           cache: false
@@ -163,7 +163,7 @@ jobs:
           printf 'singbox=%s\n' "$(git -C sing-box rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Go dependencies and build outputs
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/go/pkg/mod
@@ -174,7 +174,7 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-singbox-go-v2-${{ steps.go.outputs.go-version }}-${{ steps.toolchain.outputs.ndk }}-
 
       - name: Cache Rust dependencies and Android build outputs
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -186,20 +186,20 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-module-rust-v2-${{ steps.toolchain.outputs.rust }}-${{ steps.toolchain.outputs.ndk }}-
 
       - name: Cache verified curl source archives
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/magicnet/curl/sources
           key: ${{ runner.os }}-android-curl-sources-v1-${{ hashFiles('scripts/android-curl-lock.json') }}
 
       - name: Setup Node.js and npm cache
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: webui/package-lock.json
 
       - name: Cache Bun package downloads
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-${{ runner.arch }}-bun-v1-${{ hashFiles('webui/bun.lock', 'webui/bun.lockb', 'webui/package-lock.json') }}
@@ -208,7 +208,7 @@ jobs:
 
       - name: Cache cargo-ndk executable
         id: cargo-ndk
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/magicnet/cargo-ndk
           key: ${{ runner.os }}-${{ runner.arch }}-cargo-ndk-${{ env.CARGO_NDK_VERSION }}-${{ steps.toolchain.outputs.rust }}
@@ -325,7 +325,7 @@ jobs:
       # Android acceptance workflow for the same source SHA and stamped version.
       - name: Cache release browser binaries
         if: ${{ inputs.release_quality == true }}
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('webui/package-lock.json') }}

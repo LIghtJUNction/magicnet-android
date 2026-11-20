@@ -47,6 +47,7 @@ check() {
 
 check python3 scripts/test-website-probe.py
 check python3 scripts/test-hook-utils.py
+check python3 scripts/test-android-elf.py
 check python3 scripts/test-android-curl-artifact.py
 python3 scripts/ci-test-cache.py host config-json -- jq empty src/MagicNet/.config/sing-box/config.json
 check bash scripts/test-repository-hygiene.sh
@@ -102,6 +103,9 @@ check python3 scripts/test-clash-subscriptions.py
 check bash scripts/test-service-selectors.sh
 check bash scripts/test-subscription-fetch-policy.sh
 check python3 scripts/test-subscription-network.py
+# Fingerprint both the production Rust policy and shell fetch implementation.
+python3 scripts/ci-test-cache.py rust subscription-trusted-source -- \
+    python3 scripts/test-subscription-trusted-source.py
 check bash scripts/test-subscription-usage.sh
 check bash scripts/test-singbox-pid-discovery.sh
 check bash scripts/test-singbox-ownership.sh
@@ -119,6 +123,7 @@ check bash scripts/test-process-cgroup-detach.sh
 check bash scripts/test-supervisor-orphan-prefilter.sh
 check bash scripts/test-supervisor-start-policy.sh
 check bash scripts/test-connectivity-watchdog.sh
+check bash scripts/test-wifi-policy-lifecycle.sh
 check bash scripts/test-fswatch-lifecycle.sh
 check bash scripts/test-hotspot-watchdog-lifecycle.sh
 check bash scripts/test-tun-interface-safety.sh

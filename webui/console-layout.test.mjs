@@ -34,14 +34,14 @@ test("the shared theme has one entry and scoped utility priority", () => {
   ]);
 });
 
-test("mobile status details wrap and high-contrast tabs retain selection", () => {
+test("mobile status details wrap and high-contrast navigation retains selection", () => {
   assert.match(
     css,
     /\.mn-runtime-brief > p\s*\{[^}]*overflow-wrap: anywhere;[^}]*white-space: normal;/,
   );
   assert.match(
     css,
-    /@media \(forced-colors: active\)[\s\S]*\.mn-section-tabs button\.is-active\s*\{\s*outline: 2px solid Highlight;/,
+    /@media \(forced-colors: active\)[\s\S]*\.desktop-rail nav button\.mn-nav-active\s*\{\s*outline: 2px solid Highlight;/,
   );
 });
 

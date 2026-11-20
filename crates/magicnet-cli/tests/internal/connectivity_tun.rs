@@ -14,6 +14,10 @@ fn clock(uptime: u64) -> Clock {
 fn route_budget_is_per_boot_and_both_recovery_paths_share_cooldown() {
     let app = temp_app();
     let mut state = super::super::State::new(&clock(100));
+    state.tun.core = Some(Core {
+        pid: 123,
+        starttime: 100,
+    });
     state.tun.record(&clock(100), "missing");
     assert!(!state.tun.recovery_due(&clock(100), 0));
     state.tun.record(&clock(160), "missing");
@@ -23,7 +27,10 @@ fn route_budget_is_per_boot_and_both_recovery_paths_share_cooldown() {
         assert!(state.tun.recovery_due(&clock(now), 0));
         state.tun.reserve(&clock(now));
         assert_eq!(
-            state.tun.json(Some(&clock(now)), "123", false)["recovery_status"],
+            state
+                .tun
+                .json_with_starttime(Some(&clock(now)), "123", false, |_| Some(100))
+                ["recovery_status"],
             "pending"
         );
         assert_eq!(state.tun.retry_uptime, now + delay);
@@ -33,7 +40,10 @@ fn route_budget_is_per_boot_and_both_recovery_paths_share_cooldown() {
     assert!(!state.tun.recovery_due(&clock(100_000), 0));
     state.tun.record(&clock(100_000), "present");
     assert_eq!(
-        state.tun.json(Some(&clock(100_000)), "123", false)["recovery_status"],
+        state
+            .tun
+            .json_with_starttime(Some(&clock(100_000)), "123", false, |_| Some(100))
+            ["recovery_status"],
         "ok"
     );
     state.tun.record(&clock(100_060), "unknown");
@@ -44,7 +54,10 @@ fn route_budget_is_per_boot_and_both_recovery_paths_share_cooldown() {
     assert_eq!(reloaded.tun.attempts, RECOVERY_LIMIT);
     assert!(!reloaded.tun.recovery_due(&clock(100_180), 0));
     assert_eq!(
-        reloaded.tun.json(Some(&clock(100_180)), "123", false)["recovery_status"],
+        reloaded
+            .tun
+            .json_with_starttime(Some(&clock(100_180)), "123", false, |_| Some(100))
+            ["recovery_status"],
         "exhausted"
     );
     let mut reboot = clock(1);
@@ -59,6 +72,116 @@ fn route_budget_is_per_boot_and_both_recovery_paths_share_cooldown() {
     reloaded.tun.action_uptime = 100_180;
     assert_eq!(reloaded.action(&clock(100_479), true), None);
     assert_eq!(reloaded.action(&clock(100_480), true), Some("repair"));
+}
+
+#[test]
+fn cached_tun_status_requires_the_observed_core_generation() {
+    let pid = std::process::id();
+    let starttime = crate::process::live_process_identity(pid)
+        .unwrap()
+        .unwrap()
+        .starttime;
+    let current = Core { pid, starttime };
+    let summary = pid.to_string();
+    for cached_status in ["present", "missing"] {
+        for (saved, current_summary, expected) in [
+            (Some(current.clone()), summary.clone(), cached_status),
+            (
+                Some(Core {
+                    pid: if pid == 1 { 2 } else { 1 },
+                    starttime,
+                }),
+                summary.clone(),
+                "unknown",
+            ),
+            (
+                Some(Core {
+                    pid,
+                    starttime: starttime + 1,
+                }),
+                summary.clone(),
+                "unknown",
+            ),
+            (None, summary.clone(), "unknown"),
+            (Some(current.clone()), format!("{pid},{pid}"), "unknown"),
+        ] {
+            let mut state = State::read(&BTreeMap::new(), &clock(100));
+            state.record_observation(
+                &clock(100),
+                &Observation {
+                    status: cached_status,
+                    core: saved,
+                },
+            );
+            state.attempts = 2;
+            state.action_uptime = 50;
+            state.retry_uptime = 500;
+            let before = state.encode();
+            let result = state.json(Some(&clock(101)), &current_summary, false);
+            assert_eq!(
+                result["status"], expected,
+                "{cached_status} survived a different or unobserved core generation"
+            );
+            assert_eq!(result["warning"], expected != "present");
+            assert_eq!(result["recovery_attempts"], 2);
+            assert_eq!(state.encode(), before, "status mutated the saved evidence");
+        }
+    }
+}
+
+#[test]
+fn cached_tun_status_keeps_unknown_identity_without_recovery_or_budget_changes() {
+    for cached_status in ["present", "missing"] {
+        let mut state = State::read(&BTreeMap::new(), &clock(100));
+        state.record_observation(
+            &clock(100),
+            &Observation {
+                status: cached_status,
+                core: Some(Core {
+                    pid: 123,
+                    starttime: 100,
+                }),
+            },
+        );
+        state.attempts = 2;
+        state.retry_uptime = 500;
+        let before = state.encode();
+        let mut reads = 0;
+        let result = state.json_with_starttime(Some(&clock(101)), "123", false, |pid| {
+            assert_eq!(pid, 123);
+            reads += 1;
+            None
+        });
+        assert_eq!(result["status"], "unknown");
+        assert_eq!(result["warning"], true);
+        assert_eq!(result["recovery_attempts"], 2);
+        assert_eq!(reads, 1);
+        assert_eq!(state.encode(), before);
+    }
+}
+
+#[test]
+fn cached_tun_status_preserves_not_required_paused_and_stale_precedence() {
+    let mut state = State::read(&BTreeMap::new(), &clock(100));
+    state.record(&clock(100), "present");
+    for (now, core, disabled, expected) in [
+        (Some(clock(101)), "unknown", true, "paused"),
+        (Some(clock(101)), "stopped", false, "paused"),
+        (Some(clock(281)), "123", false, "stale"),
+        (None, "123", false, "unknown"),
+    ] {
+        let result = state.json_with_starttime(now.as_ref(), core, disabled, |_| {
+            panic!("higher-priority status must not read a process identity")
+        });
+        assert_eq!(result["status"], expected);
+    }
+    state.record(&clock(100), "not_required");
+    assert!(state.core.is_none());
+    let result = state.json_with_starttime(Some(&clock(101)), "123", false, |_| {
+        panic!("not_required has no core-bound route evidence")
+    });
+    assert_eq!(result["status"], "not_required");
+    assert_eq!(result["warning"], false);
 }
 
 #[test]
@@ -168,6 +291,10 @@ fn unknown_startup_and_inactive_observations_break_the_missing_streak() {
 #[test]
 fn route_observation_does_not_rewrite_mixed_proxy_evidence() {
     let mut state = super::super::State::new(&clock(100));
+    state.tun.core = Some(Core {
+        pid: 123,
+        starttime: 100,
+    });
     state.record(
         &clock(100),
         &super::super::Observation {
@@ -188,7 +315,9 @@ fn route_observation_does_not_rewrite_mixed_proxy_evidence() {
     assert_eq!(state.failures, 0);
     assert_eq!(state.next_uptime, 400);
     assert!(state.tun.recovery_due(&clock(160), 0));
-    let status = state.tun.json(Some(&clock(160)), "123", false);
+    let status = state
+        .tun
+        .json_with_starttime(Some(&clock(160)), "123", false, |_| Some(100));
     assert_eq!(status["warning"], true);
     assert_eq!(status["status"], "missing");
 }
@@ -387,6 +516,10 @@ fn real_route_recovery_rechecks_evidence_restarts_only_owned_core_and_respects_s
     let core_script = "trap 'exit 0' TERM INT\nprintf '%s' $$ >\"$MODDIR/${MAGICNET_TEST_TUN_PIDFILE:-core.pid}\"\nwhile :; do sleep 30 & wait; done";
     script("bin/sing-box", core_script);
     script("foreign/sing-box", core_script);
+    script(
+        "bin/curl",
+        r#"case "$*" in */configs*) printf '{"mode":"rule"}' ;; *) exit 22 ;; esac"#,
+    );
     script("bin/pidof", "test \"$1\" = sing-box || exit 1\ncat \"$MODDIR/core.pid\"; printf '\\n'; cat \"$MODDIR/foreign.pid\"");
     script(
         "bin/ip",

@@ -389,7 +389,9 @@ class UpgradeTransactionTests(unittest.TestCase):
                 self.assertFalse(any('payload remove' in c for c in device.calls))
 
     def test_initial_fixture_is_still_direct_only_until_upgrade_phase(self):
-        self.assertEqual(SIM.fixture_config()['outbounds'], [{'type': 'direct', 'tag': 'direct'}])
+        self.assertEqual(SIM.fixture_config()['outbounds'], [
+            {'type': 'selector', 'tag': 'proxy', 'outbounds': ['direct'], 'default': 'direct'},
+            {'type': 'direct', 'tag': 'direct'}])
         device = MemoryDevice()
         SIM.save_upgrade_candidate(device)
         self.assertFalse(device.installed)
@@ -583,7 +585,7 @@ class CoreCheckHarnessTests(unittest.TestCase):
             for index in (1, 2, 4, 5):
                 hotspot = [out for out in configs[index]['outbounds'] if out['tag'] == 'hotspot']
                 self.assertEqual(len(hotspot), 1)
-                self.assertEqual(hotspot[0]['outbounds'], ['direct'])
+                self.assertEqual(hotspot[0]['outbounds'], ['direct', 'proxy'])
                 self.assertEqual(hotspot[0]['default'], 'direct')
             for index in (2, 5):
                 self.assertEqual(configs[index]['dns']['final'], 'fixture-dns')

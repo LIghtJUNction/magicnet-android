@@ -32,9 +32,9 @@ const buttonVariants = cva(
         default:
           "border-transparent bg-[var(--mn-primary)] text-[var(--mn-on-accent)] hover:bg-[var(--mn-primary-strong)]",
         secondary:
-          "border-transparent bg-[var(--mn-surface-sunken)] text-[var(--mn-ink)] hover:bg-[var(--mn-carrier-deep)]",
+          "border-transparent bg-[var(--mn-surface-sunken)] text-[var(--mn-ink-soft)] hover:bg-[var(--mn-carrier-deep)]",
         outline:
-          "border-[var(--mn-border)] bg-transparent text-[var(--mn-ink)] hover:border-[var(--mn-border-strong)] hover:bg-[var(--mn-surface-sunken)]",
+          "border-[var(--mn-border)] bg-transparent text-[var(--mn-ink-soft)] hover:border-[var(--mn-border-strong)] hover:bg-[var(--mn-surface-sunken)]",
         ghost:
           "border-transparent bg-transparent text-[var(--mn-ink-muted)] hover:bg-[var(--mn-surface-sunken)] hover:text-[var(--mn-ink)]",
         destructive:

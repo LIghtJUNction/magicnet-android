@@ -735,7 +735,7 @@ pub(crate) fn hotspot_observation(app: &App) -> HotspotObservation {
         "pending"
     } else if rules.exists() {
         if owned && configured_mode == "tun" {
-            crate::network_observation::hotspot_state(&rules)
+            crate::network_observation::hotspot_state(app, &rules)
         } else {
             "pending"
         }
@@ -1221,7 +1221,7 @@ mod tests {
         fs::remove_file(pending).unwrap();
         assert!(super::hotspot_record(&app).encode().contains(&format!(
             "state={}\n",
-            crate::network_observation::hotspot_state(&rules)
+            crate::network_observation::hotspot_state(&app, &rules)
         )));
         fs::remove_dir_all(root).unwrap();
     }

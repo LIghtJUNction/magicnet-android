@@ -21,19 +21,29 @@ const reasonLabels: Record<string, string> = {
   upstream_unavailable: "代理上游不可达",
   probe_unavailable: "探测工具不可用，请检查模块安装完整性",
   probe_invalid: "探测工具返回了无效结果",
+  probe_unsupported: "核心版本不支持严格检查，请更新模块",
+  mixed_path_failed: "当前节点可用，但应用代理入口检查失败",
+  selection_changed: "节点已切换，正在重新检查连接",
 };
 const reason = computed(() => reasonLabels[props.snapshot.reason] || "正在检查代理、网络出口和订阅状态。");
 const title = computed(() => {
-  if (props.snapshot.warning && ["probe_unavailable", "probe_invalid"].includes(props.snapshot.reason)) {
+  if (props.snapshot.warning && ["probe_unavailable", "probe_invalid", "probe_unsupported"].includes(props.snapshot.reason)) {
     return "⚠️ 无法执行联网检查";
   }
+  if (props.snapshot.path === "selected_proxy" && props.snapshot.status === "offline") {
+    return "⚠️ 当前代理连接失败";
+  }
+  if (props.snapshot.reason === "mixed_path_failed") return "⚠️ 应用代理入口异常";
   return props.snapshot.status === "pending" && props.snapshot.warning
     ? "⚠️ 正在复查 Google 连接" : labels[props.snapshot.status];
 });
 const actionLabels: Record<string, string> = {
+  failover: "已检查并尝试切换备用节点",
   repair: "已尝试修复路由与 DNS", refresh: "已尝试更新订阅",
   restart: "已尝试重启内核", deferred: "等待当前操作完成后重试",
 };
+const checkedTime = computed(() => props.snapshot.checkedAt === null ? "" :
+  new Date(props.snapshot.checkedAt * 1000).toLocaleTimeString());
 </script>
 
 <template>
@@ -44,9 +54,12 @@ const actionLabels: Record<string, string> = {
     <template v-if="snapshot.warning">
       <p>{{ t(reason) }}</p>
       <p v-if="snapshot.retryInSeconds !== null">{{ t('自动重试间隔逐步延长，约 {seconds} 秒后再次检查。', { seconds: snapshot.retryInSeconds }) }}</p>
-      <p v-if="actionLabels[snapshot.lastAction]">{{ t(actionLabels[snapshot.lastAction]) }}<span v-if="snapshot.actionStatus === 'failed'"> · {{ t('本次恢复未成功') }}</span></p>
+      <p v-if="actionLabels[snapshot.lastAction]">{{ t(actionLabels[snapshot.lastAction]) }}<span v-if="['failed', 'rollback_failed'].includes(snapshot.actionStatus)"> · {{ t('本次恢复未成功') }}</span></p>
+      <p v-if="snapshot.actionStatus === 'conflict'">{{ t('节点已被其他操作更改，自动切换已停止。') }}</p>
+      <p v-if="snapshot.actionStatus === 'rollback_failed'">{{ t('恢复原选择未完成，请检查节点状态。') }}</p>
     </template>
-    <p v-else-if="snapshot.status === 'online'" class="text-xs text-[var(--mn-ink-muted)]">{{ t('通过代理检查；正常时每 5 分钟检测一次。') }}</p>
+    <p v-else-if="snapshot.status === 'online'" class="text-xs text-[var(--mn-ink-muted)]">{{ t(snapshot.path === 'selected_proxy' ? '当前主代理与应用代理入口均已验证。' : '通过代理检查；正常时每 5 分钟检测一次。') }}</p>
+    <p v-if="checkedTime" class="text-xs text-[var(--mn-ink-muted)]">{{ t('上次检查：{time}', { time: checkedTime }) }}</p>
     <slot />
   </section>
 </template>

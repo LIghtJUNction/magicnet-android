@@ -2,7 +2,9 @@
 
 Low-frequency `connectivity.status` and the explicitly scoped `support.export` file writer follow [connectivity and diagnostic contracts](connectivity-diagnostics.md). `service.status.data.connectivity` carries the same cached observation. Read operations never probe the Internet; exports replace one local diagnostic file and do not change service or configuration state.
 
-The `bounded_tun_auto_route_recovery` capability adds `connectivity.tun_auto_route` for independent cached TUN route observations and bounded recovery attempts. Top-level Google/mixed-proxy fields keep their original meaning. Missing observation timestamps are `null`; route status, action status and budgets follow the linked contract. Reads never perform recovery, and public fields omit process identities and raw routes.
+The `bounded_tun_auto_route_recovery` capability adds `connectivity.tun_auto_route` for independent cached TUN route observations and bounded recovery attempts. The `strict_selected_proxy_probe` capability changes the top-level path to `selected_proxy`: both HTTPS targets are checked through the currently selected `proxy` outbound, with verified HTTP 204 responses. `mixed_path=mixed_proxy`, `mixed_status`, and `mixed_reason` independently describe the application proxy listener. A working alternate routing group cannot make the selected proxy appear online. Older modules retain `path=mixed_proxy`; consumers negotiate the capability and accept the corresponding schema. Missing observation timestamps are `null`; route status, action status and budgets follow the linked contract. Reads never perform recovery, and public fields omit process identities and raw routes.
+
+Unexpired cached `tun_auto_route.status=present` or `missing` applies only to the single core generation that produced the observation. Status projection checks the already-owned PID's live process start time without probing routes or the network. A different PID, PID reuse, multiple cores, unavailable identity, or missing saved identity projects `unknown` with a warning until the next normal observation. This does not rewrite canonical state or replenish recovery budgets. `not_required` skips core-generation verification but remains subject to existing earlier checks: stopped or disabled state is `paused`, an unavailable clock or process summary is `unknown`, and overdue evidence takes precedence as `stale` without another identity read. The schema and public field set are unchanged.
 
 MagicNet keeps two CLI surfaces on purpose:
 
@@ -18,6 +20,10 @@ preconditions, and recover progress through status. A successful staged install
 requires reboot; it does not change the effective version immediately. MCP
 adds only the read-only `magicnet_module_update_status` convenience tool. No
 MCP convenience update/install writer is introduced.
+
+The `bounded_selector_failover` capability adds `last_action=failover`. Recovery considers at most three concrete proxy candidates already allowed by the current group, verifies them before changing selection, and compensates failed changes without replacing newer external choices. No automatic direct/block fallback is allowed. Existing action and refresh cooldowns remain in force. Action status `conflict` preserves a newer selection; `rollback_failed` reports incomplete compensation. Probe reasons add `probe_unsupported`, `selection_changed`, and `mixed_path_failed`.
+
+The `manual_connectivity_check` capability advertises the human command `cli connectivity check`. It performs a real, serialized check without triggering repair, subscription refresh, or restart. Successful manual selector changes request a fresh check after releasing the configuration lock. There is no corresponding `--json` mutation: ordinary machine status reads remain cached and network-free.
 
 ## Envelope
 
@@ -115,6 +121,20 @@ A running process is not proof that the proxy is ready.
 
 `readiness.overall` is true only when both the API and dataplane are ready. Unknown evidence stays `null`; it is never promoted to ready.
 
+The `local_zashboard_readiness` capability adds `api.webui_ready`, a boolean
+that checks whether the bundled `.config/sing-box/zashboard/index.html` is a
+file. A missing entry, directory or failed metadata read returns `false`.
+The human `webui status` field `local_ready` uses the same check. This read
+does not start the core, install assets or send a network request.
+
+Dashboard entry points use a fresh `service.status` snapshot: `api.ready`
+describes the listener, `api.webui_ready` describes the local assets, and
+`api.webui` supplies the loopback setup URL without credentials. A false
+dataplane or overall readiness must not block access to an available dashboard,
+because users need it to fix their proxy selection. An older response without
+`webui_ready` leaves asset availability unconfirmed; clients may retain their
+validated loopback navigation without labeling the assets ready.
+
 Transparent `effective_type` and `effective_mode` come from the unique `tun-in`
 inbound in the materialized configuration. Missing, unreadable, invalid or
 ambiguous input reports `unknown`; configured intent does not fill that gap.
@@ -148,6 +168,8 @@ running_unknown
 ```
 
 For running TUN, dataplane readiness requires the canonical `magicnet0` interface and, when `auto_route` is enabled, the necessary live policy-rule group and TUN routes covering the required static address ranges in the configured table for each configured family. Health and machine snapshots reuse the same bounded read-only observer. Static coverage follows each family's include ranges (defaulting to the whole family) minus its excludes; connected-subnet residue cannot satisfy a policy requiring wider coverage. Unobserved dynamic ranges in the non-redirect path and excessive route-prefix inputs remain unknown. This necessary-resource check does not prove complete Android per-UID route selection, network-switch recovery or successful application traffic.
+
+FIB coverage considers only routes whose destination ranges intersect the required policy after static exclusions. A conditional route entirely outside that policy cannot turn complete coverage into unknown or conceal known missing coverage. For intersecting routes, nonzero `tos` / `dsfield` selectors restrict packet matching and leave FIB coverage unknown, as do unrecognized or missing selector values. Explicit numeric zero retains wildcard matching. The shared observer reports `route-selectors-unobserved`; with no known missing requirement, machine readiness is `null` and the TUN watchdog records `unknown` without scheduling recovery or replacing independent connectivity evidence. This uses the existing schema and capabilities.
 
 Any known missing requirement makes machine readiness false, even if another observation is unknown. With no known missing requirement, unreadable, timed-out, truncated or unrecognized evidence leaves readiness `null`; human health reports a warning with the corresponding detail. `auto_route=false` does not require automatically generated rules. Machine snapshots keep stopped and unknown process semantics without probing routes; human health may still inspect a remaining TUN interface.
 
@@ -319,6 +341,24 @@ attachment is reported by `transparent.status`) or `unknown`. Interface names,
 subnets and client identities are never returned. The bundled WebUI reads this
 command instead of parsing human `hotspot status` text.
 
+Hotspot IPv4 FIB coverage uses the same range observer as ordinary TUN health.
+It derives the required destinations from the unique effective `tun-in`:
+`route_address` (or the full family by default) minus static
+`route_exclude_address`. A complete set of fragmented routes is valid; a
+literal default route is not required. Nonzero or unrecognized TOS/DS, source
+and multipath selectors, or overlapping competing routes retain `unknown`.
+Conditions outside the required destinations do not affect coverage. Explicit
+zero TOS/DS values retain normal matching, while linkdown routes contribute no
+coverage. Known missing required routes, RPDB or FORWARD rules remain
+`pending`; full IPv4 exclusion also remains `pending`.
+
+The configuration read is bounded to 4 MiB and rejects nonregular or symlink
+sources. Missing, malformed or ambiguous effective configuration, a non-TUN
+inbound, another interface/table, or unobserved dynamic route ranges retain
+`unknown`. Hotspot ingress still uses `magicnet0` and numeric table 2022.
+These are necessary routing observations, not a client connectivity test.
+Status remains read-only and performs no public network requests.
+
 For TUN, the return-path observation derives the internal peer from the single
 live `magicnet0` IPv4 address, verifies its connected main-table route and owned
 destination rule, and queries the actual UID 0 route without forcing an output
@@ -432,6 +472,8 @@ mutations and their concurrency, rollback, and local-logout contract.
 capabilities 的 commands/private_commands 包含 `app.inspect`；features 增加 `additive_routing_overlay`；`routing_overlay_key="$magicnet_routing"`、`routing_overlay_schema=1`，普通 `override_patch_format` 仍为 `json-merge-patch`。新增的结构化扩展与归属/回滚语义见路由配方；原始数组仍具有 Merge Patch 的整段替换语义，不把它冒充增量编辑。
 
 ## Subscription recovery and upgrade history
+
+Trusted NAS/local subscription policy is private configuration; see [trusted subscriptions](trusted-subscriptions.md). Human CLI `sub trust set <base64-lines>` and `sub trust clear` are explicit writers. They are not schema-1 write commands: adding `--json` still routes through the machine dispatcher and returns an unsupported-command error without mutation. Public subscription status does not disclose the trust list or gain a second state representation. The authority-only `check-source` and `resolve-source` helpers share the subscription policy without accepting secret URL paths or queries.
 
 Subscription activation and journal recovery restore the configured connectivity, refresh, Wi-Fi-policy and hotspot supervisors after releasing the configuration lock. The previous fswatch activity is preserved independently; disabling fswatch does not disable the other configured maintenance workers. Confirmed-stopped or unknown cores do not acquire a new supervisor generation. The update wrapper keeps its update owner until recovery finishes; failure during its final maintenance restore records the local fixed reason `supervisor_restore_failed`. Initial recovery errors and signal interruption preserve their own reasons. Public `sub.status` continues to expose only `last.has_reason`, not raw reason text.
 

@@ -284,7 +284,7 @@ onActivated(() => { active = true; if (!edited.value) void read(); });
 </script>
 
 <template>
-  <div class="tailscale-page space-y-8">
+  <div class="tailscale-page">
     <PageHeader title="Tailscale">
       <Button variant="ghost" :disabled="locked || edited" :loading="loading" @click="read">
         <RefreshCw :size="16" aria-hidden="true" />{{ t("重新读取") }}
@@ -302,20 +302,24 @@ onActivated(() => { active = true; if (!edited.value) void read(); });
     </p>
     <p v-if="customControl" role="alert" class="text-sm text-[var(--mn-warning)]">{{ errorMessage("custom-control") }}</p>
 
-    <div v-if="snapshot && controlState && !controlState.resumable && !controlState.logout_pending" class="tailscale-setup space-y-8">
+    <div v-if="message" :role="hasError ? 'alert' : 'status'" aria-live="polite" class="text-sm leading-6"
+      :class="hasError ? 'text-[var(--mn-danger)]' : 'text-[var(--mn-ink-muted)]'">{{ message }}</div>
+    <Button v-if="needsRestart" variant="ghost" size="sm" :disabled="locked" @click="retryRestart">{{ t("重试重启核心") }}</Button>
+
+    <div v-if="snapshot && controlState && !controlState.resumable && !controlState.logout_pending" class="tailscale-setup">
+    <section class="tailscale-panel">
+      <div class="tailscale-method-heading">
+        <h3>{{ t("网页登录") }}</h3>
+        <p>{{ t("在浏览器中授权，也可用其他设备扫码。") }}</p>
+      </div>
     <div class="tailscale-device-name space-y-2">
       <label for="tailscale-hostname" class="block text-sm font-medium">{{ t("设备名称") }}</label>
       <Input id="tailscale-hostname" v-model="hostname" :disabled="locked || !snapshot || customControl"
         @input="edited = true" autocomplete="off" autocapitalize="none" :spellcheck="false" maxlength="63" required />
     </div>
-
-    <section class="tailscale-panel space-y-4">
-      <div class="tailscale-method-heading flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h3 class="font-medium">{{ t("网页登录") }}</h3>
-          <p class="mt-1 text-sm leading-6 text-[var(--mn-ink-muted)]">{{ t("在浏览器中授权，也可用其他设备扫码。") }}</p>
-        </div>
+      <div class="tailscale-primary-actions">
         <Button :disabled="saveDisabled" :loading="saving" :aria-label="t('登录 Tailscale 并自动配置')" @click="submit('browser')"><Globe :size="16" aria-hidden="true" />{{ t("网页登录") }}<ArrowUpRight :size="15" aria-hidden="true" /></Button>
+          <Button v-if="edited" variant="ghost" :disabled="locked" @click="discardDraft">{{ t("放弃修改并重新读取") }}</Button>
       </div>
       <div v-if="loginUrl" class="tailscale-auth space-y-4">
         <div class="flex flex-wrap items-start justify-between gap-2">
@@ -365,28 +369,27 @@ onActivated(() => { active = true; if (!edited.value) void read(); });
         </fieldset>
         <div class="flex flex-wrap gap-3">
           <Button type="submit" :disabled="saveDisabled" :loading="saving">{{ t(snapshot?.configured ? "保存并重启" : "接入并重启") }}</Button>
-          <Button v-if="edited" variant="ghost" :disabled="locked" @click="discardDraft">{{ t("放弃修改并重新读取") }}</Button>
         </div>
         <p class="text-xs leading-5 text-[var(--mn-ink-muted)]">{{ t("重启会短暂中断现有连接。配置保留在本机。") }}</p>
       </form>
     </SectionDisclosure>
     </div>
-    <div v-if="message" :role="hasError ? 'alert' : 'status'" aria-live="polite" class="text-sm leading-6"
-      :class="hasError ? 'text-[var(--mn-danger)]' : 'text-[var(--mn-ink-muted)]'">{{ message }}</div>
-    <Button v-if="needsRestart" variant="ghost" size="sm" :disabled="locked" @click="retryRestart">{{ t("重试重启核心") }}</Button>
   </div>
 </template>
 
 <style scoped>
-.tailscale-page { max-width: 800px; margin-inline: auto; }
+.tailscale-page { display: grid; gap: var(--mn-section-gap); min-width: 0; max-width: 800px; margin-inline: auto; }
 .tailscale-page :deep(button) { overflow-wrap: anywhere; }
-.tailscale-device-name { max-width: 32rem; }
-.tailscale-setup { padding-top: .25rem; }
-.tailscale-panel { padding: 1.5rem; border-radius: var(--mn-radius-lg); background: var(--mn-surface-raised); }
-.tailscale-auth { border-top: 1px solid var(--mn-border); padding-top: 1.5rem; }
-.tailscale-method-heading > div { flex: 1 1 16rem; min-width: 0; }
-@media (max-width: 480px) {
-  .tailscale-method-heading > button { width: 100%; }
-  .tailscale-panel { padding: 1.25rem; }
-}
+.tailscale-page :deep(.tailscale-control) { border: 0; border-radius: var(--mn-radius-xl); padding: 24px 20px; background: var(--mn-surface-sunken); }
+.tailscale-page :deep(.control-icon) { width: 40px; height: 40px; border-radius: var(--mn-radius-md); color: var(--mn-ink); background: var(--mn-surface-raised); }
+.tailscale-page :deep(.control-status h2) { font-size: 20px; font-weight: 550; line-height: 1.4; letter-spacing: -.02em; }
+.tailscale-page :deep(.control-actions) { margin-top: 20px; padding-top: 12px; }
+.tailscale-setup { display: grid; gap: var(--mn-section-gap); min-width: 0; }
+.tailscale-panel { display: grid; gap: 20px; min-width: 0; padding: 0; }
+.tailscale-method-heading h3 { margin: 0; color: var(--mn-ink); font-size: 20px; font-weight: 550; letter-spacing: -.02em; line-height: 1.4; }
+.tailscale-method-heading p { margin: 8px 0 0; color: var(--mn-ink-muted); font-size: 14px; line-height: 1.7; }
+.tailscale-device-name { min-width: 0; max-width: 32rem; }
+.tailscale-primary-actions { display: grid; gap: 8px; max-width: 32rem; }
+.tailscale-primary-actions > button { width: 100%; min-height: 52px; }
+.tailscale-auth { min-width: 0; border-top: 1px solid var(--mn-border); padding-top: 20px; }
 </style>

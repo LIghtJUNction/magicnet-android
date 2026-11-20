@@ -23,6 +23,12 @@ use crate::{
 const START_SUPERVISORS_COMMAND: &str = "magicnet_supervisors_start_detached";
 const START_KERNEL_COMMAND: &str =
     "MAGICNET_SUB_CONFIG_LOCK_TIMEOUT=2 magicnet_start_kernel && magicnet_supervisors_start_detached";
+// Shell bootstrap may override the inherited environment through env.d.
+// Honor that recovery request without repeating normal live-core discovery.
+const START_LIVE_KERNEL_COMMAND: &str =
+    "if [ \"${MAGICNET_ALLOW_DISRUPTIVE_RECOVERY:-0}\" = 1 ]; then MAGICNET_SUB_CONFIG_LOCK_TIMEOUT=2 magicnet_start_kernel; fi && magicnet_supervisors_start_detached";
+const ENSURE_LIVE_KERNEL_COMMAND: &str =
+    "if [ \"${MAGICNET_ALLOW_DISRUPTIVE_RECOVERY:-0}\" = 1 ]; then magicnet_ensure_kernel; fi";
 const PREPARE_NETWORK_FOR_STOP_COMMAND: &str = "magicnet_prepare_network_for_core_stop";
 const RESTORE_NETWORK_AFTER_FAILED_STOP_COMMAND: &str = "magicnet_after_kernel_start_unlocked";
 const REPAIR_COMMAND: &str =
@@ -172,6 +178,12 @@ pub(crate) fn service_status(app: &App) {
     }
 }
 
+pub(crate) fn singbox_webui_ready(app: &App) -> bool {
+    app.moddir
+        .join(".config/sing-box/zashboard/index.html")
+        .is_file()
+}
+
 pub(crate) fn singbox_webui(app: &App) -> String {
     // `external_ui` is a filesystem directory, not the HTTP route. The Clash
     // API serves whichever dashboard directory is configured at `/ui/`.
@@ -197,7 +209,7 @@ pub(crate) fn service_cmd(app: &App, args: &[String]) -> Result<(), String> {
             Ok(())
         }
         "start" => start_service(app),
-        "ensure" => run_magicnet_function(app, "magicnet_ensure_kernel"),
+        "ensure" => ensure_service(app),
         "stop" => stop_service(app),
         "restart" => restart(app, args.get(1).map(String::as_str).unwrap_or("current")),
         "toggle" => match args.get(1).map(String::as_str).unwrap_or_default() {
@@ -218,19 +230,150 @@ fn start_service(app: &App) -> Result<(), String> {
 }
 
 pub(crate) fn start_service_locked(app: &App, _guard: &ConfigApplyGuard) -> Result<(), String> {
+    // A live core still needs the existing idempotent supervisor entrypoint,
+    // but not two more shell ownership scans and their status-description I/O.
+    if live_service_fast_path(app, disruptive_recovery_requested()) {
+        return run_detached_supervisor_function(app, START_LIVE_KERNEL_COMMAND);
+    }
     run_magicnet_function(app, START_KERNEL_COMMAND)
+}
+
+// nohup/setsid do not leave an Android app's cgroup. Preserve the existing
+// launcher detachment before any restored or asynchronously started worker.
+fn run_detached_supervisor_function(app: &App, function: &str) -> Result<(), String> {
+    run_magicnet_function(
+        app,
+        &format!(
+            "magicnet_detach_pid_from_app_cgroup \"$$\" || magicnet_warn 'Failed to detach the supervisor launcher from the caller cgroup.'; {function}"
+        ),
+    )
+}
+
+fn ensure_service(app: &App) -> Result<(), String> {
+    // Only skip the startup preamble while we own the same lifecycle boundary as start.
+    // Contention, I/O errors or uncertain state retain the original path.
+    if let Ok(Some(_guard)) = try_config_apply_lock(app) {
+        if live_service_fast_path(app, disruptive_recovery_requested()) {
+            return run_magicnet_function(app, ENSURE_LIVE_KERNEL_COMMAND);
+        }
+    }
+    run_magicnet_function(app, "magicnet_ensure_kernel")
+}
+
+fn disruptive_recovery_requested() -> bool {
+    std::env::var_os("MAGICNET_ALLOW_DISRUPTIVE_RECOVERY").is_some_and(|value| value == "1")
+}
+
+fn live_service_fast_path(app: &App, disruptive_recovery: bool) -> bool {
+    if disruptive_recovery {
+        return false;
+    }
+    // This is only an eligibility gate, not a second recovery policy. Every
+    // existing or unreadable marker goes through the original shell preamble,
+    // including dangling symlinks and malformed journals.
+    for relative in [
+        "disable",
+        "remove",
+        TRANSPARENT_TRANSACTION,
+        ".state/sing-box/subscription-transaction",
+    ] {
+        match fs::symlink_metadata(app.moddir.join(relative)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return false,
+        }
+    }
+    owned_singbox_pids(app).is_ok_and(|pids| !pids.is_empty())
 }
 
 fn stop_service(app: &App) -> Result<(), String> {
     // Explicit stop takes precedence over automatic connectivity recovery and
     // fswatch apply. Stop producers, request cooperative rollback, then wait
     // for the lifecycle lock before touching the serving core.
-    let interrupted = quiesce_config_apply(app)?;
-    let _config_apply_guard = lifecycle_lock_after_quiesce(app, interrupted)?;
+    let _config_apply_guard = quiesce_and_lock_config_apply(app)?;
     stop_all_direct(app, false)
 }
 
+// Stop periodic producers before waiting for their lifecycle lock. In-flight
+// hotspot reconciliation retains its lock until its transaction finishes.
+const QUIESCED_SUPERVISORS: &[(&str, &str)] = &[
+    (
+        ".state/watchdog/magicnet-hotspot-route.pid",
+        "magicnet_hotspot_watchdog_start",
+    ),
+    (
+        ".state/watchdog/magicnet-kernel.pid",
+        "magicnet_connectivity_watchdog_start",
+    ),
+    (
+        ".state/fswatch/magicnet-config.pid",
+        "magicnet_fswatch_start",
+    ),
+];
+
+fn quiesce_and_lock_config_apply(app: &App) -> Result<ConfigApplyGuard, String> {
+    // Validate the original set before stopping any worker. A stale or foreign
+    // marker never authorizes restoration of an inactive supervisor.
+    let mut restore = Vec::new();
+    for (relative, start) in QUIESCED_SUPERVISORS {
+        let path = app.moddir.join(relative);
+        if let Some(marker) = crate::process::read_pidfile_identity(&path)? {
+            if supervisor_pidfile_matches(app, &path, marker.pid)? {
+                restore.push(*start);
+            }
+        }
+    }
+    let result = quiesce_config_apply(app)
+        .and_then(|interrupted| lifecycle_lock_after_quiesce(app, interrupted));
+    let error = match result {
+        Ok(guard) => return Ok(guard),
+        Err(error) => error,
+    };
+    if restore.is_empty() {
+        return Err(error);
+    }
+    // Serialize restoration with core stop/restart too. If the failed action
+    // still cannot own the lifecycle lock, do not race its current owner.
+    let _restore_guard = match try_config_apply_lock(app) {
+        Ok(Some(guard)) => guard,
+        Ok(None) => {
+            return Err(format!(
+                "{error}; supervisor restoration deferred: config apply is busy"
+            ));
+        }
+        Err(_) => {
+            return Err(format!(
+                "{error}; supervisor restoration deferred: config apply lock is unavailable"
+            ));
+        }
+    };
+    let mut error = error;
+    let mut restore_failed = false;
+    for start in restore {
+        // A prior stop may have finished before we acquired the guard, or the
+        // core may exit during a restore hook. Never revive its maintenance.
+        match owned_singbox_pids(app) {
+            Ok(pids) if pids.is_empty() => break,
+            Ok(_) => {}
+            Err(_) => {
+                return Err(format!(
+                    "{error}; supervisor restoration deferred: core identity is unknown"
+                ));
+            }
+        }
+        if run_detached_supervisor_function(app, start).is_err() && !restore_failed {
+            error.push_str("; restore lifecycle supervisors failed");
+            restore_failed = true;
+        }
+    }
+    Err(error)
+}
+
 fn quiesce_config_apply(app: &App) -> Result<bool, String> {
+    stop_supervisor_pidfile(
+        app,
+        app.moddir
+            .join(".state/watchdog/magicnet-hotspot-route.pid"),
+    )?;
     stop_supervisor_pidfile(app, app.moddir.join(".state/watchdog/magicnet-kernel.pid"))?;
     let interrupted = crate::process::interrupt_connectivity_workers(app)?;
     stop_supervisor_pidfile(app, app.moddir.join(".state/fswatch/magicnet-config.pid"))?;
@@ -512,8 +655,7 @@ pub(crate) fn validate_restart_target(target: &str) -> Result<(), String> {
 fn restart(app: &App, target: &str) -> Result<(), String> {
     // Rejected targets must not stop the watcher or acquire a lifecycle lock.
     validate_restart_target(target)?;
-    let interrupted = quiesce_config_apply(app)?;
-    let _config_apply_guard = lifecycle_lock_after_quiesce(app, interrupted)?;
+    let _config_apply_guard = quiesce_and_lock_config_apply(app)?;
     restart_with_options_unlocked(app, target, false)
 }
 
@@ -694,6 +836,20 @@ fn restore_network_after_failed_stop_command() -> &'static str {
 }
 
 fn stop_supervisor_pidfile(app: &App, path: PathBuf) -> Result<(), String> {
+    // Export only a fixed target label, never a caller-controlled path or PID.
+    // This lets device acceptance distinguish launcher/marker races without
+    // collecting private command output or weakening ownership checks.
+    let target = match path.file_name().and_then(|name| name.to_str()) {
+        Some("magicnet-kernel.pid") => "watchdog",
+        Some("magicnet-config.pid") => "fswatch",
+        Some("magicnet-hotspot-route.pid") => "hotspot",
+        _ => "unknown",
+    };
+    stop_supervisor_pidfile_inner(app, path)
+        .map_err(|error| format!("{error} [supervisor={target}]"))
+}
+
+fn stop_supervisor_pidfile_inner(app: &App, path: PathBuf) -> Result<(), String> {
     let Some(marker) = crate::process::read_pidfile_identity(&path)? else {
         return Ok(());
     };
@@ -749,7 +905,7 @@ fn remove_supervisor_pidfile_if_unchanged(
         Some(current) if current == marker => fs::remove_file(path)
             .map_err(|_| "unable to remove stopped supervisor PID file".to_string()),
         None => Ok(()),
-        Some(_) => Err("supervisor PID file changed during stop".to_string()),
+        Some(_) => Err("supervisor PID file changed during cleanup".to_string()),
     }
 }
 
@@ -763,7 +919,8 @@ fn supervisor_generation_is_live(
     match crate::process::read_pidfile_identity(path)? {
         Some(observed) if observed == marker => {}
         None if current.is_none() => return Ok(false),
-        _ => return Err("supervisor PID file changed during stop".to_string()),
+        None => return Err("supervisor PID file changed during stop: missing".to_string()),
+        Some(_) => return Err("supervisor PID file changed during stop: replaced".to_string()),
     }
     let Some(current) = current else {
         return Ok(false);

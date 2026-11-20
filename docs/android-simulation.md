@@ -154,3 +154,16 @@ and complementary, not relabelled as Android evidence. A matrix of real ARM64/OE
 runners is still needed for those claims. Reductions in installation-time surprises
 come from moving these explicit lifecycle checks before merge, not from treating
 one emulator as every Android device.
+
+## Wi-Fi uplink recovery
+
+The disposable AVD's raw wlan0 down/up can terminate supplicant and remove the
+Android network's default route. Both foreground restoration and the independent
+10-second guard restore the link, disable Wi-Fi through Android's Wi-Fi service,
+wait two seconds, then enable it again. Interface flags are observed for up to
+30 seconds because framework operations can recreate wlan0 asynchronously.
+Ethernet uses link-up restoration. Reports record restore_method as
+android_wifi_toggle or link_up, and the report gate checks it against the interface.
+Commands returning successfully only establish that restoration was requested.
+Acceptance still requires the selected uplink's actual default route, TUN state,
+production readiness, and same-UID TCP sentinel success before and after the fault.

@@ -90,7 +90,7 @@ export function parseProxyNodeList(text: string): string[] {
     text
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("[")),
+      .filter((line) => line && !/^\[(?:info|warn|warning|error|debug)\](?:\s|$)/i.test(line)),
   ));
 }
 
