@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "tag": "rules-20261116-df4863416dd56ad6",
-  "manifest_sha256": "701c103ede587ca83ed6852a2a9bd0b093248cc843e8e221c9b3b7cac6f116cc",
-  "recipe_commit": "c4ad0a94f35af2b7950b47362e1c23e583209790"
+  "tag": "rules-20261120-f9ca12142db40053",
+  "manifest_sha256": "c1e7e6912efe7bf3346af2462b9d15eb9378877a76b3123a17e7b69d23286cc6",
+  "recipe_commit": "e7aa2143b841512f2009917289c29cb11549d3c9"
 }
