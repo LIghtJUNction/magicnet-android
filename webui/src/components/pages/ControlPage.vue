@@ -505,6 +505,17 @@ onMounted(() => {
       <Button :loading="isRunning('refresh-control-subs') || isRunning('rebuild-node-cache')" @click="followNextStep">{{ nextStep.label }}<ArrowRight :size="16" /></Button>
     </section>
 
+    <nav class="mn-control-shortcuts" :aria-label="t('常用入口')">
+      <Button variant="outline" size="sm" @click="emit('goto-tab', 'proxies')">
+        <Route :size="18" class="shrink-0" aria-hidden="true" />
+        <span>{{ t("切换节点") }}</span>
+      </Button>
+      <Button variant="outline" size="sm" @click="emit('goto-tab', 'subs')">
+        <DownloadCloud :size="18" class="shrink-0" aria-hidden="true" />
+        <span>{{ t("管理订阅") }}</span>
+      </Button>
+    </nav>
+
     <section class="mn-control-hero" :data-service-state="serviceStatus.state" :aria-label="t('服务概览')">
       <div class="mn-control-overview">
         <div class="mn-control-status" role="status" aria-live="polite">
@@ -562,14 +573,11 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="mn-home-workspace" :aria-label="t('常用入口')">
-      <header class="mn-home-section-heading"><h3>{{ t("常用入口") }}</h3></header>
-      <nav class="mn-control-destinations" :aria-label="t('常用入口')">
-        <button type="button" @click="emit('goto-tab', 'proxies')"><Route :size="21" /><span>{{ t("切换节点") }}<small>{{ t("选择节点与代理组") }}</small></span><ArrowUpRight :size="16" /></button>
-        <button type="button" @click="emit('goto-tab', 'subs')"><DownloadCloud :size="21" /><span>{{ t("订阅与节点") }}<small>{{ t("管理来源与更新") }}</small></span><ArrowUpRight :size="16" /></button>
+    <div class="mn-home-workspace">
+      <div class="mn-control-destinations">
         <button type="button" :aria-label="t('检查网络')" @click="emit('goto-tab', 'health')"><Stethoscope :size="21" /><span>{{ t("检查网络") }}<small>{{ t("查看连接与恢复建议") }}</small></span><ArrowUpRight :size="16" /></button>
         <button type="button" @click="emit('goto-tab', 'webui')"><PanelsTopLeft :size="21" /><span>{{ t("面板设置") }}<small>{{ t("安装、校验与修复") }}</small></span><ArrowUpRight :size="16" /></button>
-      </nav>
+      </div>
 
       <section class="mn-dashboard-entry" :aria-label="t('Zashboard 快捷入口')">
         <div class="mn-dashboard-copy"><p class="mn-dashboard-kicker">{{ t("代理控制台") }}</p><h3>Zashboard</h3></div>
@@ -582,7 +590,7 @@ onMounted(() => {
         <p class="mn-dashboard-description">{{ t("切换节点、管理代理组、查看实时连接。") }}</p>
         <div v-if="singBoxUiError" class="mn-dashboard-error" role="alert"><p>{{ t(singBoxUiError) }}</p><Button variant="ghost" @click="emit('goto-tab', 'webui')">{{ t("面板设置与修复") }}<ArrowRight :size="16" /></Button></div>
       </section>
-    </section>
+    </div>
 
     <SectionDisclosure :title="t('运行详情')">
       <dl class="mn-service-facts" :aria-label="t('运行证据')">
@@ -867,6 +875,8 @@ onMounted(() => {
 
 <style scoped>
 .mn-control { max-width: 920px; margin-inline: auto; }
+.mn-control-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-width: 400px; margin-top: 16px; }
+.mn-control-shortcuts > button { min-width: 0; padding-block: 8px; overflow-wrap: anywhere; }
 .mn-control-hero { padding: 32px 0 0; }
 .mn-control-overview { display: grid; gap: 28px; }
 .mn-control-status { min-width: 0; text-align: left; }
@@ -899,8 +909,6 @@ onMounted(() => {
 .mn-next-step p { margin: 8px 0 0; color: var(--mn-ink-soft); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
 .mn-next-step > button { max-width: 100%; }
 .mn-home-workspace { margin: 36px 0 28px; }
-.mn-home-section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.mn-home-section-heading h3 { margin: 0; font-size: 16px; font-weight: 550; letter-spacing: -.01em; }
 .mn-control-destinations { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; }
 .mn-control-destinations > button { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; min-width: 0; min-height: 76px; gap: 14px; padding: 14px 0; border: 0; border-bottom: 1px solid var(--mn-border); border-radius: 0; background: transparent; color: var(--mn-ink); text-align: left; cursor: pointer; transition: color 160ms ease-out, background-color 160ms ease-out; }
 .mn-control-destinations > button > svg:first-child { box-sizing: content-box; padding: 10px; border-radius: 12px; background: var(--mn-surface-sunken); color: var(--mn-ink-soft); }
