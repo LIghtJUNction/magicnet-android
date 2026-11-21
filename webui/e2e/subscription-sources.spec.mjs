@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { subscriptionData } from "../machine-fixtures.mjs";
 
-async function mount(page, failClear = false) {
+async function mount(page, { failClear = false, fromOverview = false } = {}) {
   await page.addInitScript(({ data, failClear }) => {
     localStorage.setItem("magicnet.webui.onboarding.v1", "dismissed");
     window.__sources = { data, failClear, clears: 0, launches: 0, payload: "", operation: "", local: false, held: [], holdLaunch: false, failLaunch: false };
@@ -48,7 +48,11 @@ async function mount(page, failClear = false) {
       else setTimeout(respond, 20);
     } };
   }, { data: subscriptionData({ source_usage: [{ id: "a".repeat(64), index: 1, hostname: "provider.example", state: "cached", upload_bytes: 1, download_bytes: 2, total_bytes: 100, expire_epoch: null, updated_epoch: 1700000000 }] }), failClear });
-  await page.goto("/#/subs", { waitUntil: "networkidle" });
+  await page.goto(fromOverview ? "/" : "/#/subs", { waitUntil: "networkidle" });
+  if (fromOverview) {
+    await page.getByRole("navigation", { name: "常用入口" }).getByRole("button", { name: "管理订阅", exact: true }).click();
+    await expect(page).toHaveURL(/#\/subs$/);
+  }
   await expect.poll(() => page.evaluate(async () =>
     (await import("/src/composables/useMagicNet.ts")).useMagicNet().state.subscriptionReadStatus,
   )).toBe("ready");
@@ -75,7 +79,7 @@ test("removing every source needs confirmation and does not restore stale provid
 });
 
 test("a rejected clear keeps sources and shows a retryable failure", async ({ page }) => {
-  await mount(page, true);
+  await mount(page, { failClear: true });
   await page.getByRole("button", { name: "管理来源", exact: true }).click();
   await page.getByLabel("订阅链接，每行一个", { exact: true }).fill("");
   await page.getByRole("button", { name: "移除所有来源", exact: true }).click();
@@ -95,8 +99,8 @@ test("a Clash file import completes instead of leaving a permanent pending state
   await expect.poll(() => page.evaluate(async () => (await import('/src/composables/useMagicNet.ts')).useMagicNet().state.backgroundTask.status)).toBe("done");
 });
 
-test("replacing a URL updates the persisted source and completes its task", async ({ page }) => {
-  await mount(page);
+test("the overview shortcut lets a replacement URL persist and complete its task", async ({ page }) => {
+  await mount(page, { fromOverview: true });
   await page.getByRole("button", { name: "管理来源", exact: true }).click();
   await page.getByLabel("订阅链接，每行一个", { exact: true }).fill("https://new-provider.example/subscription");
   await page.getByRole("button", { name: "保存并应用", exact: true }).click();

@@ -16,13 +16,8 @@ test("proxy groups are one tap away from the overview", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "代理组", exact: true })).toBeVisible();
 });
 
-test("a translated choice still submits raw selector and outbound tags", async ({ page }) => {
-  await page.route("**/e2e/proxy-groups-fixture.html", (route) => route.fulfill({
-    contentType: "text/html",
-    body: '<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><body><main id="proxy-fixture" style="padding:16px"></main></body></html>',
-  }));
-  await page.goto("/e2e/proxy-groups-fixture.html");
-  await page.evaluate(async () => {
+test("the overview shortcut lets a translated choice submit raw selector and outbound tags", async ({ page }) => {
+  await page.addInitScript(() => {
     window.__proxyCommands = [];
     let current = "proxy";
     window.ksu = {
@@ -47,15 +42,10 @@ test("a translated choice still submits raw selector and outbound tags", async (
         }, 0);
       },
     };
-    const { createApp } = await import("/e2e/vue-fixture.mjs");
-    await import("/src/styles.css");
-    const { setLocale } = await import("/src/i18n/index.ts");
-    setLocale("zh-CN");
-    const { state } = (await import("/src/composables/useMagicNet.ts")).useMagicNet();
-    state.hasKsu = true;
-    const { default: Component } = await import("/src/components/pages/ProxyGroupsPage.vue");
-    createApp(Component).mount("#proxy-fixture");
   });
+  await page.goto("/", { waitUntil: "networkidle" });
+  await page.getByRole("navigation", { name: "常用入口" }).getByRole("button", { name: "切换节点", exact: true }).click();
+  await expect(page).toHaveURL(/#\/proxies$/);
   await expect(page.getByRole("heading", { name: "Google 服务", exact: true })).toBeVisible();
   await page.getByPlaceholder("搜索代理组或节点").fill("直连");
   await page.getByRole("button", { name: "直连 (direct)", exact: true }).click();
