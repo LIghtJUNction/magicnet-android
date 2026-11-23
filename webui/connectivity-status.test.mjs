@@ -7,6 +7,17 @@ const online = { target: CONNECTIVITY_TARGET, path: "mixed_proxy", status: "onli
   checked_at: 1234, next_check_at: 1534, latency_ms: 52, http_status: 204, retry_in_seconds: 300,
   consecutive_failures: 0, last_action: "none", action_status: "none" };
 
+test("successful proxy probes preserve backend TUN warnings across service refresh", () => {
+  for (const status of ["missing", "unknown", "stale"]) {
+    const data = {...online, path:"selected_proxy", mixed_status:"online", warning:true,
+      tun_auto_route:{status, warning:true}};
+    const result = parseServiceConnectivity(envelope("service.status", {connectivity:data}));
+    assert.equal(result.status, "online");
+    assert.equal(result.warning, true, status);
+  }
+  assert.equal(parseConnectivity(online).warning, false);
+});
+
 test("service refresh reads cached connectivity and preserves older-module unknown", () => {
   assert.equal(parseServiceConnectivity(envelope("service.status", { connectivity: online })).status, "online");
   for (const text of [envelope("service.status", {}), envelope("connectivity.status", online), "not JSON"])
