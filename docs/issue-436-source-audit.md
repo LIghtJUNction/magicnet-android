@@ -87,3 +87,19 @@ index or published package was modified.
   `supervisor_evidence`, `transparent_recovery`: all 41 tests passed.
 - `scripts/kam-test.sh quick`: blocked by missing `kam`; it was not replaced
   with a claim of package or device validation.
+
+## CI fixture follow-up
+
+Code Quality run `45124382857`, shell job `137525349789`, failed at
+`test-start-stop-rollback.py` with nine assertions before readiness probing.
+The same nine failures reproduce independently at both `413ac9e` and unmodified
+base `387fe9e`. Neither the fixture nor its lifecycle source changed in #12.
+The fixture did not recognize `ip rule show table ' 2022'` or the numeric route
+table argument, so the real ownership preflight exited before the probes.
+
+The fixture-only patch from release-line commit `a27f288` is now carried here.
+It checks argument count as well as rendering, retaining the leading space in
+one table argument, and models filtered rule queries. All existing readiness,
+rollback, retry, sleep and ownership assertions remain in force; production
+code, permissions and CI gates are unchanged. Local sh and bash runs each pass
+all 15 tests after the patch.

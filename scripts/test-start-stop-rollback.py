@@ -113,21 +113,23 @@ on_core_launch() { :; }
 on_route_probe() { :; }
 on_wait() { :; }
 ip() {
-    case "$*" in
-        'route show table 2022')
+    # Count argv as well as its rendering. The leading blank must be
+    # part of the numeric table value rather than an extra argument.
+    case "$#:$*" in
+        '4:route show table  2022')
             event route-probe
             on_route_probe
             [ ! -e "$MODDIR/query-fails" ] || return 2
             [ ! -e "$MODDIR/route-pending" ] || return 0
             printf 'default dev magicnet0 scope link\n'
             ;;
-        'rule show')
+        '2:rule show' | '4:rule show table  2022')
             printf '9002: from 192.0.2.0/24 lookup 2022\n'
             if [ -e "$MODDIR/core" ]; then
                 printf '9000: from all fwmark 0x200000 lookup 2022\n'
             fi
             ;;
-        '-6 rule show') : ;;
+        '3:-6 rule show' | '5:-6 rule show table  2022') : ;;
         *) event "unexpected-ip:$*"; return 2 ;;
     esac
 }
