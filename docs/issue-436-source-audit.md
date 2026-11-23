@@ -103,3 +103,14 @@ one table argument, and models filtered rule queries. All existing readiness,
 rollback, retry, sleep and ownership assertions remain in force; production
 code, permissions and CI gates are unchanged. Local sh and bash runs each pass
 all 15 tests after the patch.
+
+With a workspace-local BusyBox installed, the same command also passes all 15
+tests under BusyBox sh (45 tests across the three shells). The build job at the
+original head also failed fake-Magisk ownership capture. The other fixture-only
+changes from `a27f288` restore numeric table normalization and table-filtered
+rule output in that model, together with its original regression test. Running
+that test against the unchanged base model first reproduced three failures
+(both address families and the numeric route-table query). The repaired model
+passes all 22 tests; route-recovery proof unit tests still pass all 97. Existing
+foreign-rule preservation, live-core flush refusal and unsupported-filter
+rejection assertions remain enabled. These host controls are not device proof.

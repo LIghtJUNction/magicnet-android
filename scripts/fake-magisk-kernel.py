@@ -194,11 +194,21 @@ def ip(state, args):
             one_line = True
         else:
             family = option[1:]
+    # iproute2 accepts a leading space in one numeric table argument.
+    # Normalize that spelling only for table selection and rule lookups.
+    for index in range(1, len(args)):
+        if args[index] == " 2022" and args[index - 1] in ("table", "lookup"):
+            args[index] = "2022"
     core = state["core"]
     tun = live(core) and core["mode"] == "tun"
     addresses = [ipaddress.IPv4Interface(address) for address in core.get("addresses", [])] if tun else []
     if args[:2] == ["rule", "show"]:
-        for rule in policy_rules(state, family, tun):
+        rules = policy_rules(state, family, tun)
+        if args[2:] == ["table", "2022"]:
+            rules = [rule for rule in rules if " lookup 2022 " in f"{rule} "]
+        elif args[2:]:
+            raise ValueError(f"unsupported rule filter: {args}")
+        for rule in rules:
             print(rule)
         return 0
     if args[:2] in (["rule", "add"], ["rule", "del"]):

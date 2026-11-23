@@ -245,6 +245,30 @@ class ReleaseKernelFixtureTests(unittest.TestCase):
         self.assertEqual(state["rules"]["4"], ["8888: from all lookup 7777"])
         self.assertNotEqual(self.call(state, "ip", "rule", "del", *args)[0], 0)
 
+    def test_numeric_table_argument_filters_by_family_and_round_trips(self):
+        state = kernel.initial()
+        for family in ("-4", "-6"):
+            with self.subTest(family=family):
+                owned = ("priority", "9000", "lookup", " 2022")
+                foreign = ("priority", "9001", "lookup", "7777")
+                self.assertEqual(self.call(state, "ip", family, "rule", "add", *owned)[0], 0)
+                self.assertEqual(self.call(state, "ip", family, "rule", "add", *foreign)[0], 0)
+                self.assertEqual(self.call(state, "ip", family, "rule", "show", "table", " 2022"),
+                                 (0, "9000: from all lookup 2022\n"))
+                self.assertIn("9001: from all lookup 7777",
+                              self.call(state, "ip", family, "rule", "show")[1])
+                self.assertEqual(self.call(state, "ip", family, "rule", "del", *owned)[0], 0)
+                self.assertEqual(self.call(state, "ip", family, "rule", "show", "table", " 2022"), (0, ""))
+        self.start_core(state)
+        self.assertIn("default dev magicnet0",
+                      self.call(state, "ip", "route", "show", "table", " 2022")[1])
+        with self.assertRaises(ValueError):
+            self.call(state, "ip", "route", "flush", "table", " 2022", "dev", "magicnet0")
+        state["core"] = None
+        self.assertEqual(self.call(state, "ip", "route", "flush", "table", " 2022", "dev", "magicnet0")[0], 0)
+        with self.assertRaises(ValueError):
+            self.call(state, "ip", "rule", "show", "table", " 2022", "junk")
+
     def test_unknown_mutations_cannot_succeed(self):
         state = kernel.initial()
         before = copy.deepcopy(state)
