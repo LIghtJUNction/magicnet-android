@@ -51,7 +51,7 @@ export function parseConnectivity(value: unknown): ConnectivityStatus | null {
     path: data.path as typeof PATHS[number],
     mixedStatus: data.path === "selected_proxy" ? data.mixed_status as typeof MIXED_STATUSES[number] : "unknown",
     status, reason: data.reason,
-    warning: ["probe_unavailable", "probe_invalid", "probe_unsupported"].includes(data.reason) || ["degraded", "offline", "stale"].includes(status) || (status === "pending" && data.consecutive_failures > 0),
+    warning: data.warning || ["probe_unavailable", "probe_invalid", "probe_unsupported"].includes(data.reason) || ["degraded", "offline", "stale"].includes(status) || (status === "pending" && data.consecutive_failures > 0),
     checkedAt: data.checked_at as number | null,
     nextCheckAt: data.next_check_at as number | null,
     latencyMs: data.latency_ms as number | null,

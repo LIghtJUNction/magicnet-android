@@ -6,6 +6,13 @@ The `bounded_tun_auto_route_recovery` capability adds `connectivity.tun_auto_rou
 
 Unexpired cached `tun_auto_route.status=present` or `missing` applies only to the single core generation that produced the observation. Status projection checks the already-owned PID's live process start time without probing routes or the network. A different PID, PID reuse, multiple cores, unavailable identity, or missing saved identity projects `unknown` with a warning until the next normal observation. This does not rewrite canonical state or replenish recovery budgets. `not_required` skips core-generation verification but remains subject to existing earlier checks: stopped or disabled state is `paused`, an unavailable clock or process summary is `unknown`, and overdue evidence takes precedence as `stale` without another identity read. The schema and public field set are unchanged.
 
+The top-level `connectivity.warning` includes `tun_auto_route.warning`. A successful
+selected/mixed proxy observation can retain `status=online` while the aggregate
+warning is true: that status describes the proxy probe, not ordinary UID delivery.
+Consumers must preserve the backend warning even when proxy probes succeed.
+Missing, unknown or stale TUN evidence must therefore reach the WebUI connection
+attention state. Paused and `not_required` TUN observations do not add a warning.
+
 MagicNet keeps two CLI surfaces on purpose:
 
 - Human CLI: concise text intended for Termux, recovery and manual debugging.

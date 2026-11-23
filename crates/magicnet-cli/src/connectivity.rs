@@ -613,9 +613,12 @@ fn status_with_clock(app: &App, core: &str, clock: Result<Clock, String>) -> Val
             state.next_uptime.saturating_sub(clock.uptime)
         }
     });
+    // Proxy success does not establish the ordinary application's TUN path.
+    // Project once so the aggregate and nested warning use the same identity.
+    let tun = state.tun.json(Some(&clock), core, disabled(app));
     json!({
         "target":TARGET, "path":"selected_proxy", "status":phase, "reason":reason, "primary_reason":state.primary_reason,
-        "warning":matches!(phase, "offline" | "degraded" | "stale" | "unknown") || (phase == "pending" && (state.failures > 0 || requested)),
+        "warning":tun["warning"] == true || matches!(phase, "offline" | "degraded" | "stale" | "unknown") || (phase == "pending" && (state.failures > 0 || requested)),
         "checked_at":(state.checked_at > 0).then_some(state.checked_at),
         "next_check_at":retry.map(|n| clock.epoch.saturating_add(n)),
         "retry_in_seconds":retry, "consecutive_failures":state.failures, "probe_count":state.probes,
@@ -626,7 +629,7 @@ fn status_with_clock(app: &App, core: &str, clock: Result<Clock, String>) -> Val
         "last_action":state.last_action, "action_status":state.action_status,
         "last_action_at":(state.action_at > 0).then_some(state.action_at),
         "last_refresh_at":(state.refresh_at > 0).then_some(state.refresh_at),
-        "tun_auto_route":state.tun.json(Some(&clock), core, disabled(app)),
+        "tun_auto_route":tun,
     })
 }
 
@@ -640,7 +643,7 @@ pub(crate) fn command(app: &App, args: &[String]) -> Result<(), String> {
         [] | ["status"] => {
             let value = status(app);
             if value["warning"] == true {
-                println!("⚠️ Google.com connectivity warning");
+                println!("⚠️ Connectivity warning");
             }
             println!("{value}");
             Ok(())

@@ -3,6 +3,7 @@ import test from "node:test";
 import { parseZashboardLaunch } from "./src/composables/zashboardLaunch.ts";
 import { useExternalLinks } from "./src/composables/useExternalLinks.ts";
 import { connectionPresentation } from "./src/lib/servicePresentation.ts";
+import { CONNECTIVITY_TARGET, parseConnectivity } from "./src/composables/connectivityStatus.ts";
 
 const url = "http://127.0.0.1:9090";
 const webui = url + "/ui/#/setup?hostname=127.0.0.1&port=9090";
@@ -125,4 +126,18 @@ test("overview and shell distinguish network failure from service readiness", ()
   assert.equal(connectionPresentation({ ...running, serviceReady: false }, true,
     { status: "online", warning: false }).label, "服务未就绪");
   assert.equal(connectionPresentation(running, false, { status: "online", warning: false }).label, "未连接设备");
+});
+
+test("TUN warning reaches overview and shell even while proxy probes succeed", () => {
+  const connectivity = parseConnectivity({target:CONNECTIVITY_TARGET, path:"selected_proxy",
+    status:"online", reason:"ok", warning:true, mixed_status:"online", http_status:204,
+    checked_at:1234, next_check_at:1294, retry_in_seconds:60, latency_ms:12,
+    consecutive_failures:0, last_action:"none", action_status:"none"});
+  assert.ok(connectivity);
+  for (const serviceReady of [true, false, null]) {
+    const result = connectionPresentation({singBoxState:"sing-box", serviceReady}, true, connectivity);
+    assert.equal(result.label, "连接需要处理");
+    assert.equal(result.routeState, "attention");
+    assert.equal(result.tone, "stop");
+  }
 });

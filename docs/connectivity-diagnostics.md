@@ -99,6 +99,11 @@ su -c '/data/adb/modules/MagicNet/cli --json support export'
 
 `tun_auto_route` 单独返回 status、warning、检查/恢复时间、连续缺失数、恢复次数/上限和 recovery_status。status 为 not_required/pending/present/missing/unknown/paused/stale；recovery_status 为 none/pending/ok/failed/busy/cooldown/exhausted。TUN 结构、主代理出口和 mixed 入口分别保留证据，重启动作的完成与流量恢复分别记录。
 
+顶层 `connectivity.warning` 同时包含 `tun_auto_route.warning`。代理探针成功时
+`status=online` 仍只描述代理探针；TUN 缺失、未知或过期会使总警告为 true。
+WebUI 保留后端警告，将连接显示为“连接需要处理”，不会因为 mixed/所选代理成功
+再次覆盖成绿色。停止、停用及不需要自动路由的状态沿用原有暂停语义。
+
 `support.export` 是明确的文件写入例外：capabilities 的 commands/mutation_commands 均列出它，且声明 `state_effect="export-only"`、`fresh_network_probe=false`。无参数，成功返回 `{path, bytes}`；失败返回 `support.export_failed`。WebUI 先协商能力，收到完整成功 envelope 后才显示文件位置。未知参数保持结构化失败，不落回人类命令。
 
 ## 打包与验证

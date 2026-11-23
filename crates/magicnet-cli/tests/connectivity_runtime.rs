@@ -541,7 +541,7 @@ esac
     fixture.run(&["connectivity", "tick"]);
     let unknown = fixture.status();
     assert_eq!(unknown["status"], "online");
-    assert_eq!(unknown["warning"], false);
+    assert_eq!(unknown["warning"], true);
     assert_eq!(unknown["tun_auto_route"]["status"], "unknown");
     assert_eq!(unknown["tun_auto_route"]["warning"], true);
     assert_eq!(unknown["tun_auto_route"]["consecutive_failures"], 0);
@@ -1468,6 +1468,17 @@ fn connectivity_tun_cached_generation_projection_is_read_only() {
             let service: Value = serde_json::from_slice(&output.stdout).unwrap();
             assert_eq!(service["schema"], 1);
             assert_eq!(service["ok"], true);
+            for projected in [&connectivity, &service["data"]["connectivity"]] {
+                assert_eq!(
+                    projected["status"], "online",
+                    "proxy evidence stays separate"
+                );
+                assert_eq!(
+                    projected["warning"],
+                    expected != "present",
+                    "TUN loss or unknown identity must reach the connection warning"
+                );
+            }
             for projected in [
                 &connectivity["tun_auto_route"],
                 &service["data"]["connectivity"]["tun_auto_route"],
