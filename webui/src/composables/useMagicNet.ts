@@ -601,12 +601,19 @@ function followBackgroundLogs(
           ? reconcileSubscriptionCompletion(state.backgroundTask, state.subscriptions)
           : "running";
       }
+      if (completion === "done" || completion === "error") {
+        const observed = await refreshStatus(foregroundUiGate.current(), false);
+        if (state.backgroundTask.id !== operationId) return;
+        // Exit zero proves the command returned, not that stop's postcondition
+        // still holds. Never reuse a pre-stop or superseded runtime snapshot.
+        if (completion === "done" && /^service\s+stop(?:\s|$)/.test(args)) {
+          completion = !observed || state.runtime.singBoxState === "unknown"
+            ? "running"
+            : state.runtime.singBoxState === "stopped" ? "done" : "error";
+        }
+      }
       const done = completion === "done";
       const failed = completion === "error";
-      if (done || failed) {
-        await refreshStatus(foregroundUiGate.current(), false);
-        if (state.backgroundTask.id !== operationId) return;
-      }
       const ownsForegroundUi = foregroundUiGate.owns(foregroundToken);
       const now = Date.now();
       const visibleLogs = redactOutput
@@ -688,16 +695,20 @@ function markQuietFailure(
   return true;
 }
 
+let serviceReadSequence = 0;
+
 async function refreshStatus(
   foregroundToken?: number,
   reportFailure = true,
 ): Promise<boolean> {
+  const observation = ++serviceReadSequence;
   const command = startForegroundCommand(
     "--json service status", "刷新服务状态", true, "", foregroundToken,
     "read",
   );
   const allowBusy = foregroundToken !== undefined;
   const text = await command.promise;
+  if (observation !== serviceReadSequence || !canUpdateRefreshUi(command.token, true)) return false;
   const snapshot = execFailed(text) ? null : parseMachineRuntime(text);
   // Observations update the page during a running write, while shared progress
   // still belongs to that write. A newer foreground owner invalidates old reads.

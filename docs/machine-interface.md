@@ -480,3 +480,15 @@ Subscription activation and journal recovery restore the configured connectivity
 Standalone startup recovery uses its own configuration-lock and restore scope, reports return codes and logs, and does not acquire a subscription update owner. An inherited configuration lock or deferred-restore scope causes it to return 2 with the journal, configuration and caller's pending state untouched; it does not release the caller's lock or replace an earlier recovery error with a later restore error.
 
 This migration change adds only the recorded private `.state/sing-box/subscription-status` history, preserving its phase/result/time. It adds no PID, owner or lock migration item; the current `.state/sing-box/subscription-update.lock` is not restored with this history. Existing legacy-directory migration is unchanged and has not been proven to exclude every historical runtime lock. Canonical running state is still reconciled from current evidence. An installation without recorded history stays unrecorded; migration does not invent a successful update.
+
+### Stop completion and refresh ordering (#460)
+
+WebUI `service stop` completion requires both a successful task exit and a fresh,
+accepted `service.status` snapshot with `process_state=stopped`. A successful
+exit with a running process is a failed postcondition (the snapshot alone cannot
+distinguish a surviving process from an external restart). Unknown, failed or
+superseded reads keep reconciliation pending and cannot reuse an earlier stopped
+snapshot. A nonzero task exit remains a failure even if the process is stopped,
+because network cleanup may have failed. Newer service-status requests supersede
+older responses, including requests sharing the same foreground owner. These are
+client consumption rules; no machine fields or commands change.

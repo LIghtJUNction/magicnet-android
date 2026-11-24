@@ -82,7 +82,7 @@ function backgroundFixture() {
     redactedCliPreview: (value) => value,
     runShellOutcome: () => pending,
     runShell: async () => "[launch] id=operation label=restart\n[exit] id=operation status=0",
-    subscriptionReadSequence: 0,
+    subscriptionReadSequence: 0, serviceReadSequence: 0,
     runCli: async () => subscriptionSnapshot(), execFailed, parseMachineRuntime, parseMachineSubscription, parseMachineWifi, machineFailureText, runtimeDefaults,
     connectivityDefaults, parseServiceConnectivity,
     withAction: async (_, action) => action(),
@@ -521,4 +521,56 @@ test("stale subscription failures cannot invalidate a newer successful observati
   pending[0]("[error] errno=1 older request failed");
   assert.equal(await before, false);
   assert.equal(state.subscriptionReadStatus, "ready");
+});
+
+// #460: command exit and observed service state are separate evidence.
+function stoppedServiceSnapshot() {
+  const x=JSON.parse(serviceSnapshot);
+  x.data.core.sing_box={process_state:"stopped",running:false,pid_summary:"stopped",rss_kib:null};
+  x.data.readiness.overall=false;
+  return JSON.stringify(x);
+}
+for (const [name, response, expected] of [
+  ["stopped", stoppedServiceSnapshot(), "done"],
+  ["still running or restarted", serviceSnapshot, "error"],
+  ["unreadable", "[error] errno=1 read failed", "running"],
+]) test(`stop completion requires fresh stopped evidence: ${name}`, async () => {
+  const {context,state,timers}=backgroundFixture();
+  context.runCli=async()=>response;
+  context.followBackgroundLogs("/task.log","stop","service stop","operation",1,1);
+  await timers.shift()();
+  assert.equal(state.backgroundTask.status,expected);
+  if(expected!=="done") assert.notEqual(state.phase,"done");
+});
+
+test("an older running response cannot overwrite a newer stopped observation", async () => {
+  const {context,state}=backgroundFixture();
+  let finishOld;
+  context.runCli=()=>new Promise(resolve=>{finishOld=resolve;});
+  const old=context.refreshStatus(1,false);
+  context.runCli=async()=>stoppedServiceSnapshot();
+  assert.equal(await context.refreshStatus(1,false),true);
+  finishOld(serviceSnapshot);
+  assert.equal(await old,false);
+  assert.equal(state.runtime.singBoxState,"stopped");
+});
+
+test("stop observation failure keeps tracking until fresh stopped evidence arrives", async () => {
+  const {context,state,timers}=backgroundFixture();
+  context.runCli=async()=>"[error] errno=1 status unavailable";
+  context.followBackgroundLogs("/task.log","stop","service stop","operation",1,1);
+  await timers.shift()();
+  assert.equal(state.backgroundTask.status,"running");
+  context.runCli=async()=>stoppedServiceSnapshot();
+  await timers.shift()();
+  assert.equal(state.backgroundTask.status,"done");
+});
+
+test("a failed stop command is not cleared by an observed stopped process", async () => {
+  const {context,state,timers}=backgroundFixture();
+  context.runShell=async()=>"[launch] id=operation label=stop\n[exit] id=operation status=1";
+  context.runCli=async()=>stoppedServiceSnapshot();
+  context.followBackgroundLogs("/task.log","stop","service stop","operation",1,1);
+  await timers.shift()();
+  assert.equal(state.backgroundTask.status,"error");
 });
