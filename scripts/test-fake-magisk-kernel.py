@@ -86,6 +86,35 @@ class KernelFixtureTests(unittest.TestCase):
             kernel.ip(self.state, ["route", "show", "table", "2022"])
         self.assertEqual(output.getvalue(), "")
 
+    def test_numeric_table_argument_preserves_leading_space_contract(self):
+        self.state["core"] = {"pid": os.getpid(), "mode": "tun"}
+        for table in ("2022", " 2022"):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(kernel.ip(self.state, ["route", "show", "table", table]), 0)
+            self.assertIn("default dev magicnet0", output.getvalue(), repr(table))
+        self.state["core"] = None
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(kernel.ip(self.state, ["route", "show", "table", " 2022"]), 0)
+        self.assertEqual(output.getvalue(), "", "no core must not manufacture a route")
+
+    def test_numeric_table_query_filters_foreign_rules_and_keeps_flush_scoped(self):
+        self.state["core"] = {"pid": os.getpid(), "mode": "tun"}
+        self.state["rules"]["4"] = ["9001: from all lookup 7777"]
+        for table in ("2022", " 2022"):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(kernel.ip(self.state, ["rule", "show", "table", table]), 0)
+            self.assertEqual(output.getvalue(), "9000: from all lookup 2022\n")
+            with self.assertRaises(ValueError):
+                kernel.ip(self.state, ["route", "flush", "table", table, "dev", "magicnet0"])
+        self.state["core"] = None
+        self.assertEqual(kernel.ip(self.state, ["route", "flush", "table", " 2022", "dev", "magicnet0"]), 0)
+        with self.assertRaises(ValueError):
+            kernel.ip(self.state, ["route", "flush", "table", " 2022"])
+        self.assertEqual(self.state["rules"]["4"], ["9001: from all lookup 7777"])
+
     def test_lock_preserves_parallel_writes(self):
         with tempfile.TemporaryDirectory() as temp:
             env = dict(os.environ, MAGICNET_FAKE_NETWORK_STATE=str(Path(temp) / "state.json"))

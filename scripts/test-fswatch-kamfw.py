@@ -134,17 +134,21 @@ class Fixture:
         return self.finish(self.spawn(action), timeout)
 
     def workers(self):
-        result = []
+        result = {}
         for directory in Path('/proc').iterdir():
             if not directory.name.isdigit():
                 continue
             try:
                 argv = (directory / 'cmdline').read_bytes().split(b'\0')
                 if argv == [argv[0], self.loop.encode(), b'']:
-                    result.append(int(directory.name))
+                    fields = (directory / 'stat').read_text().rsplit(') ', 1)[1].split()
+                    result[int(directory.name)] = int(fields[1])
             except (OSError, IndexError):
                 pass
-        return sorted(result)
+        # Shell command substitutions inherit the loop's argv until exec.
+        # Count independently launched watcher roots, not their live shell
+        # descendants. A surviving orphan remains a root and still fails stop.
+        return sorted(pid for pid, parent in result.items() if parent not in result)
 
     def has_open_lock(self, path, process_group):
         for directory in Path('/proc').iterdir():
@@ -177,6 +181,50 @@ class Fixture:
 
 
 class RealKamfwLifecycleTests(unittest.TestCase):
+    def test_inventory_keeps_two_independent_service_trees_distinct(self):
+        fixture = Fixture(['sh'], 'util-linux')
+        roots = []
+        try:
+            # Hold exact-argv shell children live deterministically, rather
+            # than depending on catching a short command-substitution fork.
+            Path(fixture.loop).write_text("""
+if [ "${WORKER_CHILD:-0}" = 1 ]; then
+    : >"$MODDIR/child-$$"
+    sleep 20 & wait
+else
+    WORKER_CHILD=1 sh "$0" &
+    : >"$MODDIR/root-$$"
+    wait
+fi
+""")
+            for _ in range(2):
+                roots.append(subprocess.Popen(['sh', fixture.loop], env=fixture.env,
+                                              start_new_session=True))
+            deadline = time.monotonic() + 5
+            while len(list(fixture.root.glob('child-*'))) < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(len(list(fixture.root.glob('child-*'))), 2)
+            self.assertTrue(all(process.poll() is None for process in roots))
+            self.assertEqual(fixture.workers(), sorted(process.pid for process in roots),
+                             'two independent service roots must never collapse to one')
+            children = [int(path.name.removeprefix('child-'))
+                        for path in fixture.root.glob('child-*')]
+            orphan = next(pid for pid in children if int(
+                Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1].split()[1]
+            ) == roots[0].pid)
+            roots[0].kill()
+            roots[0].wait(timeout=2)
+            self.assertEqual(fixture.workers(), sorted([orphan, roots[1].pid]),
+                             'a surviving orphan must remain visible after stop')
+        finally:
+            for process in roots:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=2)
+            fixture.close()
+
     def wait_for_lock_open(self, fixture, path, process):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:

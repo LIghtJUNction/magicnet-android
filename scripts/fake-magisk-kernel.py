@@ -194,11 +194,24 @@ def ip(state, args):
             one_line = True
         else:
             family = option[1:]
+    # iproute2 accepts a leading-space numeric table argument. Production
+    # uses it to bypass numeric-looking aliases; normalize only that token,
+    # leaving command shape and all unsupported operations fail-closed.
+    if args[:2] in (["route", "show"], ["route", "flush"], ["rule", "show"]) and "table" in args:
+        index = args.index("table") + 1
+        if index < len(args) and args[index].lstrip(" \t").isascii() and args[index].lstrip(" \t").isdigit():
+            args[index] = str(int(args[index].lstrip(" \t")))
     core = state["core"]
     tun = live(core) and core["mode"] == "tun"
     addresses = [ipaddress.IPv4Interface(address) for address in core.get("addresses", [])] if tun else []
     if args[:2] == ["rule", "show"]:
+        if args[2:] and (len(args) != 4 or args[2] != "table"):
+            raise ValueError(f"unsupported rule query: {args}")
         for rule in policy_rules(state, family, tun):
+            if args[2:]:
+                words = rule.split()
+                if "lookup" not in words or words[words.index("lookup") + 1] != args[3]:
+                    continue
             print(rule)
         return 0
     if args[:2] in (["rule", "add"], ["rule", "del"]):

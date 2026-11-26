@@ -14,6 +14,7 @@ import { runtimeDefaults, subscriptionDefaults } from "./src/composables/parsers
 import { connectivityDefaults, parseServiceConnectivity } from "./src/composables/connectivityStatus.ts";
 import { machineFailureText } from "./src/composables/machineStatus.ts";
 import { t } from "./src/i18n/index.ts";
+import { refreshAllNotice } from "./src/composables/refreshAllState.ts";
 
 // Exercise the production dispatch, refresh and polling functions through the
 // native callback adapter. The fixture controls only device replies and time.
@@ -42,6 +43,7 @@ function fixture(testContext, timeoutMs = 1000) {
   };
   const context = vm.createContext({
     ...queues, ...device, ...capture, ...background, ...utils, t,
+    serviceReadSequence: 0, refreshAllNotice,
     state, window: globalThis, Date, Math, CLI: "/module/cli", CLI_TIMEOUT_MS: timeoutMs,
     foregroundUiGate: new ForegroundUiGate(), backgroundLogTimer: 0,
     nextTick: async () => {}, nextFrame: async () => {},
